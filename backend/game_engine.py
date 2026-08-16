@@ -291,6 +291,51 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         add_status(opponent, {'type': 'chakra_drain_over_time', 'value': effect.get('value', 1),
                                 'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
+    # --- permanent stacking transformations (e.g. Kaioken) ------------------
+    # Unlike statuses, these never expire and persist for the rest of the
+    # match; they work by directly rewriting the caster's own skill dicts
+    # (which already live per-match, deep-copied off the CHARACTERS template
+    # -- see queue_move's currentCooldown mutation for the existing precedent).
+
+    elif etype == 'add_stack':
+        stacks = actor.setdefault('stacks', {})
+        stacks[effect['stack_key']] = stacks.get(effect['stack_key'], 0) + 1
+
+    elif etype == 'self_damage_by_stack':
+        count = actor.get('stacks', {}).get(effect['stack_key'], 1)
+        schedule = effect['schedule']
+        dmg = schedule[min(count - 1, len(schedule) - 1)] if schedule else 0
+        actor['health'] = max(0, actor['health'] - dmg)
+
+    elif etype == 'boost_skill_on_stack':
+        # One-time permanent bump to another skill's value, applied only the
+        # instant the stack counter hits `at_stack` (so it fires exactly once).
+        count = actor.get('stacks', {}).get(effect['stack_key'], 0)
+        if count == effect['at_stack']:
+            target = next((s for s in actor.get('skills', []) if s['id'] == effect['skill_id']), None)
+            if target:
+                target['effects'][effect.get('effect_index', 0)]['value'] += effect['bonus']
+                if 'new_description' in effect:
+                    target['description'] = effect['new_description']
+
+    elif etype == 'unlock_skill_on_stack':
+        count = actor.get('stacks', {}).get(effect['stack_key'], 0)
+        if count == effect['at_stack']:
+            target = next((s for s in actor.get('skills', []) if s['id'] == effect['skill_id']), None)
+            if target:
+                target['locked'] = False
+
+    elif etype == 'scale_skill_by_stack':
+        # Recomputed every time (not one-shot): value = base + increment * (stacks - 1).
+        count = actor.get('stacks', {}).get(effect['stack_key'], 0)
+        if count >= 1:
+            target = next((s for s in actor.get('skills', []) if s['id'] == effect['skill_id']), None)
+            if target:
+                new_value = effect['base'] + effect['increment'] * (count - 1)
+                target['effects'][effect.get('effect_index', 0)]['value'] = new_value
+                if 'description_template' in effect:
+                    target['description'] = effect['description_template'].format(value=new_value)
+
 
 # --- turn lifecycle ----------------------------------------------------------
 
@@ -369,6 +414,9 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
 
     used_skill = next((s for s in actor_char['skills'] if s['id'] == skill_id), None)
     if not used_skill: raise Exception("Skill not found")
+
+    if used_skill.get('locked'):
+        raise Exception(used_skill.get('locked_reason', f"{used_skill['name']} is locked."))
 
     char_status = actor_char.get('status', [])
     if has_status(char_status, 'stun'):

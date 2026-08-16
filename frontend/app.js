@@ -405,11 +405,12 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
 
                     const affordable = canAfford(remainingDice, skill.cost);
                     const silenced = isSilencedFor(char, skill);
-                    const disabled = !isMyTurn || char.health <= 0 || isStunned || silenced || skill.currentCooldown > 0 || !affordable ? 'disabled' : '';
+                    const disabled = !isMyTurn || char.health <= 0 || isStunned || silenced || skill.locked || skill.currentCooldown > 0 || !affordable ? 'disabled' : '';
                     let disabledReason = '';
                     if (char.health <= 0) disabledReason = 'This character has been defeated.';
                     else if (isStunned) disabledReason = 'Stunned -- cannot act this turn.';
                     else if (silenced) disabledReason = 'Silenced -- this skill is blocked.';
+                    else if (skill.locked) disabledReason = skill.locked_reason || 'This skill is locked.';
                     else if (skill.currentCooldown > 0) disabledReason = `On cooldown: ${skill.currentCooldown} more turn(s).`;
                     else if (!affordable) disabledReason = 'Not enough Ki of the right type(s) left this turn.';
                     const cdText = skill.currentCooldown > 0 ? `(${skill.currentCooldown})` : '';
@@ -421,7 +422,7 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
                         <button class="skill-btn" ${disabled} onclick="onSkillClicked('${skill.id}', this)" title="${disabledReason}">
                             ${iconHtml}
                             <div style="flex-grow:1">
-                                <b>${skill.name}</b> ${cdText}
+                                <b>${skill.name}</b> ${skill.locked ? '🔒' : ''} ${cdText}
                                 <div style="font-size:0.8em; color:#aaa">${skill.description}</div>
                             </div>
                             <div style="min-width:30px">${costHtml}</div>

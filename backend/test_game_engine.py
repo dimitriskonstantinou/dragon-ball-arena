@@ -362,6 +362,8 @@ def test_content_smoke():
         'invulnerable', 'physical_invulnerable', 'chakra_invulnerable', 'mental_invulnerable',
         'dodge', 'counter', 'reflect', 'cleanse',
         'remove_chakra', 'steal_chakra', 'chakra_regen', 'chakra_restrict', 'chakra_drain_over_time',
+        'add_stack', 'self_damage_by_stack', 'boost_skill_on_stack',
+        'unlock_skill_on_stack', 'scale_skill_by_stack',
     }
     bad = []
     for cid, char in characters.CHARACTERS.items():
@@ -375,7 +377,9 @@ def test_content_smoke():
 def test_goku_saiyan_saga_kit():
     """Exercises Goku's real kit straight from characters.py (not synthetic
     skills), so a future balance tweak that breaks the intended interactions
-    (e.g. Kaioken no longer buffing Kaioken Attack) gets caught."""
+    gets caught. Kaioken is a permanent, repeatable, escalating transform
+    (not a temporary buff) that rewrites Kamehameha and Kaioken Attack in
+    place -- this is the main thing worth regression-testing here."""
     import characters
     if 'goku_saiyan_saga' not in characters.CHARACTERS:
         print("  SKIPPED: goku_saiyan_saga not in the current roster")
@@ -384,59 +388,96 @@ def test_goku_saiyan_saga_kit():
     check("goku_saiyan_saga has the 3 signature skills + the universal one",
           set(skills_by_id) == {'kamehameha', 'kaioken', 'kaioken_attack', 'afterimage_technique'},
           set(skills_by_id))
+    check("Kaioken Attack starts locked in its definition", skills_by_id['kaioken_attack'].get('locked') is True)
 
-    # Kamehameha: damage + stun
     game = make_game()
     a = game['players']['p1']['team'][0]
-    a['skills'] = [copy.deepcopy(skills_by_id['kamehameha'])]
-    a['skills'][0]['currentCooldown'] = 0
+    b = game['players']['p2']['team'][0]
+    a['skills'] = [copy.deepcopy(skills_by_id['kamehameha']),
+                   copy.deepcopy(skills_by_id['kaioken']),
+                   copy.deepcopy(skills_by_id['kaioken_attack'])]
+    for s in a['skills']: s['currentCooldown'] = 0
+    kamehameha_live = next(s for s in a['skills'] if s['id'] == 'kamehameha')
+    kaioken_live = next(s for s in a['skills'] if s['id'] == 'kaioken')
+    kaioken_attack_live = next(s for s in a['skills'] if s['id'] == 'kaioken_attack')
+
+    # Kamehameha at base power, before any Kaioken use
     ge.queue_move(game, 'p1', 'A', 'kamehameha', 'p2', 0)
     ge.resolve_turn(game, [])
-    b = game['players']['p2']['team'][0]
-    check("Kamehameha damages and stuns the target",
-          b['health'] < 100 and any(s['type'] == 'stun' for s in b['status']), (b['health'], b['status']))
+    check("Kamehameha deals its rounded base damage (25) before Kaioken", b['health'] == 75, b['health'])
+    check("Kamehameha still applies its stun", any(s['type'] == 'stun' for s in b['status']), b['status'])
 
-    # Kaioken: costs the caster HP and grants a self damage buff that should
-    # then boost Kaioken Attack's damage on a later use.
+    # Kaioken Attack is locked before Kaioken has ever been used
+    game['turn'] = 'p1'
+    kamehameha_live['currentCooldown'] = 0
+    blocked_msg = None
+    try:
+        ge.queue_move(game, 'p1', 'A', 'kaioken_attack', 'p2', 0)
+    except Exception as e:
+        blocked_msg = str(e)
+    check("Kaioken Attack cannot be queued before Kaioken is used", blocked_msg is not None)
+    check("locked-skill error uses the authored reason",
+          blocked_msg == skills_by_id['kaioken_attack']['locked_reason'], blocked_msg)
+
+    # --- 1st Kaioken use ---
+    hp_before = a['health']
+    ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
+    ge.resolve_turn(game, [])
+    check("1st Kaioken use costs 20 HP", a['health'] == hp_before - 20, a['health'])
+    check("1st Kaioken use sets the stack counter to 1", a.get('stacks', {}).get('kaioken') == 1, a.get('stacks'))
+    check("Kamehameha is permanently boosted +20 after the 1st Kaioken use (25 -> 45)",
+          kamehameha_live['effects'][0]['value'] == 45, kamehameha_live['effects'][0]['value'])
+    check("Kaioken Attack is unlocked after the 1st Kaioken use", kaioken_attack_live.get('locked') is False)
+    check("Kaioken Attack's damage is set to its base (30) on the 1st Kaioken use",
+          kaioken_attack_live['effects'][0]['value'] == 30, kaioken_attack_live['effects'][0]['value'])
+
+    # Kamehameha now actually hits harder in combat
+    game['turn'] = 'p1'
+    kamehameha_live['currentCooldown'] = 0
+    hp_before_b = b['health']
+    ge.queue_move(game, 'p1', 'A', 'kamehameha', 'p2', 0)
+    ge.resolve_turn(game, [])
+    check("Kamehameha's boosted damage actually applies in combat", b['health'] == hp_before_b - 45, b['health'])
+
+    # --- 2nd Kaioken use: still 20 HP, Kaioken Attack scales to 40, Kamehameha does NOT re-boost ---
+    game['turn'] = 'p1'
+    kaioken_live['currentCooldown'] = 0
+    hp_before2 = a['health']
+    ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
+    ge.resolve_turn(game, [])
+    check("2nd Kaioken use still costs 20 HP", a['health'] == hp_before2 - 20, a['health'])
+    check("Kamehameha's boost does not stack further on the 2nd use",
+          kamehameha_live['effects'][0]['value'] == 45, kamehameha_live['effects'][0]['value'])
+    check("Kaioken Attack scales to 40 on the 2nd Kaioken use",
+          kaioken_attack_live['effects'][0]['value'] == 40, kaioken_attack_live['effects'][0]['value'])
+
+    # --- 3rd Kaioken use: cost jumps to 40 HP, Kaioken Attack scales to 50 ---
+    game['turn'] = 'p1'
+    kaioken_live['currentCooldown'] = 0
+    hp_before3 = a['health']
+    ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
+    ge.resolve_turn(game, [])
+    check("3rd Kaioken use costs 40 HP", a['health'] == hp_before3 - 40, a['health'])
+    check("Kaioken Attack scales to 50 on the 3rd Kaioken use",
+          kaioken_attack_live['effects'][0]['value'] == 50, kaioken_attack_live['effects'][0]['value'])
+
+    # Afterimage Technique: blocks the very next incoming attack
     game2 = make_game()
     a2 = game2['players']['p1']['team'][0]
     b2 = game2['players']['p2']['team'][0]
-    a2['skills'] = [copy.deepcopy(skills_by_id['kaioken']), copy.deepcopy(skills_by_id['kaioken_attack'])]
-    for s in a2['skills']: s['currentCooldown'] = 0
-    hp_before = a2['health']
-
-    ge.queue_move(game2, 'p1', 'A', 'kaioken', 'p1', 0)
+    a2['skills'] = [copy.deepcopy(skills_by_id['afterimage_technique'])]
+    a2['skills'][0]['currentCooldown'] = 0
+    ge.queue_move(game2, 'p1', 'A', 'afterimage_technique', 'p1', 0)
     ge.resolve_turn(game2, [])
-    check("Kaioken costs the caster HP (bodily strain)", a2['health'] < hp_before, a2['health'])
-    check("Kaioken grants a self damage_dealt_mod buff",
-          any(s['type'] == 'damage_dealt_mod' for s in a2['status']), a2['status'])
-
-    game2['turn'] = 'p1'  # same player follows up immediately, to isolate the buff interaction
-    ge.queue_move(game2, 'p1', 'A', 'kaioken_attack', 'p2', 0)
-    ge.resolve_turn(game2, [])
-    base_value = skills_by_id['kaioken_attack']['effects'][0]['value']
-    buff_value = skills_by_id['kaioken']['effects'][0]['value']
-    expected_dmg = round(base_value * (1 + buff_value))
-    check("Kaioken Attack deals boosted damage while Kaioken is active",
-          b2['health'] == 100 - expected_dmg, (b2['health'], expected_dmg))
-
-    # Afterimage Technique: blocks the very next incoming attack
-    game3 = make_game()
-    a3 = game3['players']['p1']['team'][0]
-    b3 = game3['players']['p2']['team'][0]
-    a3['skills'] = [copy.deepcopy(skills_by_id['afterimage_technique'])]
-    a3['skills'][0]['currentCooldown'] = 0
-    ge.queue_move(game3, 'p1', 'A', 'afterimage_technique', 'p1', 0)
-    ge.resolve_turn(game3, [])
     check("Afterimage Technique grants self-invulnerability",
-          any(s['type'] == 'invulnerable' for s in a3['status']), a3['status'])
+          any(s['type'] == 'invulnerable' for s in a2['status']), a2['status'])
 
-    game3['turn'] = 'p2'
-    b3['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
+    game2['turn'] = 'p2'
+    b2['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
                       'effects': [{'type': 'damage', 'value': 20}], 'cooldown': 0, 'currentCooldown': 0}]
-    ge.queue_move(game3, 'p2', 'B', 'poke', 'p1', 0)
-    ge.resolve_turn(game3, [])
-    check("Afterimage Technique blocks the incoming attack", a3['health'] == 100, a3['health'])
+    ge.queue_move(game2, 'p2', 'B', 'poke', 'p1', 0)
+    ge.resolve_turn(game2, [])
+    check("Afterimage Technique blocks the incoming attack", a2['health'] == 100, a2['health'])
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

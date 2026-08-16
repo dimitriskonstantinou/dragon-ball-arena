@@ -124,6 +124,28 @@ A skill lives on a character in `characters.py` and looks like:
 Any effect can add `"target": "self"` to hit the caster instead of the
 skill's normal target (e.g. damage an enemy while buffing yourself).
 
+A skill can be born locked with `"locked": true, "locked_reason": "shown in the error/tooltip"`
+— `queue_move` rejects it and the frontend greys it out with a 🔒 until
+something unlocks it (see the stacking effects below).
+
+**Permanent stacking transformations** (e.g. Kaioken) are a different thing
+from a timed status buff — they never expire, and work by directly rewriting
+the *caster's other skill dicts* in place, permanently, for the rest of the
+match:
+
+| Type | Does |
+|---|---|
+| `add_stack` | Increments `actor['stacks'][stack_key]` by 1 |
+| `self_damage_by_stack` | Self-damage looked up from `schedule` by current stack count (last value repeats past the end of the list) |
+| `boost_skill_on_stack` | One-shot: at the exact stack count `at_stack`, permanently adds `bonus` to another skill's `effects[effect_index].value` |
+| `unlock_skill_on_stack` | One-shot: at stack count `at_stack`, sets another skill's `locked` to `false` |
+| `scale_skill_by_stack` | Every use: sets another skill's `effects[effect_index].value` to `base + increment * (stacks - 1)` |
+
+`boost_skill_on_stack`/`scale_skill_by_stack` can also carry `"new_description"` /
+`"description_template"` (with a `{value}` placeholder) so the UI text stays
+in sync with the numbers they just changed — otherwise the description
+string goes stale since it's just authored text, not derived from `effects`.
+
 Skill icons are optional — if `"image"` is omitted or the file doesn't exist
 yet under `backend/photos/skills/`, the frontend just doesn't render an icon
 for that skill (no broken-image placeholder). We deliberately don't
