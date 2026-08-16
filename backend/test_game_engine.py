@@ -363,7 +363,7 @@ def test_content_smoke():
         'dodge', 'counter', 'reflect', 'cleanse',
         'remove_chakra', 'steal_chakra', 'chakra_regen', 'chakra_restrict', 'chakra_drain_over_time',
         'add_stack', 'self_damage_by_stack', 'boost_skill_on_stack',
-        'unlock_skill_on_stack', 'scale_skill_by_stack',
+        'unlock_skill_on_stack', 'scale_skill_by_stack', 'set_skill_cost_on_stack',
     }
     bad = []
     for cid, char in characters.CHARACTERS.items():
@@ -405,7 +405,7 @@ def test_goku_saiyan_saga_kit():
     ge.queue_move(game, 'p1', 'A', 'kamehameha', 'p2', 0)
     ge.resolve_turn(game, [])
     check("Kamehameha deals its rounded base damage (25) before Kaioken", b['health'] == 75, b['health'])
-    check("Kamehameha still applies its stun", any(s['type'] == 'stun' for s in b['status']), b['status'])
+    check("Kamehameha is pure damage, no stun", b['status'] == [], b['status'])
 
     # Kaioken Attack is locked before Kaioken has ever been used
     game['turn'] = 'p1'
@@ -420,16 +420,19 @@ def test_goku_saiyan_saga_kit():
           blocked_msg == skills_by_id['kaioken_attack']['locked_reason'], blocked_msg)
 
     # --- 1st Kaioken use ---
+    check("Kaioken's cost before any use is 1 Random", kaioken_live['cost'] == {'random': 1}, kaioken_live['cost'])
     hp_before = a['health']
     ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
     ge.resolve_turn(game, [])
     check("1st Kaioken use costs 20 HP", a['health'] == hp_before - 20, a['health'])
     check("1st Kaioken use sets the stack counter to 1", a.get('stacks', {}).get('kaioken') == 1, a.get('stacks'))
+    check("Kaioken's cost permanently becomes 2 Random after the 1st use",
+          kaioken_live['cost'] == {'random': 2}, kaioken_live['cost'])
     check("Kamehameha is permanently boosted +20 after the 1st Kaioken use (25 -> 45)",
           kamehameha_live['effects'][0]['value'] == 45, kamehameha_live['effects'][0]['value'])
     check("Kaioken Attack is unlocked after the 1st Kaioken use", kaioken_attack_live.get('locked') is False)
-    check("Kaioken Attack's damage is set to its base (30) on the 1st Kaioken use",
-          kaioken_attack_live['effects'][0]['value'] == 30, kaioken_attack_live['effects'][0]['value'])
+    check("Kaioken Attack's damage is set to its base (40) on the 1st Kaioken use",
+          kaioken_attack_live['effects'][0]['value'] == 40, kaioken_attack_live['effects'][0]['value'])
 
     # Kamehameha now actually hits harder in combat
     game['turn'] = 'p1'
@@ -439,27 +442,29 @@ def test_goku_saiyan_saga_kit():
     ge.resolve_turn(game, [])
     check("Kamehameha's boosted damage actually applies in combat", b['health'] == hp_before_b - 45, b['health'])
 
-    # --- 2nd Kaioken use: still 20 HP, Kaioken Attack scales to 40, Kamehameha does NOT re-boost ---
+    # --- 2nd Kaioken use: still 20 HP, Kaioken Attack scales to 50, Kamehameha does NOT re-boost ---
     game['turn'] = 'p1'
     kaioken_live['currentCooldown'] = 0
     hp_before2 = a['health']
     ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
     ge.resolve_turn(game, [])
     check("2nd Kaioken use still costs 20 HP", a['health'] == hp_before2 - 20, a['health'])
+    check("Kaioken's cost stays at 2 Random (doesn't escalate further)",
+          kaioken_live['cost'] == {'random': 2}, kaioken_live['cost'])
     check("Kamehameha's boost does not stack further on the 2nd use",
           kamehameha_live['effects'][0]['value'] == 45, kamehameha_live['effects'][0]['value'])
-    check("Kaioken Attack scales to 40 on the 2nd Kaioken use",
-          kaioken_attack_live['effects'][0]['value'] == 40, kaioken_attack_live['effects'][0]['value'])
+    check("Kaioken Attack scales to 50 on the 2nd Kaioken use",
+          kaioken_attack_live['effects'][0]['value'] == 50, kaioken_attack_live['effects'][0]['value'])
 
-    # --- 3rd Kaioken use: cost jumps to 40 HP, Kaioken Attack scales to 50 ---
+    # --- 3rd Kaioken use: cost jumps to 40 HP, Kaioken Attack scales to 60 ---
     game['turn'] = 'p1'
     kaioken_live['currentCooldown'] = 0
     hp_before3 = a['health']
     ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
     ge.resolve_turn(game, [])
     check("3rd Kaioken use costs 40 HP", a['health'] == hp_before3 - 40, a['health'])
-    check("Kaioken Attack scales to 50 on the 3rd Kaioken use",
-          kaioken_attack_live['effects'][0]['value'] == 50, kaioken_attack_live['effects'][0]['value'])
+    check("Kaioken Attack scales to 60 on the 3rd Kaioken use",
+          kaioken_attack_live['effects'][0]['value'] == 60, kaioken_attack_live['effects'][0]['value'])
 
     # Afterimage Technique: blocks the very next incoming attack
     game2 = make_game()

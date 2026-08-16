@@ -333,6 +333,16 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
             if target:
                 new_value = effect['base'] + effect['increment'] * (count - 1)
                 target['effects'][effect.get('effect_index', 0)]['value'] = new_value
+
+    elif etype == 'set_skill_cost_on_stack':
+        # One-shot: at the exact stack count `at_stack`, permanently replaces
+        # another skill's (or this same skill's) Ki cost -- e.g. Kaioken
+        # costing more of itself to re-cast after the first use.
+        count = actor.get('stacks', {}).get(effect['stack_key'], 0)
+        if count == effect['at_stack']:
+            target = next((s for s in actor.get('skills', []) if s['id'] == effect['skill_id']), None)
+            if target:
+                target['cost'] = dict(effect['cost'])
                 if 'description_template' in effect:
                     target['description'] = effect['description_template'].format(value=new_value)
 
