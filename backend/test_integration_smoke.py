@@ -10,6 +10,14 @@ This exercises real HTTP requests against real SQLite-backed models, so it
 also proves the DB layer (accounts, unlocked characters, match history,
 win/loss streaks) works, not just the in-memory game engine.
 
+Deliberately roster-agnostic: it picks whatever characters currently exist
+in the DB rather than hardcoding names/skill ids, and only exercises the
+generic "does the pipeline work" shape (skill goes on cooldown, match ends,
+stats persist) rather than specific skill math -- that level of detail is
+covered by test_game_engine.py against real character data instead. The
+roster is being rebuilt from scratch one character at a time, so this test
+needs to keep working whether there's 1 character or 50.
+
 Run with: python test_integration_smoke.py
 
 NOTE: this hits the real dev database (backend/game.db) -- it registers two
@@ -39,21 +47,27 @@ def register(flask_client, username, email, password='testpass123'):
     })
 
 
+def resources_for_cost(cost):
+    """Enough dice to pay a skill's cost exactly (any type covers 'random')."""
+    dice = [t for t, amt in cost.items() if t != 'random' for _ in range(amt)]
+    filler_type = dice[0] if dice else 'energy'
+    dice += [filler_type] * cost.get('random', 0)
+    return dice
+
+
 suffix = uuid.uuid4().hex[:8]
 flask_client1 = appmod.app.test_client()
 flask_client2 = appmod.app.test_client()
 
-r1 = register(flask_client1, f'vegeta_{suffix}', f'vegeta_{suffix}@test.local')
-r2 = register(flask_client2, f'goku_{suffix}', f'goku_{suffix}@test.local')
+r1 = register(flask_client1, f'p1_{suffix}', f'p1_{suffix}@test.local')
+r2 = register(flask_client2, f'p2_{suffix}', f'p2_{suffix}@test.local')
 check("player 1 registers successfully", r1.status_code == 201, r1.get_json())
 check("player 2 registers successfully", r2.status_code == 201, r2.get_json())
-user1_id = r1.get_json().get('id')
-user2_id = r2.get_json().get('id')
 
-dup = register(flask_client1, f'vegeta_{suffix}', f'someone-else@test.local')
+dup = register(flask_client1, f'p1_{suffix}', f'someone-else@test.local')
 check("registering a duplicate username is rejected", dup.status_code == 409, dup.get_json())
 
-bad_login = flask_client1.post('/api/login', json={'username': f'vegeta_{suffix}', 'password': 'wrong'})
+bad_login = flask_client1.post('/api/login', json={'username': f'p1_{suffix}', 'password': 'wrong'})
 check("logging in with the wrong password is rejected", bad_login.status_code == 401, bad_login.get_json())
 
 # The SocketIO test client shares its Flask test client's cookie jar, so the
@@ -66,108 +80,101 @@ initial1 = client1.get_received()
 client2.get_received()
 
 char_list_event = next((e for e in initial1 if e['name'] == 'character-list'), None)
-check("authenticated connect receives this account's unlocked characters",
-      char_list_event is not None and len(char_list_event['args'][0]) == 10,
-      char_list_event)
-
-# Pick Vegeta (has the new shield skill) and Krillin (has the new cleanse skill)
-client1.emit('find-match', ['vegeta', 'krillin', 'gohan'])
-client2.emit('find-match', ['goku_saiyan_saga', 'piccolo', 'cell'])
-
-r1_events = client1.get_received()
-r2_events = client2.get_received()
-
-game_start_1 = next((e for e in r1_events if e['name'] == 'game-start'), None)
-game_start_2 = next((e for e in r2_events if e['name'] == 'game-start'), None)
-check("both clients receive game-start", game_start_1 is not None and game_start_2 is not None)
-
-room_id = game_start_1['args'][0]['roomId']
-role1 = game_start_1['args'][0]['role']
-role2 = game_start_2['args'][0]['role']
-check("clients got opposite roles", {role1, role2} == {'p1', 'p2'})
-
-update = next((e for e in r1_events if e['name'] == 'update-state'), None)
-check("initial update-state received", update is not None)
-state = update['args'][0]
-vegeta = next(c for c in state['players'][role1]['team'] if c['id'] == 'vegeta')
-check("character image URL is absolute and host-derived (not a stale hardcoded value)",
-      vegeta['image'].endswith('/photos/Vegeta.png') and vegeta['image'].startswith('http'),
-      vegeta['image'])
-
-p1_client, p1_role = (client1, role1) if role1 == 'p1' else (client2, role2)
-p2_client, p2_role = (client1, role1) if role1 == 'p2' else (client2, role2)
-
-game = appmod.GAMES[room_id]
-check("game state records each player's account id (not just their socket)",
-      game['players']['p1'].get('user_id') is not None and game['players']['p2'].get('user_id') is not None,
-      (game['players']['p1'].get('user_id'), game['players']['p2'].get('user_id')))
-
-# Give p1 resources deterministically instead of relying on the random dice
-# roll, so this test is not flaky.
-game['players']['p1']['resources'] = ['martial', 'energy', 'spirit', 'rage']
-game['players']['p2']['resources'] = ['martial', 'energy', 'spirit', 'rage']
-
-# Vegeta's "Giant Crush" costs 1 martial, damages the enemy and shields self.
-vegeta_owner_client = p1_client if any(c['id'] == 'vegeta' for c in game['players']['p1']['team']) else p2_client
-vegeta_role = 'p1' if vegeta_owner_client is p1_client else 'p2'
-enemy_role = 'p2' if vegeta_role == 'p1' else 'p1'
-enemy_client = p2_client if vegeta_owner_client is p1_client else p1_client
-
-game['turn'] = vegeta_role
-vegeta_owner_client.get_received()
-vegeta_owner_client.emit('queue-skill', {
-    'roomId': room_id, 'skillId': 'ozaru_crush', 'myPlayerKey': vegeta_role,
-    'targetPlayerKey': enemy_role, 'targetIndex': 0
-})
-received = vegeta_owner_client.get_received()
-errors = [e for e in received if e['name'] == 'error-msg']
-check("queueing Giant Crush produces no error", errors == [], errors)
-
-vegeta_owner_client.emit('commit-turn', {'roomId': room_id, 'paymentList': ['martial']})
-received = vegeta_owner_client.get_received()
-update = next((e for e in received if e['name'] == 'update-state'), None)
-check("commit-turn resolves and broadcasts update-state", update is not None)
-
-vegeta_after = next(c for c in game['players'][vegeta_role]['team'] if c['id'] == 'vegeta')
-check("Vegeta gained a destructible defense shield from Giant Crush",
-      vegeta_after.get('defense', 0) == 20, vegeta_after.get('defense'))
-
-enemy_first = game['players'][enemy_role]['team'][0]
-check("enemy target took Giant Crush's damage", enemy_first['health'] == 80, enemy_first['health'])
-
-# --- Force the match to a decisive end so we can check DB persistence -------
-# (turn auto-advanced to the enemy after the commit above)
-for c in game['players'][enemy_role]['team']:
-    c['health'] = 0
-enemy_client.get_received()
-enemy_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
-received = enemy_client.get_received()
-check("wiping a team's HP and committing ends the match",
-      game.get('winner') == vegeta_role, game.get('winner'))
-
-winner_uid = game['players'][vegeta_role]['user_id']
-loser_uid = game['players'][enemy_role]['user_id']
+check("authenticated connect receives a character list", char_list_event is not None, char_list_event)
+available = char_list_event['args'][0] if char_list_event else []
 
 with appmod.app.app_context():
-    winner_stats = appmod.db.session.get(appmod.UserStats, winner_uid)
-    loser_stats = appmod.db.session.get(appmod.UserStats, loser_uid)
-    check("winner's stats recorded exactly one win",
-          winner_stats.total_wins == 1 and winner_stats.total_matches == 1 and winner_stats.current_win_streak == 1,
-          (winner_stats.total_wins, winner_stats.total_matches, winner_stats.current_win_streak))
-    check("loser's stats recorded exactly one loss",
-          loser_stats.total_losses == 1 and loser_stats.total_matches == 1 and loser_stats.current_win_streak == 0,
-          (loser_stats.total_losses, loser_stats.total_matches, loser_stats.current_win_streak))
+    db_count = appmod.Character.query.count()
+check("character-list matches what's actually seeded in the DB", len(available) == db_count,
+      (len(available), db_count))
 
-    match_row = appmod.Match.query.filter_by(winner_id=winner_uid).order_by(appmod.Match.id.desc()).first()
-    check("a Match row was created for this game",
-          match_row is not None and {match_row.player1_id, match_row.player2_id} == {winner_uid, loser_uid},
-          match_row)
+if len(available) < 3:
+    print(f"\nSKIPPED: matchmaking/combat/persistence checks need >= 3 characters in the roster "
+          f"(currently {len(available)}). Re-run once more characters are added.")
+else:
+    team_ids = [c['id'] for c in available[:3]]
+
+    client1.emit('find-match', team_ids)
+    client2.emit('find-match', team_ids)
+
+    r1_events = client1.get_received()
+    r2_events = client2.get_received()
+
+    game_start_1 = next((e for e in r1_events if e['name'] == 'game-start'), None)
+    game_start_2 = next((e for e in r2_events if e['name'] == 'game-start'), None)
+    check("both clients receive game-start", game_start_1 is not None and game_start_2 is not None)
+
+    room_id = game_start_1['args'][0]['roomId']
+    role1 = game_start_1['args'][0]['role']
+    role2 = game_start_2['args'][0]['role']
+    check("clients got opposite roles", {role1, role2} == {'p1', 'p2'})
+
+    update = next((e for e in r1_events if e['name'] == 'update-state'), None)
+    check("initial update-state received", update is not None)
+    state = update['args'][0]
+    any_char = state['players'][role1]['team'][0]
+    check("character image URL is absolute and host-derived (not a stale hardcoded value)",
+          any_char['image'].startswith('http') and '/photos/' in any_char['image'], any_char['image'])
+
+    p1_client = client1 if role1 == 'p1' else client2
+    p2_client = client2 if role1 == 'p1' else client1
+
+    game = appmod.GAMES[room_id]
+    check("game state records each player's account id (not just their socket)",
+          game['players']['p1'].get('user_id') is not None and game['players']['p2'].get('user_id') is not None,
+          (game['players']['p1'].get('user_id'), game['players']['p2'].get('user_id')))
+
+    actor = game['players']['p1']['team'][0]
+    skill = actor['skills'][0]
+    game['players']['p1']['resources'] = resources_for_cost(skill['cost'])
+    game['turn'] = 'p1'
+
+    p1_client.get_received()
+    p1_client.emit('queue-skill', {
+        'roomId': room_id, 'skillId': skill['id'], 'myPlayerKey': 'p1',
+        'targetPlayerKey': 'p2', 'targetIndex': 0
+    })
+    received = p1_client.get_received()
+    errors = [e for e in received if e['name'] == 'error-msg']
+    check(f"queueing {actor['name']}'s {skill['name']} produces no error", errors == [], errors)
+
+    p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': game['players']['p1']['resources']})
+    received = p1_client.get_received()
+    update = next((e for e in received if e['name'] == 'update-state'), None)
+    check("commit-turn resolves and broadcasts update-state", update is not None)
+    check("the used skill went on cooldown (proof the engine actually processed it)",
+          skill['currentCooldown'] > 0, skill['currentCooldown'])
+
+    # --- Force the match to a decisive end so we can check DB persistence ---
+    # (turn auto-advanced to p2 after the commit above)
+    for c in game['players']['p2']['team']:
+        c['health'] = 0
+    p2_client.get_received()
+    p2_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
+    p2_client.get_received()
+    check("wiping a team's HP and committing ends the match", game.get('winner') == 'p1', game.get('winner'))
+
+    winner_uid = game['players']['p1']['user_id']
+    loser_uid = game['players']['p2']['user_id']
+
+    with appmod.app.app_context():
+        winner_stats = appmod.db.session.get(appmod.UserStats, winner_uid)
+        loser_stats = appmod.db.session.get(appmod.UserStats, loser_uid)
+        check("winner's stats recorded exactly one win",
+              winner_stats.total_wins == 1 and winner_stats.total_matches == 1 and winner_stats.current_win_streak == 1,
+              (winner_stats.total_wins, winner_stats.total_matches, winner_stats.current_win_streak))
+        check("loser's stats recorded exactly one loss",
+              loser_stats.total_losses == 1 and loser_stats.total_matches == 1 and loser_stats.current_win_streak == 0,
+              (loser_stats.total_losses, loser_stats.total_matches, loser_stats.current_win_streak))
+
+        match_row = appmod.Match.query.filter_by(winner_id=winner_uid).order_by(appmod.Match.id.desc()).first()
+        check("a Match row was created for this game",
+              match_row is not None and {match_row.player1_id, match_row.player2_id} == {winner_uid, loser_uid},
+              match_row)
 
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S): {FAILURES}")
     raise SystemExit(1)
 else:
-    print("Integration smoke test passed: register -> login -> find-match -> queue-skill -> "
-          "commit-turn -> match end all work through the real stack, and stats/match history "
-          "were correctly persisted to the database.")
+    print("Integration smoke test passed.")

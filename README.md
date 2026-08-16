@@ -68,7 +68,9 @@ backend/
   game_engine.py         Turn/effect resolution engine (damage, status effects, chakra, etc.)
   characters.py           Character roster and skill definitions (source of truth for seeding; the DB is what the app actually reads from once seeded)
   game.db                  SQLite database (gitignored -- created by seed_db.py / app.py)
-  photos/                   Character portraits
+  photos/
+    characters/               Character portraits (one per roster entry, e.g. Goku_(Saiyan-Saga).png)
+    skills/                    Per-skill icons (optional; gracefully absent until added)
   test_game_engine.py       Direct engine unit tests
   test_integration_smoke.py  End-to-end test: HTTP auth + Socket.IO + DB persistence
 frontend/
