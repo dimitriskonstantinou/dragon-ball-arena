@@ -328,6 +328,8 @@ const STATUS_META = {
     reflect:               { icon: '🪞', label: 'REFLECT READY',   cls: 'status-buff' },
     chakra_restrict:       { icon: '🔒', label: 'KI LOCKED',       cls: 'status-debuff' },
     chakra_drain_over_time:{ icon: '🌀', label: 'KI DRAIN',        cls: 'status-debuff' },
+    protected:             { icon: '🙏', label: 'PROTECTED',       cls: 'status-buff' },
+    delayed_damage:        { icon: '💥', label: 'CHARGING HIT',    cls: 'status-debuff' },
 };
 
 const PERCENT_MODS = {

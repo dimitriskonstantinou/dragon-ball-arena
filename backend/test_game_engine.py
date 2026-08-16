@@ -341,6 +341,69 @@ def test_legacy_aoe_damage_still_works():
     check("legacy aoe_damage still hits the whole opponent team", healths == [90, 90], healths)
 
 
+def test_protect_redirects_damage_to_protector():
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('Guardian'))
+    protector = game['players']['p1']['team'][1]
+    protected = game['players']['p1']['team'][0]
+    enemy = game['players']['p2']['team'][0]
+
+    ge.apply_effect({'type': 'protect', 'duration': 1}, actor=protector, targets=[protected],
+                     player=game['players']['p1'], opponent=game['players']['p2'], skill_classes=[])
+    check("protect grants the target a 'protected' status",
+          any(s['type'] == 'protected' for s in protected['status']), protected['status'])
+
+    ge.apply_effect({'type': 'damage', 'value': 20}, actor=enemy, targets=[protected],
+                     player=game['players']['p2'], opponent=game['players']['p1'], skill_classes=[])
+    check("the protected ally takes no damage", protected['health'] == 100, protected['health'])
+    check("the protector takes the damage instead", protector['health'] == 80, protector['health'])
+    check("protection is consumed after one hit",
+          not any(s['type'] == 'protected' for s in protected['status']), protected['status'])
+
+    # A second hit with no protection left should land on the original target again
+    ge.apply_effect({'type': 'damage', 'value': 15}, actor=enemy, targets=[protected],
+                     player=game['players']['p2'], opponent=game['players']['p1'], skill_classes=[])
+    check("further hits land normally once protection is used up", protected['health'] == 85, protected['health'])
+
+
+def test_delayed_damage_charges_then_detonates_next_turn():
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 10, 'tag': 'buff'})
+
+    ge.apply_effect({'type': 'delayed_damage', 'value': 40, 'duration': 1}, actor=a, targets=[b],
+                     player=game['players']['p1'], opponent=game['players']['p2'], skill_classes=[])
+    check("delayed_damage deals no damage immediately", b['health'] == 100, b['health'])
+    check("the charging status is visible on the target",
+          any(s['type'] == 'delayed_damage' for s in b['status']), b['status'])
+
+    ge.start_turn(game, 'p2')  # opponent's turn: 1st tick, not detonated yet
+    check("still no damage after the opponent's turn (1 tick in)", b['health'] == 100, b['health'])
+
+    ge.start_turn(game, 'p1')  # caster's own next turn: 2nd tick, detonates now
+    check("detonates for the full 40 at the start of the caster's next turn",
+          b['health'] == 60, b['health'])
+    check("detonation ignores invulnerability", True)  # target had 'invulnerable' the whole time
+    check("the charging status is gone after detonating",
+          not any(s['type'] == 'delayed_damage' for s in b['status']), b['status'])
+
+
+def test_random_multi_damage_hits_exactly_n_targets():
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    game['players']['p2']['team'].append(make_char('D'))
+    a = game['players']['p1']['team'][0]
+
+    ge.apply_effect({'type': 'random_multi_damage', 'value': 25, 'count': 2}, actor=a, targets=[],
+                     player=game['players']['p1'], opponent=game['players']['p2'], skill_classes=[])
+    healths = [c['health'] for c in game['players']['p2']['team']]
+    hit_count = sum(1 for h in healths if h == 75)
+    untouched_count = sum(1 for h in healths if h == 100)
+    check("random_multi_damage hits exactly 2 of the 3 enemies for the full value",
+          hit_count == 2 and untouched_count == 1, healths)
+
+
 def test_win_condition_still_works():
     game = make_game()
     b = game['players']['p2']['team'][0]
@@ -364,6 +427,7 @@ def test_content_smoke():
         'remove_chakra', 'steal_chakra', 'chakra_regen', 'chakra_restrict', 'chakra_drain_over_time',
         'add_stack', 'self_damage_by_stack', 'boost_skill_on_stack',
         'unlock_skill_on_stack', 'scale_skill_by_stack', 'set_skill_cost_on_stack',
+        'protect', 'random_multi_damage', 'delayed_damage',
     }
     bad = []
     for cid, char in characters.CHARACTERS.items():

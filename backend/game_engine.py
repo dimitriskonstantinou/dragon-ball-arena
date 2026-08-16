@@ -19,7 +19,9 @@ import random
 #   stun, silence, dot, hot, heal_block,
 #   damage_taken_mod, damage_dealt_mod, heal_received_mod, heal_dealt_mod,
 #   invulnerable, physical_invulnerable, chakra_invulnerable, mental_invulnerable,
-#   dodge, counter, reflect
+#   dodge, counter, reflect, protected,
+#   delayed_damage (visible "charging" marker; detonates on its last tick --
+#   see tick_statuses -- rather than every tick like dot)
 #
 # Recognized player-status types:
 #   chakra_restrict, chakra_drain_over_time
@@ -123,6 +125,24 @@ def is_harmful_blocked(target, skill_classes):
     return False
 
 
+def resolve_protection(target, player, opponent):
+    """If `target` has an active 'protected' status (from the 'protect'
+    effect), consumes it (one-shot) and returns the protector to redirect
+    the hit to instead -- or None if there's no protection, or the
+    protector has since died, in which case the hit lands on `target` as
+    normal. Only wired into direct single-target damage (damage/
+    piercing_damage/affliction_damage), not aoe_damage or dot."""
+    protect_status = consume_status(target, 'protected')
+    if not protect_status:
+        return None
+    protector_id = protect_status.get('protector_id')
+    for team in (player['team'], opponent['team']):
+        for c in team:
+            if c['id'] == protector_id and c['health'] > 0:
+                return c
+    return None
+
+
 # --- core resolution --------------------------------------------------------
 
 def apply_damage(target, amount, actor=None, ignore_defense=False,
@@ -178,20 +198,43 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
 
     if etype == 'damage':
         for t in effect_targets:
-            apply_damage(t, effect['value'], actor=actor, skill_classes=skill_classes)
+            real_target = resolve_protection(t, player, opponent) or t
+            apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes)
 
     elif etype == 'piercing_damage':
         for t in effect_targets:
-            apply_damage(t, effect['value'], actor=actor, ignore_reduction=True, skill_classes=skill_classes)
+            real_target = resolve_protection(t, player, opponent) or t
+            apply_damage(real_target, effect['value'], actor=actor, ignore_reduction=True, skill_classes=skill_classes)
 
     elif etype == 'affliction_damage':
         for t in effect_targets:
-            apply_damage(t, effect['value'], actor=actor,
+            real_target = resolve_protection(t, player, opponent) or t
+            apply_damage(real_target, effect['value'], actor=actor,
                          ignore_defense=True, ignore_reduction=True, ignore_invuln=True,
                          skill_classes=skill_classes)
 
     elif etype == 'self_damage':
         actor['health'] = max(0, actor['health'] - effect['value'])
+
+    elif etype == 'random_multi_damage':
+        # Ignores the resolved target entirely (like aoe_damage) -- the UI
+        # still requires clicking *a* target to fire the skill, but the
+        # actual targets are randomly sampled from the opponent's living team.
+        alive_enemies = [c for c in opponent['team'] if c['health'] > 0]
+        chosen = random.sample(alive_enemies, min(effect.get('count', 1), len(alive_enemies)))
+        for t in chosen:
+            real_target = resolve_protection(t, player, opponent) or t
+            apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes)
+
+    elif etype == 'delayed_damage':
+        # Visible "charging" marker -- deals no damage now. Detonates as a
+        # flat, unmitigated hit (ignores invulnerability/defense/reduction,
+        # like affliction) on its last tick; see tick_statuses(). The status
+        # itself is what makes the charge-up visible to the opponent.
+        for t in effect_targets:
+            if t['health'] > 0:
+                add_status(t, {'type': 'delayed_damage', 'value': effect['value'],
+                                'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
     elif etype == 'aoe_damage':
         # Legacy shorthand: always hits the caster's whole opponent team,
@@ -219,6 +262,15 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
     elif etype == 'team_heal':
         for c in player['team']:
             apply_heal(c, effect['value'], actor=actor)
+
+    elif etype == 'protect':
+        # Grants the target ally a one-shot redirect: the next direct
+        # damage instance (damage/piercing_damage/affliction_damage) aimed
+        # at them lands on the caster instead. See resolve_protection().
+        for t in effect_targets:
+            if t['health'] > 0:
+                add_status(t, {'type': 'protected', 'protector_id': actor['id'],
+                                'duration': effect.get('duration', 1) * 2, 'tag': 'buff'})
 
     elif etype == 'heal_block':
         for t in effect_targets:
@@ -366,6 +418,11 @@ def tick_statuses(game_state):
                         char['health'] = max(0, char['health'] - s.get('value', 0))
                     elif s['type'] == 'hot':
                         char['health'] = min(char['maxHealth'], char['health'] + s.get('value', 0))
+                    elif s['type'] == 'delayed_damage' and s['duration'] <= 1:
+                        # Last tick before expiry -- detonate now, unmitigated
+                        # (ignores invulnerability/defense/reduction), then let
+                        # the duration check below prune the marker as usual.
+                        char['health'] = max(0, char['health'] - s.get('value', 0))
                 s['duration'] -= 1
                 if s['duration'] > 0:
                     active.append(s)
