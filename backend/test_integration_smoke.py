@@ -72,7 +72,7 @@ check("authenticated connect receives this account's unlocked characters",
 
 # Pick Vegeta (has the new shield skill) and Krillin (has the new cleanse skill)
 client1.emit('find-match', ['vegeta', 'krillin', 'gohan'])
-client2.emit('find-match', ['goku', 'piccolo', 'cell'])
+client2.emit('find-match', ['goku_saiyan_saga', 'piccolo', 'cell'])
 
 r1_events = client1.get_received()
 r2_events = client2.get_received()

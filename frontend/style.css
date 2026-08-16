@@ -20,6 +20,22 @@ body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif;
 }
 #topbar a { color: var(--gold); }
 
+/* --- ONBOARDING --- */
+.how-to-play {
+    max-width: 700px; margin: 0 auto 15px; padding: 10px 15px; text-align: left;
+    background: #222; border: 1px solid #444; border-radius: 8px; font-size: 0.85rem; color: #ccc;
+}
+.ki-legend {
+    display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; margin-bottom: 15px;
+    font-size: 0.85rem; color: #ccc;
+}
+.ki-legend .cost-box { margin-right: 4px; vertical-align: middle; }
+
+.skill-icon {
+    width: 32px; height: 32px; border-radius: 4px; object-fit: cover;
+    margin-right: 8px; flex-shrink: 0; background: #111;
+}
+
 /* --- TURN INDICATOR --- */
 .turn-display {
     display: flex; justify-content: space-between; align-items: center;

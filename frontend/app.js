@@ -9,6 +9,11 @@ let selectedSkillObj = null;
 let currentGameState = null;
 let currentUser = null;
 
+const KI_LABELS = {
+    energy: 'Energy Ki', martial: 'Martial Ki', spirit: 'Spirit Ki',
+    rage: 'Rage Ki', random: 'Any Ki type',
+};
+
 // Lobby Data
 let selectedChars = [];
 
@@ -266,6 +271,7 @@ function renderDice(elementId, dice, clickable = false) {
     dice.sort().forEach((type, idx) => {
         const d = document.createElement('div');
         d.className = `die ${type}`;
+        d.title = KI_LABELS[type] || type;
         if(clickable) { d.onclick = () => onPaymentDieClick(idx, type); }
         container.appendChild(d);
     });
@@ -296,6 +302,7 @@ function renderMyDice(dicePool, pendingMoves) {
     pool.forEach((type, index) => {
         const d = document.createElement('div');
         d.className = `die ${type} ${usedFlags[index] ? 'locked' : ''}`;
+        d.title = usedFlags[index] ? `${KI_LABELS[type] || type} (reserved for a queued move)` : (KI_LABELS[type] || type);
         container.appendChild(d);
     });
 }
@@ -393,16 +400,26 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
                 char.skills.forEach(skill => {
                     let costHtml = '';
                     Object.entries(skill.cost).forEach(([type, amt]) => {
-                        for(let i=0; i<amt; i++) costHtml += `<span class="cost-box ${type}"></span>`;
+                        for(let i=0; i<amt; i++) costHtml += `<span class="cost-box ${type}" title="${KI_LABELS[type] || type}"></span>`;
                     });
 
                     const affordable = canAfford(remainingDice, skill.cost);
                     const silenced = isSilencedFor(char, skill);
                     const disabled = !isMyTurn || char.health <= 0 || isStunned || silenced || skill.currentCooldown > 0 || !affordable ? 'disabled' : '';
+                    let disabledReason = '';
+                    if (char.health <= 0) disabledReason = 'This character has been defeated.';
+                    else if (isStunned) disabledReason = 'Stunned -- cannot act this turn.';
+                    else if (silenced) disabledReason = 'Silenced -- this skill is blocked.';
+                    else if (skill.currentCooldown > 0) disabledReason = `On cooldown: ${skill.currentCooldown} more turn(s).`;
+                    else if (!affordable) disabledReason = 'Not enough Ki of the right type(s) left this turn.';
                     const cdText = skill.currentCooldown > 0 ? `(${skill.currentCooldown})` : '';
+                    const iconHtml = skill.image
+                        ? `<img src="${skill.image}" class="skill-icon" onerror="this.style.display='none'">`
+                        : '';
 
                     controlsHtml += `
-                        <button class="skill-btn" ${disabled} onclick="onSkillClicked('${skill.id}', this)">
+                        <button class="skill-btn" ${disabled} onclick="onSkillClicked('${skill.id}', this)" title="${disabledReason}">
+                            ${iconHtml}
                             <div style="flex-grow:1">
                                 <b>${skill.name}</b> ${cdText}
                                 <div style="font-size:0.8em; color:#aaa">${skill.description}</div>

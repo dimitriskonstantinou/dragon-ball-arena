@@ -111,6 +111,7 @@ A skill lives on a character in `characters.py` and looks like:
     "cost": {"energy": 1, "random": 1},   # chakra cost; keys: energy/martial/spirit/rage/random
     "target_type": "enemy",                # enemy | ally | self | enemy_team | ally_team
     "classes": ["physical"],               # optional; interacts with class-scoped invuln/silence
+    "image": "skill_file.png",             # optional; filename under backend/photos/skills/
     "effects": [
         {"type": "damage", "value": 20}
     ],
@@ -120,6 +121,22 @@ A skill lives on a character in `characters.py` and looks like:
 
 Any effect can add `"target": "self"` to hit the caster instead of the
 skill's normal target (e.g. damage an enemy while buffing yourself).
+
+Skill icons are optional — if `"image"` is omitted or the file doesn't exist
+yet under `backend/photos/skills/`, the frontend just doesn't render an icon
+for that skill (no broken-image placeholder). We deliberately don't
+auto-source anime stills for these; drop your own images in that folder
+under the filename referenced by each skill.
+
+**Character roster naming convention:** characters are saga-versioned, not
+just named after the person — e.g. `goku_saiyan_saga`, not `goku`. A later
+version of the same character (e.g. Namek Saga Goku) gets its own separate
+id/roster entry rather than replacing this one, so multiple versions can
+coexist. **Every character is meant to eventually carry one shared universal
+4th skill** — id `afterimage_technique`, `{"type": "invulnerable", "duration": 1}`
+— the DBZ equivalent of Naruto Arena's Substitution (blocks all damage/harmful
+effects for the opponent's next turn). It's only on `goku_saiyan_saga` so far;
+each character picks it up when their kit gets its balance pass.
 
 Supported effect types:
 

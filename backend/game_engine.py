@@ -376,7 +376,8 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
     if has_status(char_status, 'silence', target_classes=used_skill.get('classes', [])):
         raise Exception(f"{actor_char['name']} is silenced and cannot use that skill!")
 
-    if used_skill['currentCooldown'] > 0: raise Exception("Cooldown")
+    if used_skill['currentCooldown'] > 0:
+        raise Exception(f"{used_skill['name']} is on cooldown for {used_skill['currentCooldown']} more turn(s)!")
 
     for chakra_type in used_skill.get('cost', {}):
         if chakra_type == 'random':

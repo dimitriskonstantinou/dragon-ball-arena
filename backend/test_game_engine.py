@@ -372,6 +372,70 @@ def test_content_smoke():
     check("every skill effect type in characters.py is recognized by the engine", bad == [], bad)
 
 
+def test_goku_saiyan_saga_kit():
+    """Exercises Goku's real kit straight from characters.py (not synthetic
+    skills), so a future balance tweak that breaks the intended interactions
+    (e.g. Kaioken no longer buffing Kaioken Attack) gets caught."""
+    import characters
+    skills_by_id = {s['id']: s for s in characters.CHARACTERS['goku_saiyan_saga']['skills']}
+    check("goku_saiyan_saga has the 3 signature skills + the universal one",
+          set(skills_by_id) == {'kamehameha', 'kaioken', 'kaioken_attack', 'afterimage_technique'},
+          set(skills_by_id))
+
+    # Kamehameha: damage + stun
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [copy.deepcopy(skills_by_id['kamehameha'])]
+    a['skills'][0]['currentCooldown'] = 0
+    ge.queue_move(game, 'p1', 'A', 'kamehameha', 'p2', 0)
+    ge.resolve_turn(game, [])
+    b = game['players']['p2']['team'][0]
+    check("Kamehameha damages and stuns the target",
+          b['health'] < 100 and any(s['type'] == 'stun' for s in b['status']), (b['health'], b['status']))
+
+    # Kaioken: costs the caster HP and grants a self damage buff that should
+    # then boost Kaioken Attack's damage on a later use.
+    game2 = make_game()
+    a2 = game2['players']['p1']['team'][0]
+    b2 = game2['players']['p2']['team'][0]
+    a2['skills'] = [copy.deepcopy(skills_by_id['kaioken']), copy.deepcopy(skills_by_id['kaioken_attack'])]
+    for s in a2['skills']: s['currentCooldown'] = 0
+    hp_before = a2['health']
+
+    ge.queue_move(game2, 'p1', 'A', 'kaioken', 'p1', 0)
+    ge.resolve_turn(game2, [])
+    check("Kaioken costs the caster HP (bodily strain)", a2['health'] < hp_before, a2['health'])
+    check("Kaioken grants a self damage_dealt_mod buff",
+          any(s['type'] == 'damage_dealt_mod' for s in a2['status']), a2['status'])
+
+    game2['turn'] = 'p1'  # same player follows up immediately, to isolate the buff interaction
+    ge.queue_move(game2, 'p1', 'A', 'kaioken_attack', 'p2', 0)
+    ge.resolve_turn(game2, [])
+    base_value = skills_by_id['kaioken_attack']['effects'][0]['value']
+    buff_value = skills_by_id['kaioken']['effects'][0]['value']
+    expected_dmg = round(base_value * (1 + buff_value))
+    check("Kaioken Attack deals boosted damage while Kaioken is active",
+          b2['health'] == 100 - expected_dmg, (b2['health'], expected_dmg))
+
+    # Afterimage Technique: blocks the very next incoming attack
+    game3 = make_game()
+    a3 = game3['players']['p1']['team'][0]
+    b3 = game3['players']['p2']['team'][0]
+    a3['skills'] = [copy.deepcopy(skills_by_id['afterimage_technique'])]
+    a3['skills'][0]['currentCooldown'] = 0
+    ge.queue_move(game3, 'p1', 'A', 'afterimage_technique', 'p1', 0)
+    ge.resolve_turn(game3, [])
+    check("Afterimage Technique grants self-invulnerability",
+          any(s['type'] == 'invulnerable' for s in a3['status']), a3['status'])
+
+    game3['turn'] = 'p2'
+    b3['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
+                      'effects': [{'type': 'damage', 'value': 20}], 'cooldown': 0, 'currentCooldown': 0}]
+    ge.queue_move(game3, 'p2', 'B', 'poke', 'p1', 0)
+    ge.resolve_turn(game3, [])
+    check("Afterimage Technique blocks the incoming attack", a3['health'] == 100, a3['health'])
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

@@ -68,6 +68,9 @@ def characters_for_user(user, base_url):
     for row in Character.query.filter(Character.id.in_(unlocked_ids)).all():
         char_dict = row.to_game_dict()
         char_dict['image'] = base_url + 'photos/' + char_dict['image']
+        for skill in char_dict['skills']:
+            if skill.get('image'):
+                skill['image'] = base_url + 'photos/skills/' + skill['image']
         result[row.id] = char_dict
     return result
 

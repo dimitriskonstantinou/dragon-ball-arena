@@ -37,6 +37,18 @@
     </div>
 
     <div id="lobby-screen" style="display:none;">
+        <div class="how-to-play">
+            <b>How to play:</b> each turn you roll Ki dice, then spend them to queue up to one
+            skill per character. Once you hit EXECUTE ATTACKS, both players' queued moves resolve.
+            Hover any Ki cost or die for what it is; hover a greyed-out skill to see why it's unavailable.
+        </div>
+        <div class="ki-legend">
+            <span><span class="cost-box energy"></span> Energy</span>
+            <span><span class="cost-box martial"></span> Martial</span>
+            <span><span class="cost-box spirit"></span> Spirit</span>
+            <span><span class="cost-box rage"></span> Rage</span>
+            <span><span class="cost-box random"></span> Any type</span>
+        </div>
         <h1>CHOOSE YOUR TEAM (3)</h1>
         <div id="char-grid" class="char-grid"></div>
         <button id="find-match-btn" class="big-btn" onclick="findMatch()" disabled>FIND MATCH</button>
