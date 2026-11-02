@@ -822,6 +822,75 @@ def test_queue_rejects_unaffordable_skills():
     check("re-queueing the same character replaces its move instead of double-counting the cost", not blocked('A'))
 
 
+def test_target_validation():
+    """Regression: queue_move used to accept any target -- self skills on
+    other allies, dead or out-of-range targets (skill wasted, still on
+    cooldown), the wrong side, and moves from dead characters."""
+    def skill(sid, target_type):
+        return {"id": sid, "name": sid, "cost": {}, "target_type": target_type,
+                "effects": [{"type": "invulnerable", "duration": 1}] if target_type in ('self', 'ally')
+                else [{"type": "damage", "value": 10}], "cooldown": 0, "currentCooldown": 0}
+
+    def fresh():
+        game = make_game()
+        game['players']['p1']['team'].append(make_char('A2'))
+        game['players']['p2']['team'].append(make_char('B2'))
+        for c in game['players']['p1']['team']:
+            c['skills'] = [skill('hit', 'enemy'), skill('guard', 'self'), skill('help', 'ally'),
+                           skill('sweep', 'enemy_team')]
+        return game
+
+    def blocked(game, char_id, skill_id, pid, idx):
+        try:
+            ge.queue_move(game, 'p1', char_id, skill_id, pid, idx)
+            return False
+        except Exception:
+            return True
+
+    game = fresh()
+    ge.queue_move(game, 'p1', 'A', 'guard', 'p1', 1)  # clicked A2, but 'self' means the caster
+    move = game['pending_moves'][0]
+    check("a 'self' skill is retargeted to the caster, whatever was clicked",
+          (move['targetPid'], move['targetIndex']) == ('p1', 0), move)
+    ge.resolve_turn(game, [])
+    check("...so the self-buff lands on the caster, not the clicked ally",
+          any(s['type'] == 'invulnerable' for s in game['players']['p1']['team'][0]['status'])
+          and not game['players']['p1']['team'][1]['status'])
+
+    game = fresh()
+    check("enemy skill aimed at your own side is rejected", blocked(game, 'A', 'hit', 'p1', 0))
+    check("ally skill aimed at the enemy side is rejected", blocked(game, 'A', 'help', 'p2', 0))
+    check("out-of-range target index is rejected", blocked(game, 'A', 'hit', 'p2', 99))
+    check("negative target index is rejected", blocked(game, 'A', 'hit', 'p2', -1))
+    check("non-integer target index is rejected", blocked(game, 'A', 'hit', 'p2', '0'))
+
+    game = fresh()
+    game['players']['p2']['team'][0]['health'] = 0
+    check("a defeated enemy can't be targeted", blocked(game, 'A', 'hit', 'p2', 0))
+    check("a living enemy still can", not blocked(game, 'A', 'hit', 'p2', 1))
+
+    game = fresh()
+    game['players']['p1']['team'][1]['health'] = 0
+    check("a defeated ally can't be targeted", blocked(game, 'A', 'help', 'p1', 1))
+    check("a defeated character can't act", blocked(game, 'A2', 'hit', 'p2', 0))
+
+    game = fresh()
+    check("a team skill works whichever enemy was clicked", not blocked(game, 'A', 'sweep', 'p2', 1))
+
+    game = fresh()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'marked_for_counter', 'value': 20, 'duration': 2, 'tag': 'harmful'})
+    game['turn'] = 'p2'
+    b['skills'] = [skill('hit', 'enemy')]
+    try:
+        ge.queue_move(game, 'p2', 'B', 'hit', 'p2', 0)  # invalid: own side
+    except Exception:
+        pass
+    check("an invalid target is rejected before the counter-mark can trigger",
+          b['health'] == 100 and any(s['type'] == 'marked_for_counter' for s in b['status']),
+          (b['health'], b['status']))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

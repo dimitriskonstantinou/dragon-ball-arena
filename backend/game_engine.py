@@ -649,6 +649,36 @@ def start_turn(game_state, player_id):
     return game_state
 
 
+def resolve_target(game_state, player_id, actor_char, skill, target_pid, target_index):
+    """Validates the client's chosen target against the skill's target_type
+    and returns the (target_pid, target_index) to store on the move. 'self'
+    and team skills don't trust the click at all -- the server picks the
+    side (and for 'self', the caster) itself."""
+    opponent_id = 'p2' if player_id == 'p1' else 'p1'
+    own_team = game_state['players'][player_id]['team']
+    target_type = skill.get('target_type', 'enemy')
+
+    if target_type == 'self':
+        return player_id, own_team.index(actor_char)
+    if target_type == 'enemy_team':
+        return opponent_id, 0
+    if target_type == 'ally_team':
+        return player_id, 0
+
+    expected_pid = opponent_id if target_type == 'enemy' else player_id
+    if target_pid != expected_pid:
+        side = "an enemy" if target_type == 'enemy' else "an ally"
+        raise Exception(f"{skill['name']} must target {side}!")
+    if not isinstance(target_index, int) or isinstance(target_index, bool):
+        raise Exception("Invalid target!")
+    team = game_state['players'][expected_pid]['team']
+    if not 0 <= target_index < len(team):
+        raise Exception("Invalid target!")
+    if team[target_index]['health'] <= 0:
+        raise Exception(f"{team[target_index]['name']} has already been defeated!")
+    return expected_pid, target_index
+
+
 def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_index):
     player = game_state['players'][player_id]
     if game_state['turn'] != player_id: raise Exception("Not your turn!")
@@ -656,6 +686,8 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
     actor_char = next((c for c in player['team'] if c['id'] == char_id), None)
 
     if not actor_char: raise Exception("Character not found")
+    if actor_char['health'] <= 0:
+        raise Exception(f"{actor_char['name']} has been defeated and cannot act!")
 
     used_skill = next((s for s in actor_char['skills'] if s['id'] == skill_id), None)
     if not used_skill: raise Exception("Skill not found")
@@ -671,6 +703,10 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
 
     if used_skill['currentCooldown'] > 0:
         raise Exception(f"{used_skill['name']} is on cooldown for {used_skill['currentCooldown']} more turn(s)!")
+
+    # Before the counter-mark check, so an invalid click can't trip the trap.
+    target_pid, target_index = resolve_target(game_state, player_id, actor_char, used_skill,
+                                              target_pid, target_index)
 
     # Only trips once we know this would otherwise be a legitimate queue
     # attempt (not blocked by stun/silence/lock/cooldown already) -- a
