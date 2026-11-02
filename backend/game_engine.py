@@ -65,6 +65,41 @@ def check_payment_validity(player_resources, payment_list):
     return True
 
 
+def total_cost(costs):
+    """Sums a list of skill cost dicts into (specific_counts, random_count),
+    e.g. [{'energy': 1, 'random': 1}, {'energy': 1}] -> ({'energy': 2}, 1)."""
+    specific = {}
+    random_needed = 0
+    for cost in costs:
+        for ki_type, amount in cost.items():
+            if ki_type == 'random':
+                random_needed += amount
+            else:
+                specific[ki_type] = specific.get(ki_type, 0) + amount
+    return specific, random_needed
+
+
+def can_afford(pool, costs):
+    """True if `pool` can pay every cost in `costs` at once: each specific
+    type must be covered by dice of that type, and whatever is left over
+    must cover the combined random requirement."""
+    specific, random_needed = total_cost(costs)
+    for ki_type, amount in specific.items():
+        if pool.count(ki_type) < amount:
+            return False
+    return len(pool) - sum(specific.values()) >= random_needed
+
+
+def payment_matches_costs(payment_list, costs):
+    """True if `payment_list` pays `costs` exactly: no dice short, no dice
+    extra, and every specific requirement paid with its own type (random
+    requirements accept any type)."""
+    specific, random_needed = total_cost(costs)
+    if len(payment_list) != sum(specific.values()) + random_needed:
+        return False
+    return all(payment_list.count(ki_type) >= amount for ki_type, amount in specific.items())
+
+
 # --- status helpers ---------------------------------------------------------
 
 def add_status(char, status):
@@ -656,6 +691,11 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
 
     current_queue = [m for m in game_state.get('pending_moves', []) if m['charId'] != char_id]
 
+    # The pool must cover this skill together with everything already queued
+    # (excluding this character's own previous queue entry, which this replaces).
+    if not can_afford(player['resources'], [m['cost'] for m in current_queue] + [used_skill['cost']]):
+        raise Exception(f"Not enough Ki for {used_skill['name']}!")
+
     new_move = {
         'playerId': player_id,
         'charId': char_id,
@@ -687,6 +727,10 @@ def resolve_turn(game_state, payment_list):
 
     if not check_payment_validity(player['resources'], payment_list):
         raise Exception("Cheat detected!")
+    # Owning the dice isn't enough -- they must pay the queued costs exactly,
+    # otherwise an empty payment would cast every queued skill for free.
+    if not payment_matches_costs(payment_list, [m['cost'] for m in moves]):
+        raise Exception("Payment doesn't match the cost of your queued skills!")
 
     for die in payment_list:
         player['resources'].remove(die)

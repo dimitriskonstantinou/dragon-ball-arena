@@ -138,7 +138,15 @@ else:
     errors = [e for e in received if e['name'] == 'error-msg']
     check(f"queueing {actor['name']}'s {skill['name']} produces no error", errors == [], errors)
 
-    p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': game['players']['p1']['resources']})
+    # Regression: an empty payment used to cast costed skills for free.
+    if skill['cost']:
+        p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
+        received = p1_client.get_received()
+        check("commit-turn with an empty payment for a costed skill is rejected",
+              any(e['name'] == 'error-msg' for e in received) and skill['currentCooldown'] == 0,
+              (received, skill['currentCooldown']))
+
+    p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': list(game['players']['p1']['resources'])})
     received = p1_client.get_received()
     update = next((e for e in received if e['name'] == 'update-state'), None)
     check("commit-turn resolves and broadcasts update-state", update is not None)
@@ -172,6 +180,7 @@ else:
         other_index = team_members.index(other_char)
 
         game['turn'] = 'p1'
+        game['players']['p1']['resources'] = resources_for_cost(other_skill['cost'])
         p1_client.get_received()
         p1_client.emit('queue-skill', {
             'roomId': room_id, 'charId': other_char['id'], 'skillId': shared_skill_id,
@@ -182,7 +191,7 @@ else:
         check(f"queueing {other_char['name']}'s shared skill '{shared_skill_id}' produces no error",
               errors == [], errors)
 
-        p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
+        p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': list(game['players']['p1']['resources'])})
         p1_client.get_received()
         check(f"the shared skill went on cooldown for {other_char['name']} specifically "
               f"(not silently the first team member with that skill id)",
