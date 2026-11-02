@@ -317,17 +317,17 @@ def handle_queue(data):
             if game['players'].get(my_player_key, {}).get('id') != request.sid:
                 raise Exception("Not authorized for this player slot!")
 
-            # --- FIX: Explicitly find the character ID here ---
+            # Skill ids are only unique *within one character's own kit* --
+            # several characters intentionally share an id (e.g. the
+            # universal "afterimage_technique" skill). So the character
+            # must come from the client explicitly, not be guessed by
+            # searching the whole team for a matching skill id (that would
+            # silently resolve to whichever team member happens to be
+            # listed first, not the one the player actually clicked).
             player = game['players'][my_player_key]
-            char_id = None
-            for char in player['team']:
-                for s in char['skills']:
-                    if s['id'] == data['skillId']:
-                        char_id = char['id']
-                        break
-                if char_id: break
-
-            if not char_id:
+            char_id = data.get('charId')
+            actor_char = next((c for c in player['team'] if c['id'] == char_id), None)
+            if not actor_char or not any(s['id'] == data['skillId'] for s in actor_char['skills']):
                 raise Exception("Character not found for this skill!")
 
             game_engine.queue_move(

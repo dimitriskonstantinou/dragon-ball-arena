@@ -1,7 +1,12 @@
 """
-Creates all tables (if missing) and loads/refreshes the `characters` table
-from the legacy characters.py roster. Safe to re-run -- it upserts by id,
-so re-running after you edit characters.py picks up the changes.
+Creates all tables (if missing) and syncs the `characters` table to match
+characters.py exactly (upserts changed/new characters, deletes rows whose id
+no longer exists in characters.py). Safe to re-run.
+
+IMPORTANT: this only ever touches the `characters` table. It never deletes
+or modifies `users`, `user_stats`, `user_characters`, or `matches` -- so
+real accounts and their history always survive a re-seed. Never delete
+game.db to "reset" character data; just re-run this script.
 
 Run with: python seed_db.py
 """
@@ -15,6 +20,8 @@ import characters as legacy_characters
 def seed():
     with app.app_context():
         db.create_all()
+
+        current_ids = set(legacy_characters.CHARACTERS.keys())
 
         for char_id, char in legacy_characters.CHARACTERS.items():
             skills_json = json.dumps(char['skills'])
@@ -30,8 +37,13 @@ def seed():
                     health=char['health'], skills_json=skills_json, is_starter=True,
                 ))
 
+        removed = Character.query.filter(~Character.id.in_(current_ids)).all() if current_ids else Character.query.all()
+        for row in removed:
+            print(f"Removing '{row.id}' -- no longer in characters.py")
+            db.session.delete(row)
+
         db.session.commit()
-        print(f"Seeded {len(legacy_characters.CHARACTERS)} characters into the database.")
+        print(f"Synced: {len(legacy_characters.CHARACTERS)} characters current, {len(removed)} removed.")
 
 
 if __name__ == '__main__':

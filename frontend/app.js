@@ -4,6 +4,7 @@
 const socket = io({ autoConnect: false });
 let myRole = null;
 let myRoomId = null;
+let selectedCharId = null;
 let selectedSkillId = null;
 let selectedSkillObj = null;
 let currentGameState = null;
@@ -383,6 +384,7 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
             statusHtml = '<div class="status-container">';
             char.status.forEach(s => {
                 if(s.type === 'stun') isStunned = true;
+                if(s.invisible) return; // e.g. a hidden counter-trap the target isn't meant to see coming
                 const meta = describeStatus(s);
                 const text = formatTurns(s.duration);
                 statusHtml += `<div class="status-badge ${meta.cls}">${meta.icon} ${meta.label}<br><span style="font-weight:normal; font-size:9px;">${text}</span></div>`;
@@ -397,7 +399,7 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
         if (isMine) {
             const queuedMove = pendingMoves && pendingMoves.find(m => m.charId === char.id);
             if (queuedMove) {
-                controlsHtml = `<button class="cancel-btn" onclick="cancelMove('${char.id}')">CANCEL ${queuedMove.skillName}</button>`;
+                controlsHtml = `<button class="cancel-btn" onclick="event.stopPropagation(); cancelMove('${char.id}')">CANCEL ${queuedMove.skillName}</button>`;
             } else {
                 char.skills.forEach(skill => {
                     let costHtml = '';
@@ -421,7 +423,7 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
                         : '';
 
                     controlsHtml += `
-                        <button class="skill-btn" ${disabled} onclick="onSkillClicked('${skill.id}', this)" title="${disabledReason}">
+                        <button class="skill-btn" ${disabled} onclick="onSkillClicked('${char.id}', '${skill.id}', this, event)" title="${disabledReason}">
                             ${iconHtml}
                             <div style="flex-grow:1">
                                 <b>${skill.name}</b> ${skill.locked ? '🔒' : ''} ${cdText}
@@ -447,20 +449,25 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
 
 // --- INTERACTION ---
 
-function onSkillClicked(skillId, btnElement) {
+// Skill ids only need to be unique *within one character's own kit* --
+// several characters intentionally share an id (e.g. "afterimage_technique"
+// for the universal defensive skill). So selecting a skill must always be
+// scoped to the specific character whose button was clicked, never looked
+// up by skill id alone across the whole team.
+function onSkillClicked(charId, skillId, btnElement, event) {
+    if (event) event.stopPropagation(); // don't let this click also bubble up and fire onAllyClicked on the parent card
+
     document.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('selected'));
     btnElement.classList.add('selected');
 
+    selectedCharId = charId;
     selectedSkillId = skillId;
     selectedSkillObj = null;
 
     const myTeam = currentGameState.players[myRole].team;
-    for (const char of myTeam) {
-        const found = char.skills.find(s => s.id === skillId);
-        if (found) {
-            selectedSkillObj = found;
-            break;
-        }
+    const ownerChar = myTeam.find(c => c.id === charId);
+    if (ownerChar) {
+        selectedSkillObj = ownerChar.skills.find(s => s.id === skillId) || null;
     }
 
     if (!selectedSkillObj) return;
@@ -470,11 +477,11 @@ function onSkillClicked(skillId, btnElement) {
     document.getElementById('enemy-team').classList.remove('targeting-mode');
     document.getElementById('my-team').classList.remove('targeting-mode');
 
-    if (type === 'enemy') {
-        updateInstruction("SELECT AN ENEMY");
+    if (type === 'enemy' || type === 'enemy_team') {
+        updateInstruction(type === 'enemy_team' ? "SELECT ANY ENEMY (hits the whole team)" : "SELECT AN ENEMY");
         document.getElementById('enemy-team').classList.add('targeting-mode');
-    } else if (type === 'ally') {
-        updateInstruction("SELECT AN ALLY");
+    } else if (type === 'ally' || type === 'ally_team') {
+        updateInstruction(type === 'ally_team' ? "SELECT ANY ALLY (affects the whole team)" : "SELECT AN ALLY");
         document.getElementById('my-team').classList.add('targeting-mode');
     } else if (type === 'self') {
         updateInstruction("CLICK SELF");
@@ -484,11 +491,13 @@ function onSkillClicked(skillId, btnElement) {
 
 function onEnemyClicked(targetIndex) {
     if (!selectedSkillId || !selectedSkillObj) return;
-    if (selectedSkillObj.target_type && selectedSkillObj.target_type !== 'enemy') return;
+    const type = selectedSkillObj.target_type || 'enemy';
+    if (type !== 'enemy' && type !== 'enemy_team') return;
 
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
     socket.emit('queue-skill', {
         roomId: myRoomId,
+        charId: selectedCharId,
         skillId: selectedSkillId,
         myPlayerKey: myRole,
         targetPlayerKey: enemyRole,
@@ -500,10 +509,11 @@ function onEnemyClicked(targetIndex) {
 function onAllyClicked(targetIndex) {
     if (!selectedSkillId || !selectedSkillObj) return;
     const type = selectedSkillObj.target_type;
-    if (type !== 'ally' && type !== 'self') return;
+    if (type !== 'ally' && type !== 'ally_team' && type !== 'self') return;
 
     socket.emit('queue-skill', {
         roomId: myRoomId,
+        charId: selectedCharId,
         skillId: selectedSkillId,
         myPlayerKey: myRole,
         targetPlayerKey: myRole,
@@ -513,6 +523,7 @@ function onAllyClicked(targetIndex) {
 }
 
 function resetTargeting() {
+    selectedCharId = null;
     selectedSkillId = null;
     selectedSkillObj = null;
     document.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('selected'));

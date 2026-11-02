@@ -428,6 +428,8 @@ def test_content_smoke():
         'add_stack', 'self_damage_by_stack', 'boost_skill_on_stack',
         'unlock_skill_on_stack', 'scale_skill_by_stack', 'set_skill_cost_on_stack',
         'protect', 'random_multi_damage', 'delayed_damage',
+        'prime_skill', 'unprime_skill',
+        'damage_ignore_invuln', 'expiring_defense', 'mark_for_counter',
     }
     bad = []
     for cid, char in characters.CHARACTERS.items():
@@ -547,6 +549,197 @@ def test_goku_saiyan_saga_kit():
     ge.queue_move(game2, 'p2', 'B', 'poke', 'p1', 0)
     ge.resolve_turn(game2, [])
     check("Afterimage Technique blocks the incoming attack", a2['health'] == 100, a2['health'])
+
+
+def test_tien_best_friend_primes_tri_beam():
+    """Best Friend temporarily swaps Tri-Beam's cost/effects to a stronger
+    version -- unlike Kaioken's permanent transform, this must revert, either
+    when Tri-Beam actually gets used (consumed) or when the priming window
+    runs out unused (expired). Both paths are tested against Tien's real
+    data from characters.py."""
+    import characters
+    if 'tien_saiyan_saga' not in characters.CHARACTERS:
+        print("  SKIPPED: tien_saiyan_saga not in the current roster")
+        return
+    skills_by_id = {s['id']: s for s in characters.CHARACTERS['tien_saiyan_saga']['skills']}
+    base_tri_beam_cost = dict(skills_by_id['tri_beam']['cost'])
+    base_tri_beam_effects = copy.deepcopy(skills_by_id['tri_beam']['effects'])
+
+    # --- Path 1: primed, then actually used (consumed) ---
+    # (affliction_damage's own "ignores invulnerability" behavior is already
+    # covered generically by test_affliction_ignores_everything -- no need
+    # to duplicate that here, and doing so would incorrectly also block
+    # Best Friend's plain stun, which unlike affliction is NOT invuln-exempt.)
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    a['skills'] = [copy.deepcopy(skills_by_id['best_friend']), copy.deepcopy(skills_by_id['tri_beam'])]
+    for s in a['skills']: s['currentCooldown'] = 0
+    tri_beam_live = next(s for s in a['skills'] if s['id'] == 'tri_beam')
+
+    check("Tri-Beam starts with its base cost", tri_beam_live['cost'] == base_tri_beam_cost, tri_beam_live['cost'])
+
+    ge.queue_move(game, 'p1', 'A', 'best_friend', 'p1', 0)  # target_type is "self" -- no enemy effect anymore
+    ge.resolve_turn(game, [])
+    check("Best Friend primes Tri-Beam's cost to 2 Random",
+          tri_beam_live['cost'] == {'random': 2}, tri_beam_live['cost'])
+    check("Best Friend primes Tri-Beam's effects (affliction+stun+bigger self dmg)",
+          tri_beam_live['effects'][0]['type'] == 'affliction_damage' and tri_beam_live['effects'][0]['value'] == 45,
+          tri_beam_live['effects'])
+
+    game['turn'] = 'p1'
+    hp_before_a = a['health']
+    hp_before_b = b['health']
+    ge.queue_move(game, 'p1', 'A', 'tri_beam', 'p2', 0)
+    ge.resolve_turn(game, [])
+    check("primed Tri-Beam deals 45 affliction damage",
+          b['health'] == hp_before_b - 45, b['health'])
+    check("primed Tri-Beam also stuns", any(s['type'] == 'stun' for s in b['status']), b['status'])
+    check("primed Tri-Beam costs Tien 25 HP (not the base 15)", a['health'] == hp_before_a - 25, a['health'])
+    check("Tri-Beam reverts to its base cost after being used primed",
+          tri_beam_live['cost'] == base_tri_beam_cost, tri_beam_live['cost'])
+    check("Tri-Beam reverts to its base effects after being used primed",
+          tri_beam_live['effects'] == base_tri_beam_effects, tri_beam_live['effects'])
+
+    # --- Path 2: primed, then never used -- must revert on its own once the window expires ---
+    game2 = make_game()
+    a2 = game2['players']['p1']['team'][0]
+    a2['skills'] = [copy.deepcopy(skills_by_id['best_friend']), copy.deepcopy(skills_by_id['tri_beam'])]
+    for s in a2['skills']: s['currentCooldown'] = 0
+    tri_beam_live2 = next(s for s in a2['skills'] if s['id'] == 'tri_beam')
+
+    ge.queue_move(game2, 'p1', 'A', 'best_friend', 'p1', 0)  # target_type is "self"
+    ge.resolve_turn(game2, [])  # prime_skill's duration:1 -> 4 ticks (see game_engine.py comment for why); this already ticked once (p2's start_turn)
+    check("Tri-Beam is primed immediately after Best Friend", tri_beam_live2['cost'] == {'random': 2},
+          tri_beam_live2['cost'])
+
+    ge.start_turn(game2, 'p1')  # tick 2/4
+    ge.start_turn(game2, 'p2')  # tick 3/4
+    check("still primed with time left on the window", tri_beam_live2['cost'] == {'random': 2},
+          tri_beam_live2['cost'])
+    ge.start_turn(game2, 'p1')  # tick 4/4 -- expires now
+    check("Tri-Beam auto-reverts to its base cost once the priming window expires unused",
+          tri_beam_live2['cost'] == base_tri_beam_cost, tri_beam_live2['cost'])
+    check("Tri-Beam auto-reverts to its base effects once the priming window expires unused",
+          tri_beam_live2['effects'] == base_tri_beam_effects, tri_beam_live2['effects'])
+
+
+def test_yamcha_puar_becomes_spirit_ball_for_a_window():
+    """Puar is a pure time-window transform (unlike Tri-Beam's one-shot
+    combo payoff): using the primed 'Spirit Ball' does NOT immediately
+    revert it back to Puar -- it stays Spirit Ball (gated only by its own
+    cooldown) until the full 3-turn window itself runs out."""
+    import characters
+    if 'yamcha_saiyan_saga' not in characters.CHARACTERS:
+        print("  SKIPPED: yamcha_saiyan_saga not in the current roster")
+        return
+    skills_by_id = {s['id']: s for s in characters.CHARACTERS['yamcha_saiyan_saga']['skills']}
+    base_puar_cost = dict(skills_by_id['puar']['cost'])
+    base_puar_name = skills_by_id['puar']['name']
+    base_puar_cooldown = skills_by_id['puar']['cooldown']
+
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    a['skills'] = [copy.deepcopy(skills_by_id['puar'])]
+    a['skills'][0]['currentCooldown'] = 0
+    puar_live = a['skills'][0]
+
+    ge.queue_move(game, 'p1', 'A', 'puar', 'p1', 0)
+    ge.resolve_turn(game, [])
+    check("Puar grants Yamcha a 15-point shield", a.get('defense', 0) == 15, a.get('defense'))
+    check("Puar transforms into Spirit Ball (name swap)", puar_live['name'] == 'Spirit Ball', puar_live['name'])
+    check("Spirit Ball has its own cost", puar_live['cost'] == {'energy': 1, 'spirit': 1}, puar_live['cost'])
+    check("Spirit Ball has its own cooldown (1)", puar_live['cooldown'] == 1, puar_live['cooldown'])
+
+    # Spirit Ball ignores invulnerability specifically, but NOT destructible
+    # defense or damage reduction -- prove that distinction directly.
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 10, 'tag': 'buff'})
+    b['defense'] = 5
+
+    # Use "Spirit Ball" (still in the puar slot) -- should NOT immediately
+    # revert, just go on its own cooldown, unlike Tri-Beam's one-shot payoff.
+    game['turn'] = 'p1'
+    puar_live['currentCooldown'] = 0
+    hp_before_b = b['health']
+    ge.queue_move(game, 'p1', 'A', 'puar', 'p2', 0)
+    ge.resolve_turn(game, [])
+    check("Spirit Ball ignores invulnerability but is still absorbed by destructible defense (5 pts)",
+          b['health'] == hp_before_b - (40 - 5) and b['defense'] == 0, (b['health'], b['defense']))
+    check("using Spirit Ball does NOT revert it back to Puar", puar_live['name'] == 'Spirit Ball', puar_live['name'])
+    check("Spirit Ball goes on its own cooldown after use", puar_live['currentCooldown'] > 0,
+          puar_live['currentCooldown'])
+
+    # duration:3 -> 2*3+2 = 8 ticks total; 2 already happened via the two
+    # resolve_turn calls above, so 6 more reach the expiry point exactly.
+    for _ in range(6):
+        ge.start_turn(game, 'p1')  # ticks statuses for both players regardless of the player_id argument
+    check("Spirit Ball auto-reverts back to Puar once the 3-turn window fully expires",
+          puar_live['name'] == base_puar_name, puar_live['name'])
+    check("reverted Puar has its original cost and cooldown back",
+          puar_live['cost'] == base_puar_cost and puar_live['cooldown'] == base_puar_cooldown,
+          (puar_live['cost'], puar_live['cooldown']))
+
+
+def test_yamcha_puar_shield_expires_even_if_never_hit():
+    """The key distinction the user drew: destructible defense never expires
+    on its own (only shrinks by absorbing hits) -- this "points of damage"
+    shield must disappear after its duration regardless of whether it was
+    ever used, unlike the plain defense/ effect type."""
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    ge.apply_effect({'type': 'expiring_defense', 'value': 15, 'duration': 1}, actor=a, targets=[a],
+                     player=game['players']['p1'], opponent=game['players']['p2'], skill_classes=[])
+    check("expiring_defense grants the shield immediately", a['defense'] == 15, a['defense'])
+    ge.start_turn(game, 'p2')  # tick 1/2
+    check("still active with a tick left", a['defense'] == 15, a['defense'])
+    ge.start_turn(game, 'p1')  # tick 2/2 -- expires now, untouched
+    check("the unused shield is removed once its duration runs out, even though nothing hit it",
+          a['defense'] == 0, a['defense'])
+
+
+def test_wolf_fang_fist_counters_marked_enemy():
+    """Wolf Fang Fist marks a specific enemy: if THEY attempt any skill on
+    their next turn, it's blocked entirely (never queued) and they take
+    piercing damage instead. Also verifies the mark carries the 'invisible'
+    flag the frontend uses to hide its status badge."""
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+
+    ge.apply_effect({'type': 'mark_for_counter', 'value': 20, 'duration': 1}, actor=a, targets=[b],
+                     player=game['players']['p1'], opponent=game['players']['p2'], skill_classes=[])
+    mark = next((s for s in b['status'] if s['type'] == 'marked_for_counter'), None)
+    check("mark_for_counter applies a marked_for_counter status", mark is not None, b['status'])
+    check("the mark is flagged invisible (frontend won't render a badge for it)",
+          mark is not None and mark.get('invisible') is True, mark)
+
+    game['turn'] = 'p2'
+    b['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
+                     'effects': [{'type': 'damage', 'value': 30}], 'cooldown': 0, 'currentCooldown': 0}]
+    hp_before_b = b['health']
+    hp_before_a = a['health']
+    blocked_msg = None
+    try:
+        ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
+    except Exception as e:
+        blocked_msg = str(e)
+    check("the marked enemy's attempted skill is rejected, never queued", blocked_msg is not None, blocked_msg)
+    check("the marked enemy takes 20 piercing damage for attempting it",
+          b['health'] == hp_before_b - 20, b['health'])
+    check("the would-be victim (Yamcha) took no damage -- the enemy's move never resolved",
+          a['health'] == hp_before_a, a['health'])
+    check("the mark is consumed (one-shot)",
+          not any(s['type'] == 'marked_for_counter' for s in b['status']), b['status'])
+
+    # Mark is gone now -- the enemy can act normally again.
+    b['skills'][0]['currentCooldown'] = 0
+    allowed = True
+    try:
+        ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
+    except Exception:
+        allowed = False
+    check("with the mark consumed, the enemy can queue normally afterward", allowed)
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

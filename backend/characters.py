@@ -188,6 +188,147 @@ CHARACTERS = {
             }
         ]
     },
+    "tien_saiyan_saga": {
+        "id": "tien_saiyan_saga", "name": "Tien (Saiyan Saga)", "image": "characters/Tien_(Saiyan-Saga).png",
+        "health": 100, "maxHealth": 100, "status": [],
+        "skills": [
+            {
+                "id": "arm_attack", "name": "Arm Attack", "description": "20 Piercing Dmg (ignores dmg reduction) | 1 Mar",
+                "cost": {"martial": 1},
+                "target_type": "enemy",
+                "classes": ["physical"],
+                "image": "Tien_(Saiyan-Saga)_ArmAttack.png",
+                "effects": [{"type": "piercing_damage", "value": 20}],
+                "cooldown": 0, "currentCooldown": 0
+            },
+            {
+                # Pure setup move now (no direct effect on the enemy) --
+                # primes Tri-Beam for exactly Tien's own next turn: costs only
+                # 2 Random and becomes a much stronger, unmitigated hit. See
+                # tri_beam's own effects for the "un-primed" version, and
+                # game_engine.py's prime_skill/unprime_skill for how the swap
+                # (and its automatic revert-on-expiry) actually works.
+                "id": "best_friend", "name": "Best Friend",
+                "description": ("Primes Tri-Beam for your next turn only: costs only 2 Random and deals "
+                                 "45 Affliction Dmg + Stun + 25 Self Dmg instead of its normal effect | 1 Spt, 1 Rand"),
+                "cost": {"spirit": 1, "random": 1},
+                "target_type": "self",
+                "image": "Tien_(Saiyan-Saga)_BestFriend.png",
+                "effects": [
+                    {"type": "prime_skill", "skill_id": "tri_beam",
+                     "mark": "tri_beam_primed", "duration": 1,
+                     "primed_cost": {"random": 2},
+                     "primed_effects": [
+                         {"type": "affliction_damage", "value": 45},
+                         {"type": "stun", "duration": 1},
+                         {"type": "self_damage", "value": 25},
+                         {"type": "unprime_skill", "target": "self", "skill_id": "tri_beam", "mark": "tri_beam_primed"}
+                     ],
+                     "primed_description": "45 Affliction Dmg + Stun (primed by Best Friend), 25 Self Dmg | 2 Rand"}
+                ],
+                "cooldown": 2, "currentCooldown": 0
+            },
+            {
+                # Kikoho/Tri-Beam -- canonically devastating but costs Tien his
+                # own life force, hence the flat self-damage (no percentage
+                # debuffs, per the no-percentage-upgrades rule). This is the
+                # BASE (un-primed) version; see best_friend for the primed swap.
+                "id": "tri_beam", "name": "Tri-Beam",
+                "description": "45 Piercing Dmg (ignores dmg reduction), 15 Self Dmg (life-force cost) | 1 Eng, 1 Spt",
+                "cost": {"energy": 1, "spirit": 1},
+                "target_type": "enemy",
+                "classes": ["chakra"],
+                "image": "Tien_(Saiyan-Saga)_TriBeam.png",
+                "effects": [
+                    {"type": "piercing_damage", "value": 45},
+                    {"type": "self_damage", "value": 15}
+                ],
+                "cooldown": 1, "currentCooldown": 0
+            },
+            {
+                # Universal defensive skill (see Goku's afterimage_technique) --
+                # same id/mechanic roster-wide, flavored here to match Piccolo's/Raditz's "Block".
+                "id": "afterimage_technique", "name": "Block",
+                "description": "Untargetable/immune to all damage & harmful effects for 1 turn | 1 Rand",
+                "cost": {"random": 1},
+                "target_type": "self",
+                "image": "Tien_(Saiyan-Saga)_Block.png",
+                "effects": [{"type": "invulnerable", "duration": 1}],
+                "cooldown": 4, "currentCooldown": 0
+            }
+        ]
+    },
+    "yamcha_saiyan_saga": {
+        "id": "yamcha_saiyan_saga", "name": "Yamcha (Saiyan Saga)", "image": "characters/Yamcha.png",
+        "health": 100, "maxHealth": 100, "status": [],
+        "skills": [
+            {
+                "id": "kamehameha", "name": "Kamehameha", "description": "25 Dmg | 1 Eng",
+                "cost": {"energy": 1},
+                "target_type": "enemy",
+                "classes": ["chakra"],
+                "image": "Yamcha_Kamehameha.png",
+                "effects": [{"type": "damage", "value": 25}],
+                "cooldown": 1, "currentCooldown": 0
+            },
+            {
+                # "Points of damage" shield -- NOT destructible defense: this
+                # expires after 3 turns even if never hit (destructible
+                # defense only ever shrinks by absorbing damage; this is a
+                # temporary ward on top of that concept). Also turns this
+                # same skill into Spirit Ball for the next 3 of Yamcha's
+                # turns. Pure time-window transform, NOT a one-shot combo
+                # payoff like Tri-Beam: no unprime_skill here, so it stays
+                # "Spirit Ball" (usable more than once, subject to Spirit
+                # Ball's own cooldown) until the 3-turn window itself runs
+                # out, reverting back to Puar automatically. (3-turn shield
+                # duration is a judgment call matching the transform window --
+                # tell me if you want it different.)
+                "id": "puar", "name": "Puar",
+                "description": "Self: 15 Shield (expires after 3 turns). Becomes Spirit Ball for 3 turns | 1 Rand",
+                "cost": {"random": 1},
+                "target_type": "self",
+                "image": "Yamcha_Puar.png",
+                "effects": [
+                    {"type": "expiring_defense", "value": 15, "duration": 3},
+                    {"type": "prime_skill", "skill_id": "puar", "mark": "spirit_ball_active", "duration": 3,
+                     "primed_cost": {"energy": 1, "spirit": 1},
+                     "primed_effects": [{"type": "damage_ignore_invuln", "value": 40}],
+                     "primed_name": "Spirit Ball",
+                     "primed_description": "40 Dmg (ignores invulnerability) | 1 Eng, 1 Spt",
+                     "primed_image": "Yamcha_SpiritBall.png",
+                     "primed_cooldown": 1, "primed_target_type": "enemy"}
+                ],
+                "cooldown": 4, "currentCooldown": 0
+            },
+            {
+                # Pure setup/trap, no direct effect of its own: marks one
+                # enemy. If THEY attempt any skill on their next turn, it's
+                # blocked entirely and they take 20 piercing damage instead
+                # (see the counter-check in queue_move). Invisible -- the
+                # target gets no warning badge that they've been marked.
+                "id": "wolf_fang_fist", "name": "Wolf Fang Fist",
+                "description": ("Marks an enemy: if they attempt any skill on their next turn, it's countered "
+                                 "and they take 20 Piercing Dmg. Hidden from the enemy | 1 Mar, 1 Rand"),
+                "cost": {"martial": 1, "random": 1},
+                "target_type": "enemy",
+                "image": "Yamcha_WolfFangFist.png",
+                "effects": [{"type": "mark_for_counter", "value": 20, "duration": 1}],
+                "cooldown": 3, "currentCooldown": 0
+            },
+            {
+                # Universal defensive skill (see Goku's afterimage_technique) --
+                # same id/mechanic roster-wide, flavored here as Yamcha playing dead.
+                "id": "afterimage_technique", "name": "Fake Death",
+                "description": "Untargetable/immune to all damage & harmful effects for 1 turn | 1 Rand",
+                "cost": {"random": 1},
+                "target_type": "self",
+                "image": "Yamcha_FakeDeath.png",
+                "effects": [{"type": "invulnerable", "duration": 1}],
+                "cooldown": 4, "currentCooldown": 0
+            }
+        ]
+    },
     # The rest of the roster was deleted to be rebuilt from scratch, one
     # character at a time, under the saga-versioned id + universal 4th
     # skill + real skill icons conventions established with Goku above.

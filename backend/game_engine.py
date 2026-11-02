@@ -1,3 +1,4 @@
+import copy
 import random
 
 # ---------------------------------------------------------------------------
@@ -146,15 +147,26 @@ def resolve_protection(target, player, opponent):
 # --- core resolution --------------------------------------------------------
 
 def apply_damage(target, amount, actor=None, ignore_defense=False,
-                  ignore_reduction=False, ignore_invuln=False, skill_classes=None):
+                  ignore_reduction=False, ignore_invuln=False, ignore_reactive=None, skill_classes=None):
+    """ignore_invuln skips the general/class invulnerability check specifically.
+    ignore_reactive skips dodge/counter/reflect specifically -- a DIFFERENT
+    thing (those are one-shot reactive defenses, not a standing immunity).
+    If ignore_reactive is left as None, it defaults to whatever ignore_invuln
+    was, which is what keeps affliction_damage's existing "ignores
+    everything" behavior working unchanged. Pass ignore_reactive=False
+    explicitly for a damage type that should bypass ONLY invulnerability
+    while still respecting dodge/counter/reflect."""
     if not target or target['health'] <= 0:
         return
     skill_classes = skill_classes or []
     status = target.setdefault('status', [])
+    if ignore_reactive is None:
+        ignore_reactive = ignore_invuln
 
     if not ignore_invuln:
         if is_invulnerable(target, skill_classes):
             return
+    if not ignore_reactive:
         if consume_status(target, 'dodge'):
             return
         if consume_status(target, 'counter'):
@@ -212,6 +224,16 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
             apply_damage(real_target, effect['value'], actor=actor,
                          ignore_defense=True, ignore_reduction=True, ignore_invuln=True,
                          skill_classes=skill_classes)
+
+    elif etype == 'damage_ignore_invuln':
+        # Narrower than affliction_damage: bypasses ONLY invulnerability
+        # (general + class-specific). Still absorbed by destructible defense,
+        # still reduced by damage_taken_mod, and still blockable by
+        # dodge/counter/reflect.
+        for t in effect_targets:
+            real_target = resolve_protection(t, player, opponent) or t
+            apply_damage(real_target, effect['value'], actor=actor,
+                         ignore_invuln=True, ignore_reactive=False, skill_classes=skill_classes)
 
     elif etype == 'self_damage':
         actor['health'] = max(0, actor['health'] - effect['value'])
@@ -272,6 +294,17 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
                 add_status(t, {'type': 'protected', 'protector_id': actor['id'],
                                 'duration': effect.get('duration', 1) * 2, 'tag': 'buff'})
 
+    elif etype == 'mark_for_counter':
+        # Invisible trap: if the marked enemy attempts ANY skill on their
+        # next turn, it's blocked entirely and they take piercing damage
+        # instead -- see the counter-check at the top of queue_move(). The
+        # 'invisible' flag means the frontend won't render a status badge
+        # for it, so the target has no warning.
+        for t in effect_targets:
+            if t['health'] > 0:
+                add_status(t, {'type': 'marked_for_counter', 'value': effect.get('value', 20),
+                                'duration': effect.get('duration', 1) * 2, 'tag': 'harmful', 'invisible': True})
+
     elif etype == 'heal_block':
         for t in effect_targets:
             if t['health'] > 0 and not is_harmful_blocked(t, skill_classes):
@@ -289,6 +322,9 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
                                 'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
     elif etype == 'defense':
+        # PERMANENT destructible defense -- absorbs damage until depleted,
+        # never expires on its own. See expiring_defense below for the
+        # different, time-limited version.
         for t in effect_targets:
             if t['health'] > 0:
                 t['defense'] = t.get('defense', 0) + effect['value']
@@ -296,6 +332,17 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
     elif etype == 'remove_defense':
         for t in effect_targets:
             t['defense'] = 0
+
+    elif etype == 'expiring_defense':
+        # A shield that ALSO has a clock on it: absorbs damage the same way
+        # as plain 'defense', but whatever of it is still unused gets pulled
+        # back off when the duration runs out (see tick_statuses) -- unlike
+        # 'defense', which only ever shrinks by actually being hit.
+        for t in effect_targets:
+            if t['health'] > 0:
+                t['defense'] = t.get('defense', 0) + effect['value']
+                add_status(t, {'type': 'expiring_defense', 'value': effect['value'],
+                                'duration': effect.get('duration', 1) * 2, 'tag': 'buff'})
 
     elif etype in ('damage_taken_mod', 'damage_dealt_mod', 'heal_received_mod', 'heal_dealt_mod'):
         tag = effect.get('tag', 'buff')
@@ -398,6 +445,79 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
                 if 'description_template' in effect:
                     target['description'] = effect['description_template'].format(value=new_value)
 
+    elif etype == 'prime_skill':
+        # Temporary, REVERSIBLE combo setup (unlike the permanent stack
+        # effects above): swaps another skill's cost/effects/description/
+        # name/image to a "primed" version (skill_id can even be the SAME
+        # skill casting this effect -- e.g. a skill that turns itself into a
+        # different one for a while), remembering the originals so
+        # unprime_skill (optional -- only needed if using the primed skill
+        # should immediately revert it, like a one-shot combo payoff) or
+        # this priming simply expiring (see tick_statuses) can restore them.
+        # Re-priming while already primed is a safe no-op on the saved
+        # originals (the guard below only saves them once).
+        #
+        # Duration formula is `2*N + 2` ticks for "usable during the
+        # caster's next N turns", NOT a flat multiplier: every other
+        # duration in this file counts ticks until the EFFECT'S OWN TARGET
+        # can next act (e.g. a stun on the opponent needs 2 ticks to cover
+        # their very next turn). But priming is a self-buff meant to be
+        # usable on the CASTER'S own turns -- reaching the caster's next
+        # turn already costs 2 ticks (the opponent's intervening turn), and
+        # it must still be active *after* that tick, not expire on it, and
+        # that pattern repeats for each further usable turn -- hence 2N, +2
+        # for the initial reach. (N=1 -> 4 ticks; N=3 -> 8 ticks.)
+        for t in effect_targets:
+            target = next((s for s in t.get('skills', []) if s['id'] == effect['skill_id']), None)
+            if not target:
+                continue
+            if 'base_cost' not in target:
+                target['base_cost'] = dict(target['cost'])
+                target['base_effects'] = copy.deepcopy(target['effects'])
+                target['base_description'] = target.get('description')
+                target['base_name'] = target.get('name')
+                target['base_image'] = target.get('image')
+                target['base_cooldown'] = target.get('cooldown')
+                target['base_target_type'] = target.get('target_type')
+            target['cost'] = dict(effect['primed_cost'])
+            target['effects'] = copy.deepcopy(effect['primed_effects'])
+            if 'primed_description' in effect:
+                target['description'] = effect['primed_description']
+            if 'primed_name' in effect:
+                target['name'] = effect['primed_name']
+            if 'primed_image' in effect:
+                target['image'] = effect['primed_image']
+            if 'primed_cooldown' in effect:
+                target['cooldown'] = effect['primed_cooldown']
+            if 'primed_target_type' in effect:
+                target['target_type'] = effect['primed_target_type']
+            add_status(t, {'type': 'primed_mark', 'mark': effect['mark'], 'skill_id': effect['skill_id'],
+                            'duration': effect.get('duration', 1) * 2 + 2, 'tag': 'buff'})
+
+    elif etype == 'unprime_skill':
+        # Restores a primed skill back to its base cost/effects/description/
+        # name/image. Only needed as an effect on the primed skill itself
+        # for "reverts the instant it's used" combos (e.g. Tri-Beam); for a
+        # pure time-window transform (e.g. "becomes a different skill for
+        # 3 turns, usable more than once"), skip this and let tick_statuses'
+        # expiry path be the only revert.
+        for t in effect_targets:
+            target = next((s for s in t.get('skills', []) if s['id'] == effect['skill_id']), None)
+            if target and 'base_cost' in target:
+                target['cost'] = target.pop('base_cost')
+                target['effects'] = target.pop('base_effects')
+                if 'base_description' in target:
+                    target['description'] = target.pop('base_description')
+                if 'base_name' in target:
+                    target['name'] = target.pop('base_name')
+                if 'base_image' in target:
+                    target['image'] = target.pop('base_image')
+                if 'base_cooldown' in target:
+                    target['cooldown'] = target.pop('base_cooldown')
+                if 'base_target_type' in target:
+                    target['target_type'] = target.pop('base_target_type')
+            remove_statuses(t, lambda s: s.get('type') == 'primed_mark' and s.get('mark') == effect.get('mark'))
+
 
 # --- turn lifecycle ----------------------------------------------------------
 
@@ -423,6 +543,29 @@ def tick_statuses(game_state):
                         # (ignores invulnerability/defense/reduction), then let
                         # the duration check below prune the marker as usual.
                         char['health'] = max(0, char['health'] - s.get('value', 0))
+                    elif s['type'] == 'expiring_defense' and s['duration'] <= 1:
+                        # Time's up -- pull back whatever of this shield is
+                        # still unused (can't go negative, can't remove more
+                        # than this specific grant contributed).
+                        char['defense'] = max(0, char.get('defense', 0) - s.get('value', 0))
+                if s['type'] == 'primed_mark' and s['duration'] <= 1:
+                    # The priming window ran out before the primed skill got
+                    # used -- revert it back to its base cost/effects/
+                    # description/name/image (mirrors unprime_skill's own logic).
+                    target = next((sk for sk in char.get('skills', []) if sk['id'] == s.get('skill_id')), None)
+                    if target and 'base_cost' in target:
+                        target['cost'] = target.pop('base_cost')
+                        target['effects'] = target.pop('base_effects')
+                        if 'base_description' in target:
+                            target['description'] = target.pop('base_description')
+                        if 'base_name' in target:
+                            target['name'] = target.pop('base_name')
+                        if 'base_image' in target:
+                            target['image'] = target.pop('base_image')
+                        if 'base_cooldown' in target:
+                            target['cooldown'] = target.pop('base_cooldown')
+                        if 'base_target_type' in target:
+                            target['target_type'] = target.pop('base_target_type')
                 s['duration'] -= 1
                 if s['duration'] > 0:
                     active.append(s)
@@ -493,6 +636,16 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
 
     if used_skill['currentCooldown'] > 0:
         raise Exception(f"{used_skill['name']} is on cooldown for {used_skill['currentCooldown']} more turn(s)!")
+
+    # Only trips once we know this would otherwise be a legitimate queue
+    # attempt (not blocked by stun/silence/lock/cooldown already) -- a
+    # marked character who genuinely tries to act gets countered: their
+    # move never queues, and they take piercing damage instead.
+    counter_mark = consume_status(actor_char, 'marked_for_counter')
+    if counter_mark:
+        dmg = counter_mark.get('value', 20)
+        apply_damage(actor_char, dmg, ignore_reduction=True)
+        raise Exception(f"{actor_char['name']}'s attack was countered! Took {dmg} piercing damage.")
 
     for chakra_type in used_skill.get('cost', {}):
         if chakra_type == 'random':

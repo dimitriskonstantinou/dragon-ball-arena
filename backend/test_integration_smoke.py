@@ -131,7 +131,7 @@ else:
 
     p1_client.get_received()
     p1_client.emit('queue-skill', {
-        'roomId': room_id, 'skillId': skill['id'], 'myPlayerKey': 'p1',
+        'roomId': room_id, 'charId': actor['id'], 'skillId': skill['id'], 'myPlayerKey': 'p1',
         'targetPlayerKey': 'p2', 'targetIndex': 0
     })
     received = p1_client.get_received()
@@ -144,6 +144,54 @@ else:
     check("commit-turn resolves and broadcasts update-state", update is not None)
     check("the used skill went on cooldown (proof the engine actually processed it)",
           skill['currentCooldown'] > 0, skill['currentCooldown'])
+
+    # --- Regression test: skill ids are only unique within one character's
+    # own kit (e.g. every character's universal defensive skill shares the
+    # id "afterimage_technique") -- queueing must resolve to the character
+    # whose button was actually clicked, not silently the first team member
+    # found with a matching skill id. This was a real bug: clicking
+    # Piccolo's or Raditz's "Block" fired Goku's "Afterimage Technique"
+    # instead, whenever Goku happened to be listed first on the team. ---
+    team_members = game['players']['p1']['team']
+    shared = None
+    for i, c1 in enumerate(team_members):
+        for c2 in team_members[i + 1:]:
+            common = set(s['id'] for s in c1['skills']) & set(s['id'] for s in c2['skills'])
+            if common:
+                shared = (c2, next(iter(common)))  # c2: NOT the first team member, to prove it's not just picking index 0
+                break
+        if shared:
+            break
+
+    if not shared:
+        print(f"\nSKIPPED: shared-skill-id regression check needs 2 team members sharing a skill id "
+              f"(team: {[c['id'] for c in team_members]}).")
+    else:
+        other_char, shared_skill_id = shared
+        other_skill = next(s for s in other_char['skills'] if s['id'] == shared_skill_id)
+        other_index = team_members.index(other_char)
+
+        game['turn'] = 'p1'
+        p1_client.get_received()
+        p1_client.emit('queue-skill', {
+            'roomId': room_id, 'charId': other_char['id'], 'skillId': shared_skill_id,
+            'myPlayerKey': 'p1', 'targetPlayerKey': 'p1', 'targetIndex': other_index
+        })
+        received = p1_client.get_received()
+        errors = [e for e in received if e['name'] == 'error-msg']
+        check(f"queueing {other_char['name']}'s shared skill '{shared_skill_id}' produces no error",
+              errors == [], errors)
+
+        p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
+        p1_client.get_received()
+        check(f"the shared skill went on cooldown for {other_char['name']} specifically "
+              f"(not silently the first team member with that skill id)",
+              other_skill['currentCooldown'] > 0, (other_char['id'], other_skill['currentCooldown']))
+
+        first_member_skill = next((s for s in team_members[0]['skills'] if s['id'] == shared_skill_id), None)
+        if team_members[0]['id'] != other_char['id'] and first_member_skill:
+            check(f"the first team member's own copy of the shared skill was untouched",
+                  first_member_skill['currentCooldown'] == 0, first_member_skill['currentCooldown'])
 
     # --- Force the match to a decisive end so we can check DB persistence ---
     # (turn auto-advanced to p2 after the commit above)
