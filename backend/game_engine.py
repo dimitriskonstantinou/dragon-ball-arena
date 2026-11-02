@@ -554,6 +554,29 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
             remove_statuses(t, lambda s: s.get('type') == 'primed_mark' and s.get('mark') == effect.get('mark'))
 
 
+# --- per-player view ---------------------------------------------------------
+
+# Server-only fields on a player entry: socket id and account id.
+PRIVATE_PLAYER_FIELDS = ('id', 'user_id')
+
+
+def view_for(game_state, role):
+    """What `role` is allowed to see -- a stripped deep copy, never the live
+    state. Removes: both players' socket/account ids, the opponent's queued
+    moves (only the active player sees the queue), and 'invisible' statuses
+    on the viewer's own characters (e.g. a counter-trap placed on them; the
+    player who placed it still sees it)."""
+    view = copy.deepcopy(game_state)
+    for player in view['players'].values():
+        for field in PRIVATE_PLAYER_FIELDS:
+            player.pop(field, None)
+    if view.get('turn') != role:
+        view['pending_moves'] = []
+    for char in view['players'][role]['team']:
+        char['status'] = [s for s in char.get('status', []) if not s.get('invisible')]
+    return view
+
+
 # --- turn lifecycle ----------------------------------------------------------
 
 def tick_statuses(game_state):

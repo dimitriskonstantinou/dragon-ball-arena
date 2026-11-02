@@ -1,0 +1,19 @@
+[not reproduced] free skills Payment doesn't match the cost of your queued skills!
+[not reproduced] queue_move affordability Not enough Ki for Kamehameha!
+[not reproduced] self-target skill applied to a different ally 
+[not reproduced] out-of-range targetIndex Invalid target!
+[not reproduced] dead character queue Goku (Saiyan Saga) has been defeated and cannot act!
+[not reproduced] dead enemy target Raditz (Saiyan Saga) has already been defeated!
+[CONFIRMED] set_skill_cost_on_stack description_template -> NameError cannot access local variable 'new_value' where it is not associated with a value
+[CONFIRMED] scale_skill_by_stack description_template never applied (desc now: 'Locked until Kaioken is used. 40 Piercing Dmg, +10')
+[CONFIRMED] Kaioken description still claims '| 1 Rand' after cost became 2 random 
+[not reproduced] 'invisible' mark is present in the state payload sent to the victim 
+[CONFIRMED] queue-skill error path doesn't broadcast state (counter-mark damage invisible until later) 
+[not reproduced] player socket ids in broadcast state 
+[MEASURE] update-state payload for 3v3: 12220 bytes
+[CONFIRMED] reflect ignores attacker's invulnerability/defense (by inspection: apply_damage line ~176)
+[CONFIRMED] GAMES/ENDED_ROOMS never pruned 
+[CONFIRMED] same account can be matched against itself (two tabs) 
+[CONFIRMED] find-match with non-list payload would raise TypeError (no validation) 
+[CONFIRMED] SECRET_KEY falls back to hardcoded dev value 
+[CONFIRMED] CORS '*' on Socket.IO with cookie auth (cross-site WS hijack risk) 

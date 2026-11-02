@@ -100,6 +100,14 @@ def persist_match_result(game, winner_role):
 
 ENDED_ROOMS = set()
 
+
+def broadcast_state(game):
+    """Sends each player their own filtered view (game_engine.view_for) --
+    never the raw state, which holds hidden info: the opponent's queued
+    moves, invisible traps, socket/account ids."""
+    for role in ('p1', 'p2'):
+        socketio.emit('update-state', game_engine.view_for(game, role), to=game['players'][role]['id'])
+
 def end_game(room_id, winner, reason=None):
     game = GAMES.get(room_id)
     # NOTE: game_engine.resolve_turn() sets game['winner'] itself the moment
@@ -118,7 +126,7 @@ def end_game(room_id, winner, reason=None):
 
     persist_match_result(game, winner)
 
-    socketio.emit('update-state', game, to=room_id)
+    broadcast_state(game)
     message = f"GAME OVER! {winner.upper()} WINS!" if not reason else reason
     socketio.emit('message', message, to=room_id)
 
@@ -302,7 +310,7 @@ def handle_find_match(selected_char_ids):
         game = GAMES[room_id]
         game_engine.start_turn(game, 'p1')
 
-        socketio.emit('update-state', game, to=room_id)
+        broadcast_state(game)
 
 
 # --- Socket.IO: in-match actions --------------------------------------------
@@ -338,7 +346,7 @@ def handle_queue(data):
                 data['targetPlayerKey'],
                 data['targetIndex']
             )
-            emit('update-state', game, to=room_id)
+            broadcast_state(game)
         except Exception as e:
             print(f"Error in queue-skill: {e}") # Print to server console for debugging
             emit('error-msg', str(e), to=request.sid)
@@ -353,7 +361,7 @@ def handle_cancel(data):
             emit('error-msg', "Not authorized for this player slot!", to=request.sid)
             return
         game_engine.cancel_move(game, my_player_key, data['charId'])
-        emit('update-state', game, to=room_id)
+        broadcast_state(game)
 
 @socketio.on('commit-turn')
 def handle_commit(data):
@@ -374,7 +382,7 @@ def handle_commit(data):
                 if game.get('winner'):
                     end_game(room_id, game['winner'])
                 else:
-                    emit('update-state', game, to=room_id)
+                    broadcast_state(game)
             except Exception as e:
                 emit('error-msg', str(e), to=request.sid)
 

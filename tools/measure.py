@@ -187,6 +187,9 @@ def section_content():
             'players': {k: {'id': 'sid', 'resources': game_engine.roll_dice(3), 'status': [],
                             'team': copy.deepcopy(team)} for k in ('p1', 'p2')}}
     out(f'update-state payload (sample 3v3): {len(json.dumps(game))} bytes')
+    if hasattr(game_engine, 'view_for'):
+        out(f'update-state payload actually sent per player (view_for): '
+            f'{len(json.dumps(game_engine.view_for(game, "p1")))} bytes')
     out()
 
 

@@ -130,6 +130,7 @@ else:
     game['turn'] = 'p1'
 
     p1_client.get_received()
+    p2_client.get_received()
     p1_client.emit('queue-skill', {
         'roomId': room_id, 'charId': actor['id'], 'skillId': skill['id'], 'myPlayerKey': 'p1',
         'targetPlayerKey': 'p2', 'targetIndex': 0
@@ -137,6 +138,16 @@ else:
     received = p1_client.get_received()
     errors = [e for e in received if e['name'] == 'error-msg']
     check(f"queueing {actor['name']}'s {skill['name']} produces no error", errors == [], errors)
+
+    # Regression: the raw state (live queue, socket ids) used to go to both players.
+    p1_update = next((e['args'][0] for e in reversed(received) if e['name'] == 'update-state'), None)
+    p2_update = next((e['args'][0] for e in reversed(p2_client.get_received()) if e['name'] == 'update-state'), None)
+    check("the queueing player's own view shows their queued move",
+          p1_update is not None and len(p1_update['pending_moves']) == 1, p1_update and p1_update['pending_moves'])
+    check("the opponent's view does NOT show that queued move",
+          p2_update is not None and p2_update['pending_moves'] == [], p2_update and p2_update['pending_moves'])
+    check("no socket ids or account ids are sent to clients",
+          all(f not in p for u in (p1_update, p2_update) if u for p in u['players'].values() for f in ('id', 'user_id')))
 
     # Regression: an empty payment used to cast costed skills for free.
     if skill['cost']:

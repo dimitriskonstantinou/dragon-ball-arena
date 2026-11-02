@@ -891,6 +891,33 @@ def test_target_validation():
           (b['health'], b['status']))
 
 
+def test_view_for_hides_private_info():
+    """Regression: the full state (opponent's live queue, invisible traps,
+    socket ids) used to be broadcast to both players."""
+    game = make_game()
+    game['players']['p1']['user_id'] = 1
+    game['players']['p2']['user_id'] = 2
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    a['skills'] = [{"id": "s", "name": "s", "cost": {}, "target_type": "enemy",
+                    "effects": [{"type": "damage", "value": 5}], "cooldown": 0, "currentCooldown": 0}]
+    ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+    ge.add_status(b, {'type': 'marked_for_counter', 'value': 20, 'duration': 2, 'tag': 'harmful', 'invisible': True})
+    live_before = copy.deepcopy(game)
+
+    p1_view = ge.view_for(game, 'p1')
+    p2_view = ge.view_for(game, 'p2')
+    check("no socket/account ids in either view",
+          all(f not in p for v in (p1_view, p2_view) for p in v['players'].values() for f in ('id', 'user_id')))
+    check("the active player still sees their own queue", len(p1_view['pending_moves']) == 1, p1_view['pending_moves'])
+    check("the opponent does not see the active player's queue", p2_view['pending_moves'] == [], p2_view['pending_moves'])
+    check("the trapped player can't see the invisible mark on their own character",
+          p2_view['players']['p2']['team'][0]['status'] == [], p2_view['players']['p2']['team'][0]['status'])
+    check("the player who placed the mark still sees it",
+          any(s['type'] == 'marked_for_counter' for s in p1_view['players']['p2']['team'][0]['status']))
+    check("building views never modifies the live game state", game == live_before)
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

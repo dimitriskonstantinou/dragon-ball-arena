@@ -30,6 +30,9 @@ Safe way to run the smoke test without touching the real DB:
   step: say what you'll change and why, measure before, change, measure after, report exactly what changed
   (files, behavior, numbers). Then **stop and wait** for the user's go-ahead. Never start the next step, or
   make extra changes nobody asked for, on your own.
+- **One branch per step**: `feature/stepN-<short-name>`, created from the previous step's branch (steps build on
+  each other). Commit the code, tests and that step's `docs/measurements/*` files together, then push the branch.
+  The user merges the steps into `dev` in order.
 - **Measure before and after every change**: `python tools/measure.py --save docs/measurements/<date>-<item>-{before,after}.md`.
   No regressions: FAIL stays 0, PASS/coverage don't drop, pyflakes count doesn't grow.
 - Every bug fix gets a regression test in `test_game_engine.py` (engine) or `test_integration_smoke.py` (transport/DB).
