@@ -69,6 +69,49 @@ message queue + shared game state/matchmaking.
 
 ---
 
+## 2b. Environments: local → DEV (staging) → PROD
+
+| | **Local** | **DEV / staging** (online test site) | **PROD** (players) |
+|---|---|---|---|
+| Git branch | any `feature/*` or `dev` | `dev` | `main` |
+| Deploys | `python app.py` on your PC | **automatically** on every push to `dev` | **automatically** on every push/merge to `main` |
+| URL | `http://localhost:5000` | e.g. `dev.yourdomain` / `dba-dev.onrender.com` | `yourdomain` |
+| Database | `backend/game.db` (SQLite) or local Postgres | **its own** Postgres (test accounts, can be wiped) | **its own** Postgres (real accounts, backed up) |
+| `ENV` | `development` | `staging` | `production` |
+| `SECRET_KEY` | dev default OK | its own random value | its own random value, never reused |
+| Who plays | you | you + invited testers | everyone |
+| Size | — | smallest paid instance | sized from the Stage 5 load test |
+
+**Rule: DEV and PROD never share a database or a secret key.** A bug on DEV must never be able to touch real accounts.
+
+### Daily flow
+```
+feature/xyz ──PR──▶ dev ──(auto-deploy)──▶ DEV site: test with 2 browsers / friends
+                     │
+                     └──PR "Release vX"──▶ main ──(auto-deploy)──▶ PROD
+```
+1. Start work: `git switch dev && git pull && git switch -c feature/xyz`. Small fixes can go straight to `dev`.
+2. Finish: tests + `tools/measure.py` green → merge into `dev` → push → DEV site updates in ~2 min.
+3. Test on the DEV site (real internet, real HTTPS/websockets, its own DB).
+4. Release: open a PR `dev → main`, CI must be green, merge → PROD updates. Tag it (`git tag v0.1.0`).
+5. Hotfix on PROD: branch from `main`, fix, merge to `main`, then merge `main` back into `dev`.
+
+### Setting it up (on the host, e.g. Render)
+1. Create **two** Postgres databases: `dba-dev-db`, `dba-prod-db`.
+2. Create **two** web services from the same GitHub repo: `dba-dev` (branch `dev`), `dba-prod` (branch `main`).
+   Same Dockerfile / start command / release command (`flask db upgrade && python seed_db.py`).
+3. Each service gets its own env vars: `ENV`, `SECRET_KEY`, `DATABASE_URL` (its own DB), `ALLOWED_ORIGINS` (its own URL).
+4. Turn on auto-deploy for both. PROD can be switched to manual deploy if you want a final "go" button.
+5. GitHub → Settings → Branches → protect `main`: require a PR + green CI, no direct pushes.
+6. Optional: DEV banner in the UI when `ENV != production` so testers know which site they're on.
+
+### Where we are now (2026-11-02)
+- `main` = PROD = **Initial commit only** (correct: nothing released yet).
+- `dev` = all current work (Goku, Piccolo, Raditz, Tien, Yamcha + docs/tools). New work branches from `dev`.
+- **First release to `main`** = once Stage 0 (anti-cheat) is done and DEV has been played on.
+- DEV can go online **before** PROD: once Stages 1–3 exist, the DEV site can run even before all of Stage 0 is
+  finished, because only trusted testers use it.
+
 ## 3. Hosting recommendation
 
 **Recommended for you: Render** (or Railway, which is similar): deploy from GitHub, Docker or native Python, websockets

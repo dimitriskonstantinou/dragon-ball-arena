@@ -26,11 +26,17 @@ Safe way to run the smoke test without touching the real DB:
 
 ## Workflow rules
 
+- **One step at a time, user-approved.** Work through PLAN.md items in priority order, one fix per step. For each
+  step: say what you'll change and why, measure before, change, measure after, report exactly what changed
+  (files, behavior, numbers). Then **stop and wait** for the user's go-ahead. Never start the next step, or
+  make extra changes nobody asked for, on your own.
 - **Measure before and after every change**: `python tools/measure.py --save docs/measurements/<date>-<item>-{before,after}.md`.
   No regressions: FAIL stays 0, PASS/coverage don't drop, pyflakes count doesn't grow.
 - Every bug fix gets a regression test in `test_game_engine.py` (engine) or `test_integration_smoke.py` (transport/DB).
-- `main` stays stable; work happens on feature branches. Don't commit or reseed after every small edit:
-  batch changes and commit/reseed when the user says the batch is done.
+- Branches = environments: **`main` = PROD** (only released code, via a `dev → main` PR), **`dev` = DEV/staging**
+  (integration branch, auto-deploys to the test site once hosting exists). New work: branch from `dev` (or commit
+  straight to `dev` for small things); never commit directly to `main`. Details: DEPLOY_PLAN.md §2b.
+- Don't commit or reseed after every small edit: batch changes and commit/reseed when the user says the batch is done.
 - Never delete `backend/game.db` to "reset" anything; it holds real accounts. Re-run `seed_db.py` for character changes.
 
 ## Architecture
