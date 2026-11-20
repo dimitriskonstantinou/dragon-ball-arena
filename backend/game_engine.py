@@ -809,6 +809,9 @@ def resolve_turn(game_state, payment_list):
     opponent_id = 'p2' if player_id == 'p1' else 'p1'
     opponent = game_state['players'][opponent_id]
 
+    # --- 1. Validate everything before touching any state ---
+    if not isinstance(payment_list, list) or not all(isinstance(d, str) for d in payment_list):
+        raise GameError("Invalid payment!")
     if not check_payment_validity(player['resources'], payment_list):
         raise GameError("Cheat detected!")
     # Owning the dice isn't enough -- they must pay the queued costs exactly,
@@ -816,13 +819,33 @@ def resolve_turn(game_state, payment_list):
     if not payment_matches_costs(payment_list, [m['cost'] for m in moves]):
         raise GameError("Payment doesn't match the cost of your queued skills!")
 
+    resolved_moves = []
+    for move in moves:
+        actor_char = next((c for c in player['team'] if c['id'] == move['charId']), None)
+        skill = actor_char and next((s for s in actor_char['skills'] if s['id'] == move['skillId']), None)
+        if not skill:
+            raise GameError("A queued skill is no longer available -- cancel it and try again.")
+        resolved_moves.append((move, actor_char, skill))
+
+    # --- 2. Apply all-or-nothing: on any unexpected crash (a bug, e.g. a
+    # malformed effect in characters.py), restore the pre-commit state IN
+    # PLACE -- app.py's GAMES holds this exact dict -- and re-raise so the
+    # error gets logged. The player can then retry or cancel.
+    snapshot = copy.deepcopy(game_state)
+    try:
+        _apply_turn(game_state, player_id, player, opponent, payment_list, resolved_moves)
+    except Exception:
+        game_state.clear()
+        game_state.update(snapshot)
+        raise
+    return game_state
+
+
+def _apply_turn(game_state, player_id, player, opponent, payment_list, resolved_moves):
     for die in payment_list:
         player['resources'].remove(die)
 
-    for move in moves:
-        actor_char = next((c for c in player['team'] if c['id'] == move['charId']), None)
-        skill = next((s for s in actor_char['skills'] if s['id'] == move['skillId']), None)
-
+    for move, actor_char, skill in resolved_moves:
         if actor_char['health'] <= 0:
             continue
 
@@ -853,5 +876,3 @@ def resolve_turn(game_state, payment_list):
     if not check_winner(game_state):
         next_player = 'p2' if player_id == 'p1' else 'p1'
         start_turn(game_state, next_player)
-
-    return game_state

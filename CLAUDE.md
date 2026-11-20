@@ -98,6 +98,9 @@ Safe way to run the smoke test without touching the real DB:
   for game rules. Game *events* (like a counter-trap firing) are return values, not exceptions.
 - Costs and targets are validated server-side (`can_afford`, `payment_matches_costs`, `resolve_target`); the client's
   affordability math in `app.js` is still a simpler approximation (fixed in the UI phase).
-- Still open (PLAN.md §3): `resolve_turn` isn't atomic, socket payload shapes aren't validated, the client still
-  sends `myPlayerKey`, no turn timer/reconnect, `GAMES` is never pruned.
+- `resolve_turn` is all-or-nothing: it validates first, then applies via `_apply_turn` against a deep-copy snapshot
+  and restores it **in place** on any crash (`GAMES` holds that exact dict, so never rebind it). Keep new
+  per-turn mutations inside `_apply_turn` so they're covered by the rollback.
+- Still open (PLAN.md §3): socket payload shapes aren't fully validated, the client still sends `myPlayerKey`,
+  no turn timer/reconnect, `GAMES` is never pruned.
 - Windows dev machine (Python 3.14): use the `;` separator in `PYTHONPATH`, and avoid Unix-only shell tricks in tooling.

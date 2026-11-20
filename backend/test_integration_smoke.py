@@ -248,6 +248,13 @@ else:
               all(any(e['name'] == 'update-state' for e in g) and any(e['name'] == 'message' for e in g)
                   for g in (got1, got2)), (got1, got2))
 
+    # --- Regression: a missing paymentList used to crash resolve_turn with a raw TypeError ---
+    if not game.get('winner'):
+        p2_client.get_received()
+        p2_client.emit('commit-turn', {'roomId': room_id})
+        errors = [e['args'][0] for e in p2_client.get_received() if e['name'] == 'error-msg']
+        check("commit-turn without a paymentList gets a clear rule message", errors == ["Invalid payment!"], errors)
+
     # --- Force the match to a decisive end so we can check DB persistence ---
     for c in game['players']['p2']['team']:
         c['health'] = 0

@@ -956,6 +956,61 @@ def test_counter_that_kills_last_character_ends_match():
     check("lethal counter on the last character ends the match", game.get('winner') == 'p1', game.get('winner'))
 
 
+def test_resolve_turn_is_all_or_nothing():
+    """Regression: dice were spent and earlier moves applied before a later
+    move crashed, leaving the match half-resolved and stuck."""
+    def setup():
+        game = make_game()
+        game['players']['p1']['team'].append(make_char('A2'))
+        good = {"id": "hit", "name": "hit", "cost": {"energy": 1}, "target_type": "enemy",
+                "effects": [{"type": "damage", "value": 20}], "cooldown": 1, "currentCooldown": 0}
+        broken = {"id": "bug", "name": "bug", "cost": {}, "target_type": "enemy",
+                  "effects": [{"type": "damage"}], "cooldown": 0, "currentCooldown": 0}  # no 'value' -> KeyError
+        game['players']['p1']['team'][0]['skills'] = [good]
+        game['players']['p1']['team'][1]['skills'] = [broken]
+        game['players']['p1']['resources'] = ['energy', 'rage']
+        ge.queue_move(game, 'p1', 'A', 'hit', 'p2', 0)
+        ge.queue_move(game, 'p1', 'A2', 'bug', 'p2', 0)
+        return game
+
+    game = setup()
+    live = game
+    before = copy.deepcopy(game)
+    crashed = None
+    try:
+        ge.resolve_turn(game, ['energy'])
+    except Exception as e:
+        crashed = e
+    check("a crash mid-turn still surfaces as an error (so the server logs it)",
+          crashed is not None and not isinstance(crashed, ge.GameError), repr(crashed))
+    check("...and the whole game state is rolled back exactly", game == before)
+    check("...in place (the server's reference to this game stays valid)", game is live)
+    check("...so the earlier move's damage is undone", game['players']['p2']['team'][0]['health'] == 100)
+    check("...and no dice were spent", game['players']['p1']['resources'] == ['energy', 'rage'],
+          game['players']['p1']['resources'])
+    check("...and it's still the same player's turn", game['turn'] == 'p1' and len(game['pending_moves']) == 2)
+
+    game = setup()
+    game['players']['p1']['team'][1]['skills'] = []  # queued skill vanished
+    before = copy.deepcopy(game)
+    try:
+        ge.resolve_turn(game, ['energy'])
+        missing = None
+    except Exception as e:
+        missing = e
+    check("a queued move whose skill no longer exists is a GameError", isinstance(missing, ge.GameError), repr(missing))
+    check("...and changes nothing", game == before)
+
+    for bad in (None, 'energy', [1]):
+        game = setup()
+        try:
+            ge.resolve_turn(game, bad)
+            err = None
+        except Exception as e:
+            err = e
+        check(f"a malformed payment ({bad!r}) is a GameError", isinstance(err, ge.GameError), repr(err))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

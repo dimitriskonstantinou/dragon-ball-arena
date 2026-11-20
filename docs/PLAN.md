@@ -157,7 +157,7 @@ Each phase goes on its own feature branch off `main` and merges only when green.
 - [x] `view_for(game, role)` per-player state (no invisible statuses, no enemy queue, no sids) — *Step 3* (`feature/step3-per-player-view`)
 - [x] `GameError`; engine raises only that for player errors; other errors logged, generic message to player — *Step 4* (`feature/step4-game-errors`)
 - [x] Counter-mark returns a result instead of raising; state broadcast to both; lethal counter ends the match — *Step 4*
-- [ ] Atomic `resolve_turn`
+- [x] Atomic `resolve_turn`: validate first, apply against a snapshot, roll back in place on any crash — *Step 5* (`feature/step5-atomic-resolve`)
 - [ ] Fix `set_skill_cost_on_stack` NameError; apply `scale_skill_by_stack` description template
 - **Done when:** probe script reports 0 of items 1–12 reproduced; new regression tests pass; payload bytes ≤ baseline.
 
