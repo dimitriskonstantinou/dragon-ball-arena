@@ -82,7 +82,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | ✅ 2.3 Per-room lock around engine calls — *Step 15* | BE-5 | Done: double commit resolves 1 turn (was 2); simultaneous tabs never self-match; 4-player x10 stress clean |
 | 2.4 Surrender | BE-4 | `surrender` → loss recorded, both clients notified |
 | ✅ 2.5 Turn timer + auto-pass (deadline sent in state) — *Step 16* | BE-1 | Done: 60 s (`TURN_SECONDS`), auto-pass, 3 timeouts in a row forfeit (rules confirmed by the user); countdown in the UI |
-| 2.6 Reconnect grace window (by `user_id`) | BE-2 | Reload mid-match → same match restored within the window |
+| ✅ 2.6 Reconnect grace window (by `user_id`) — *Step 17* | BE-2 | Done: reload mid-match → same match, same role, current state (real browser); 30 s (`RECONNECT_SECONDS`) then forfeit |
 | 2.7 Structured battle events from the server (`actor, skill, targets, damage, statuses`) | FE-1 | Each resolved move produces an event in both clients' streams |
 | 2.8 Names instead of roles in messages | BE-7 | "Goku_fan wins" |
 
@@ -165,11 +165,9 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**2.6 / Step 17: reconnect grace window (BE-2, HIGH).** A page reload, a closed laptop lid or a phone switching from
-Wi-Fi to mobile data still forfeits the match instantly. Proposed (game-design, confirm or change): on disconnect the
-match keeps running and the opponent is told "opponent disconnected, waiting up to 30 s"; the same **account** coming
-back within **30 s** (new socket, any tab) is put back into the match with the current state; otherwise it's a
-forfeit as today. The turn timer keeps running while they're away (so waiting never exceeds the turn limit + grace).
-Then 2.4 surrender (small, MEDIUM).
+**2.4 / Step 18: surrender (BE-4).** Small and completes the "every match can end cleanly" set (wipe, timeout
+forfeit, disconnect forfeit, surrender): a `surrender` event (with a confirm dialog in the UI) ends the match as a loss
+for the player who surrenders. After that, Phase 3 (security & production config: SEC-1 secret key, SEC-2 CORS +
+cookies, rate limits, session revocation) -- the deploy blockers -- before the DEV site goes online.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

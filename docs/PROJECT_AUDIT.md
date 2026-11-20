@@ -133,7 +133,7 @@ Moves resolve in queue order, and re-queuing a character moves its skill to the 
 A player can stall a match forever; the opponent's only exit is disconnecting, which records *their* loss. Blocks going online.
 **Fix:** server-side deadline per turn (background task), auto-pass on expiry, deadline in the state. Depends on: BE-3 (clean end-of-match path).
 
-**BE-2 — HIGH — Refresh or disconnect = instant forfeit, no reconnect (by reading)**
+**BE-2 — HIGH — Refresh or disconnect = instant forfeit, no reconnect (by reading)** — ✅ FIXED in Step 17 (30 s grace window, same account rejoins from any tab; verified with a real page reload in the browser tests)
 `handle_disconnect` ends the match immediately. A page reload or a phone switching networks loses the match. Blocks going online.
 **Fix:** grace window keyed by `user_id`, re-attach the new socket, re-send state. Depends on: BE-3.
 

@@ -46,6 +46,11 @@ SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
 TURN_SECONDS = int(os.environ.get('TURN_SECONDS', 60))
 TIMER_TICK_SECONDS = 1.0
 TURN_TIMER_THREAD = os.environ.get('TURN_TIMER_THREAD', '1') != '0'  # tests drive the timer by hand instead
+
+# Reconnect grace window (BE-2): a player who drops mid-match has this long to
+# come back (same account, any tab) before forfeiting. user_id -> room_id.
+RECONNECT_SECONDS = int(os.environ.get('RECONNECT_SECONDS', 30))
+DISCONNECTED_USERS = {}
 _timer_started = False
 
 
@@ -179,6 +184,8 @@ def broadcast_state(game):
         view = game_engine.view_for(game, role)
         view.pop('turn_deadline', None)  # server clock; clients get a relative countdown instead
         view['turn_seconds_left'] = seconds_left
+        for r in ('p1', 'p2'):
+            view['players'][r]['connected'] = game['players'][r].get('disconnected_at') is None
         socketio.emit('update-state', view, to=game['players'][role]['id'])
 
 
@@ -219,12 +226,34 @@ def check_turn_timers():
                 broadcast_state(game)
 
 
+def check_disconnect_timers():
+    """Forfeits players who dropped out of a match and didn't come back
+    within RECONNECT_SECONDS (runs in the ticker, under each match's lock)."""
+    for user_id, room_id in list(DISCONNECTED_USERS.items()):
+        game = GAMES.get(room_id)
+        lock = ROOM_LOCKS.get(room_id)
+        if game is None or lock is None:
+            DISCONNECTED_USERS.pop(user_id, None)
+            continue
+        with lock:
+            if GAMES.get(room_id) is not game or game.get('winner'):
+                continue
+            gone = [r for r in ('p1', 'p2') if game['players'][r].get('disconnected_at') is not None
+                    and now() >= game['players'][r]['disconnected_at'] + RECONNECT_SECONDS]
+            if not gone:
+                continue
+            loser = min(gone, key=lambda r: game['players'][r]['disconnected_at'])  # first to leave
+            winner = 'p2' if loser == 'p1' else 'p1'
+            end_game(room_id, winner, reason=f"{loser.upper()} DIDN'T COME BACK IN TIME. {winner.upper()} WINS!")
+
+
 def turn_timer_loop():
     while True:
         socketio.sleep(TIMER_TICK_SECONDS)
         try:
             with app.app_context():
                 check_turn_timers()
+                check_disconnect_timers()
         except Exception:
             log.exception("Turn timer loop error")
 
@@ -251,6 +280,8 @@ def end_game(room_id, winner, reason=None):
     game['winner'] = winner
     for p_key in ('p1', 'p2'):
         SID_ROOM_MAP.pop(game['players'][p_key]['id'], None)
+        if DISCONNECTED_USERS.get(game['players'][p_key].get('user_id')) == room_id:
+            DISCONNECTED_USERS.pop(game['players'][p_key]['user_id'], None)
 
     # Saved before the broadcast so the client's stats badge refresh sees it --
     # but a database failure must never stop the players from seeing the end.
@@ -358,6 +389,32 @@ def handle_connect():
     # Display fields only: skill mechanics stay server-side (same rule as view_for).
     char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user, request.host_url).values()]
     emit('character-list', char_list)
+    rejoin_match(user)
+
+
+def rejoin_match(user):
+    """If this account dropped out of a match that is still waiting for it
+    (reload, new tab, network switch), attach this new connection to it and
+    send the current state. Returns True if it rejoined."""
+    room_id = DISCONNECTED_USERS.get(user.id)
+    lock = ROOM_LOCKS.get(room_id)
+    if lock is None:
+        return False
+    with lock:
+        game = GAMES.get(room_id)
+        if game is None or game.get('winner') or DISCONNECTED_USERS.get(user.id) != room_id:
+            return False
+        role = next(r for r in ('p1', 'p2') if game['players'][r]['user_id'] == user.id)
+        player = game['players'][role]
+        player['id'] = request.sid
+        player['disconnected_at'] = None
+        DISCONNECTED_USERS.pop(user.id, None)
+        SID_ROOM_MAP[request.sid] = room_id
+        join_room(room_id)
+        emit('game-start', {'roomId': room_id, 'role': role})
+        socketio.emit('message', f"{role.upper()} RECONNECTED.", to=room_id)
+        broadcast_state(game)
+        return True
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -375,13 +432,16 @@ def handle_disconnect():
         game = GAMES.get(room_id)
         if not game or game.get('winner'):
             return
-        if game['players']['p1']['id'] == sid:
-            winner = 'p2'
-        elif game['players']['p2']['id'] == sid:
-            winner = 'p1'
-        else:
+        role = next((r for r in ('p1', 'p2') if game['players'][r]['id'] == sid), None)
+        if role is None:
             return
-        end_game(room_id, winner, reason="OPPONENT DISCONNECTED! " + winner.upper() + " WINS!")
+        # Not a forfeit yet: the match waits RECONNECT_SECONDS for this account to
+        # come back (rejoin_match); check_disconnect_timers forfeits it after that.
+        game['players'][role]['disconnected_at'] = now()
+        DISCONNECTED_USERS[game['players'][role]['user_id']] = room_id
+        socketio.emit('message', f"{role.upper()} DISCONNECTED -- waiting up to {RECONNECT_SECONDS}s "
+                                 f"for them to come back.", to=room_id)
+        broadcast_state(game)
 
 def require(data, **fields):
     """Validates a socket payload: a dict whose listed keys have the given

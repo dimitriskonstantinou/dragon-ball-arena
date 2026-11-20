@@ -111,6 +111,12 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   Matchmaking state (queue, seat checks, creating matches) is guarded by `MATCHMAKING_LOCK`. Lock order is always
   `MATCHMAKING_LOCK` -> room lock, never the reverse. Iterate shared dicts over a `list(...)` snapshot. Test races by
   firing events from parallel threads with one step slowed down (see the Step 15 smoke checks).
+- **Reconnect (Step 17):** a disconnect mid-match is not a forfeit: the player gets `disconnected_at` (server-only,
+  in `PRIVATE_PLAYER_FIELDS`) and an entry in `DISCONNECTED_USERS` (user_id -> room, so lookups never scan all
+  matches). The same account connecting again (any tab) is re-attached by `rejoin_match()` in the connect handler
+  (new sid, `game-start` + state). `check_disconnect_timers()` (same ticker as the turn timer) forfeits after
+  `RECONNECT_SECONDS` (default 30). `end_game` clears the bookkeeping. A still-connected player's second tab never
+  takes over the seat. Tests must end matches explicitly -- disconnecting no longer does.
 - **Turn timer:** every turn's deadline is `game['turn_deadline']` (server clock, never sent; clients get
   `turn_seconds_left`). Call `start_turn_clock(game)` whenever a new turn starts (match start, commit, timeout). One
   background ticker (`turn_timer_loop`, started with the first match) runs `check_turn_timers()` every second under
@@ -140,8 +146,8 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `character-list` | unlocked characters (on connect) |
 | `auth-required` | not logged in |
 | `match-status` | text while searching |
-| `game-start` | `{roomId, role}` |
-| `update-state` | per-player view (`view_for`) + `turn_seconds_left` (countdown; `null` once the match is over) |
+| `game-start` | `{roomId, role}` -- also sent on reconnect (a reloaded page lands back in its match) |
+| `update-state` | per-player view (`view_for`) + `turn_seconds_left` (countdown; `null` once the match is over) + `players[r].connected` |
 | `message` | game event text (counter fired, game over) |
 | `error-msg` | `GameError` text or generic server error |
 

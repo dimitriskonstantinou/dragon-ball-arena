@@ -569,7 +569,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
 # --- per-player view ---------------------------------------------------------
 
 # Server-only fields on a player entry: socket id and account id.
-PRIVATE_PLAYER_FIELDS = ('id', 'user_id')
+PRIVATE_PLAYER_FIELDS = ('id', 'user_id', 'disconnected_at')
 
 
 def view_for(game_state, role):

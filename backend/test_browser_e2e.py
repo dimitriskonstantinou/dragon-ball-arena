@@ -257,10 +257,13 @@ def test_disconnect_forfeits_to_opponent(browser, url):
     find_match(p2, [0, 1, 2])
     p1.wait_for_selector('#game-screen', state='visible')
     p2.wait_for_selector('#game-screen', state='visible')
-    ctx2.close()  # player 2 closes the tab mid-match
-    p1.wait_for_function("document.getElementById('status').innerText === 'YOU WIN!'")
-    check("when the opponent disconnects, the remaining player is declared the winner", True)
-    check("...and is told why", 'OPPONENT DISCONNECTED' in p1.locator('#log').inner_text())
+    ctx2.close()  # player 2 closes the tab mid-match and never comes back
+    p1.wait_for_function("document.getElementById('log').innerText.includes('DISCONNECTED -- waiting')")
+    check("when the opponent disconnects, the remaining player is told they have time to come back",
+          status(p1) != 'YOU WIN!')
+    p1.wait_for_function("document.getElementById('status').innerText === 'YOU WIN!'", timeout=20_000)
+    check("...and once the grace period runs out, the remaining player wins", True)
+    check("...and is told why", "DIDN'T COME BACK IN TIME" in p1.locator('#log').inner_text())
     check("no JavaScript errors in the remaining player's browser",
           real_errors([e for e in errors if e.startswith('delta')]) == [], errors)
     ctx1.close()
@@ -295,13 +298,46 @@ def test_idle_player_times_out_and_forfeits(browser, url):
     ctx2.close()
 
 
-TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_disconnect_forfeits_to_opponent]
-FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits]   # run on a second server with TURN_SECONDS=2
+def test_reload_mid_match_returns_to_the_match(browser, url):
+    """BE-2: reloading the page used to forfeit the match on the spot."""
+    errors = []
+    ctx1, p1, _ = new_player(browser, url, errors, 'theta')
+    ctx2, p2, _ = new_player(browser, url, errors, 'iota')
+    find_match(p1, [0, 1, 2])
+    find_match(p2, [2, 3, 4])
+    for p in (p1, p2):
+        p.wait_for_selector('#game-screen', state='visible')
+        p.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+    my_names = p1.locator('#my-team .char-card').all_inner_texts()
+    p1.reload()
+    p1.wait_for_selector('#game-screen', state='visible')
+    p1.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+    check("after a reload mid-match the player is back on the battle board",
+          p1.locator('#lobby-screen').is_hidden() and status(p1) in ('PLAN YOUR MOVES', 'OPPONENT THINKING...'),
+          status(p1))
+    check("...with the same team", [t.split('\n')[0] for t in p1.locator('#my-team .char-card').all_inner_texts()]
+          == [t.split('\n')[0] for t in my_names])
+    p2.wait_for_function("document.getElementById('log').innerText.includes('RECONNECTED')")
+    check("...and the opponent is told they're back", True)
+    active = p1 if is_my_turn(p1) else p2
+    end_turn(active)
+    wait_for_turn_change([p1, p2], active)
+    check("...and the match carries on (a turn passes normally)", not is_my_turn(active) and not game_over(p1))
+    unexpected = real_errors(errors)
+    check("no JavaScript errors", unexpected == [], unexpected)
+    ctx1.close()
+    ctx2.close()
+
+
+TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_reload_mid_match_returns_to_the_match]
+# Run on a second server with short limits (TURN_SECONDS=2, RECONNECT_SECONDS=3) so they finish quickly.
+FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits, test_disconnect_forfeits_to_opponent]
 
 if __name__ == '__main__':
     tmp = tempfile.mkdtemp(prefix='dba_e2e_')
     proc, url, log = start_server(tmp)
-    fast_proc, fast_url, fast_log = start_server(tmp, name='fast_timer_server', TURN_SECONDS='2')
+    fast_proc, fast_url, fast_log = start_server(tmp, name='fast_timer_server', TURN_SECONDS='2',
+                                                 RECONNECT_SECONDS='3')
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()

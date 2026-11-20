@@ -579,7 +579,13 @@ else:
     check("a double commit (two threads at once) resolves only one turn",
           g['turn_count'] == turns_before + 1 and g['turn'] != start['role'], (g['turn_count'] - turns_before, g['turn']))
     check("...and the second commit is told it's not your turn", errors == ["Not your turn!"], errors)
-    racer1.disconnect()  # ends that match (forfeit) so the accounts are free again
+    # Finish that match properly (since Step 17 a disconnect no longer forfeits at once).
+    racers = {start['role']: racer1, ('p2' if start['role'] == 'p1' else 'p1'): racer2}
+    for ch in g['players']['p1' if g['turn'] == 'p2' else 'p2']['team']:
+        ch['health'] = 0
+    racers[g['turn']].emit('commit-turn', {'paymentList': []})
+    check("(cleanup) the race match ended", start['roomId'] not in appmod.GAMES)
+    racer1.disconnect()
     racer2.disconnect()
 
     http_tabs, tab1 = new_player('tabs')
@@ -710,6 +716,91 @@ else:
               and appmod.db.session.get(appmod.UserStats, other_uid).total_losses == stats[other_uid])
     idle1.disconnect()
     idle2.disconnect()
+
+    # --- Step 17 regression: a disconnect mid-match (page reload, closed lid,
+    # Wi-Fi -> mobile data) used to forfeit instantly. Now the same account has
+    # RECONNECT_SECONDS to come back before it counts as a forfeit. ---
+    def check_disconnects():
+        with appmod.app.app_context():
+            appmod.check_disconnect_timers()
+
+    def match_of(c1, c2):
+        c1.emit('find-match', team_ids)
+        c2.emit('find-match', team_ids)
+        start = next(e['args'][0] for e in c1.get_received() if e['name'] == 'game-start')
+        c2.get_received()
+        return start['roomId'], start['role'], ('p2' if start['role'] == 'p1' else 'p1')
+
+    http_back, back1 = new_player('back1')
+    _, back2 = new_player('back2')
+    room, my_role, their_role = match_of(back1, back2)
+    g = appmod.GAMES[room]
+    my_uid = g['players'][my_role]['user_id']
+
+    back1.disconnect()                                   # e.g. the page is reloaded
+    got2 = back2.get_received()
+    check("a disconnect mid-match doesn't end it", room in appmod.GAMES and not g.get('winner'))
+    check("...the opponent is told how long the player has to come back",
+          any(e['name'] == 'message' and f'waiting up to {appmod.RECONNECT_SECONDS}s' in text(e) for e in got2), got2)
+    states = [e['args'][0] for e in got2 if e['name'] == 'update-state']
+    check("...and sees them as disconnected (without the server's timestamp)",
+          states and states[-1]['players'][my_role]['connected'] is False
+          and all('disconnected_at' not in st['players'][r] for st in states for r in ('p1', 'p2')))
+
+    with clock_ahead(appmod.RECONNECT_SECONDS - 5):
+        check_disconnects()
+    check("nothing happens before the grace period ends", room in appmod.GAMES and not g.get('winner'))
+
+    back1 = appmod.socketio.test_client(appmod.app, flask_test_client=http_back)   # same account comes back
+    got1, got2 = back1.get_received(), back2.get_received()
+    check("coming back in time puts the player back into the same match, same role",
+          any(e['name'] == 'game-start' and e['args'][0] == {'roomId': room, 'role': my_role} for e in got1), got1)
+    states = [e['args'][0] for e in got1 if e['name'] == 'update-state']
+    check("...with the current state, shown as connected again",
+          states and states[-1]['players'][my_role]['connected'] is True and len(states[-1]['players'][my_role]['team']) == 3)
+    check("...and the opponent is told", any(e['name'] == 'message' and 'RECONNECTED' in text(e) for e in got2), got2)
+    if g['turn'] != my_role:
+        back2.emit('commit-turn', {'paymentList': []})
+        back1.get_received()
+    back1.emit('commit-turn', {'paymentList': []})
+    errors = [e for e in back1.get_received() if e['name'] == 'error-msg']
+    check("...and can play on (their commit is accepted)", errors == [] and g['turn'] == their_role, (errors, g['turn']))
+    check("...and no disconnect bookkeeping is left for them", my_uid not in appmod.DISCONNECTED_USERS)
+
+    with appmod.app.app_context():
+        losses_before = appmod.db.session.get(appmod.UserStats, my_uid).total_losses
+    back1.disconnect()                                   # leaves again, and this time stays away
+    back2.get_received()
+    with clock_ahead(appmod.RECONNECT_SECONDS + 1):
+        check_disconnects()
+    got2 = back2.get_received()
+    check("staying away past the grace period forfeits the match to the opponent",
+          g.get('winner') == their_role and room not in appmod.GAMES, (g.get('winner'), room in appmod.GAMES))
+    check("...and the opponent is told why",
+          any(e['name'] == 'message' and "DIDN'T COME BACK IN TIME" in text(e) for e in got2), got2)
+    with appmod.app.app_context():
+        check("...and the loss is recorded for the player who left",
+              appmod.db.session.get(appmod.UserStats, my_uid).total_losses == losses_before + 1)
+    check("...and no disconnect bookkeeping is left behind", appmod.DISCONNECTED_USERS == {}, appmod.DISCONNECTED_USERS)
+    back2.disconnect()
+
+    # A second tab of a player who is still connected must not take over the seat.
+    http_seat, seat1 = new_player('seat1')
+    _, seat2 = new_player('seat2')
+    room, my_role, their_role = match_of(seat1, seat2)
+    g = appmod.GAMES[room]
+    sid_before = g['players'][my_role]['id']
+    intruder = appmod.socketio.test_client(appmod.app, flask_test_client=http_seat)
+    check("a second tab while still connected doesn't take over the match",
+          not any(e['name'] == 'game-start' for e in intruder.get_received()) and g['players'][my_role]['id'] == sid_before)
+    for ch in g['players'][their_role]['team']:
+        ch['health'] = 0
+    {my_role: seat1, their_role: seat2}[g['turn']].emit('commit-turn', {'paymentList': []})
+    if room in appmod.GAMES:   # p2 had the turn: let it pass once more
+        {my_role: seat1, their_role: seat2}[g['turn']].emit('commit-turn', {'paymentList': []})
+    check("(cleanup) that match ended", room not in appmod.GAMES)
+    for c in (intruder, seat1, seat2):
+        c.disconnect()
 
 print()
 if FAILURES:

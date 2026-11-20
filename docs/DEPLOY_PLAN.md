@@ -143,7 +143,7 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 
 ### Stage 1 — Production-ready configuration
 1. `backend/config.py`: read everything from env: `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_ORIGINS`,
-   `ENV=development|production`, `TURN_SECONDS` (already read by app.py since Step 16). In production, refuse to
+   `ENV=development|production`, `TURN_SECONDS` / `RECONNECT_SECONDS` (already read by app.py since Steps 16/17). In production, refuse to
    start if `SECRET_KEY` is missing. Note: the turn-timer ticker is a background thread in the one server process;
    with gevent it becomes a greenlet (`socketio.start_background_task` handles both).
 2. Cookies in prod: `SESSION_COOKIE_SECURE=True`, `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE='Lax'`.
