@@ -167,12 +167,14 @@ socket.on('update-state', game => {
     if(game.winner) {
         document.getElementById('status').innerText = game.winner === myRole ? "YOU WIN!" : "YOU LOSE!";
         document.getElementById('end-turn').style.display = 'none';
+        showTurnTimer(null);
         refreshUserBadge();
         return;
     }
 
     const isMyTurn = game.turn === myRole;
     document.getElementById('status').innerText = isMyTurn ? "PLAN YOUR MOVES" : "OPPONENT THINKING...";
+    showTurnTimer(game.turn_seconds_left, isMyTurn);
     document.getElementById('end-turn').style.display = isMyTurn ? 'inline-block' : 'none';
 
     const myData = game.players[myRole];
@@ -220,6 +222,24 @@ function updateTurnHeader(isMyTurn, myImg, enemyImg) {
 }
 
 socket.on('error-msg', msg => log("❌ " + msg));
+
+// --- TURN TIMER ---
+// The server owns the deadline and sends the seconds left with each state;
+// this only counts down locally between updates.
+let turnTimerInterval = null;
+function showTurnTimer(secondsLeft, isMyTurn) {
+    clearInterval(turnTimerInterval);
+    const el = document.getElementById('turn-timer');
+    if (secondsLeft == null) { el.innerText = ''; return; }
+    const endsAt = Date.now() + secondsLeft * 1000;
+    const render = () => {
+        const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        el.innerText = `${isMyTurn ? 'Your' : "Opponent's"} turn ends in ${left}s`;
+        el.classList.toggle('urgent', left <= 10);
+    };
+    render();
+    turnTimerInterval = setInterval(render, 250);
+}
 
 // --- MATH ---
 function calculateRemainingDice(totalDice, pendingMoves) {

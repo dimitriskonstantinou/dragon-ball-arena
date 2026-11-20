@@ -1131,6 +1131,45 @@ def test_team_wiped_at_turn_start_loses_immediately():
           and b['health'] == 90, (game['winner'], game['turn'], game['players']['p2']['resources'], b['health']))
 
 
+def test_turn_timeout_rules():
+    """BE-1: a timed-out turn passes with nothing resolved or paid; the
+    TIMEOUTS_TO_FORFEIT-th timeout in a row forfeits; a real commit resets the streak."""
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [{"id": "hit", "name": "hit", "cost": {"energy": 1}, "target_type": "enemy",
+                    "effects": [{"type": "damage", "value": 20}], "cooldown": 0, "currentCooldown": 0}]
+    game['players']['p1']['resources'] = ['energy']
+    ge.queue_move(game, 'p1', 'A', 'hit', 'p2', 0)
+    strikes = ge.timeout_turn(game)
+    check("a timeout passes the turn to the opponent", game['turn'] == 'p2' and strikes == 1, (game['turn'], strikes))
+    check("...without resolving the queued move", game['players']['p2']['team'][0]['health'] == 100)
+    check("...without spending Ki", game['players']['p1']['resources'] == ['energy'], game['players']['p1']['resources'])
+    check("...without putting anything on cooldown", a['skills'][0]['currentCooldown'] == 0)
+
+    ge.timeout_turn(game)                                  # p2 strike 1
+    check("each player has their own timeout streak",
+          game['players']['p1']['timeouts'] == 1 and game['players']['p2']['timeouts'] == 1)
+    ge.resolve_turn(game, [])                              # p1 commits (even an empty turn counts as acting)
+    check("a real commit resets that player's streak", game['players']['p1']['timeouts'] == 0)
+
+    game = make_game()
+    for i in range(1, ge.TIMEOUTS_TO_FORFEIT):
+        ge.timeout_turn(game)                              # p1 times out...
+        check(f"timeout {i} of {ge.TIMEOUTS_TO_FORFEIT} doesn't end the match", not game['winner'])
+        ge.timeout_turn(game)                              # ...and so does p2
+    ge.timeout_turn(game)                                  # p1's 3rd in a row
+    check(f"timeout number {ge.TIMEOUTS_TO_FORFEIT} in a row forfeits to the opponent", game['winner'] == 'p2',
+          game['winner'])
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    b['health'] = 5
+    ge.add_status(b, {'type': 'dot', 'value': 10, 'duration': 4, 'tag': 'harmful'})
+    ge.timeout_turn(game)                                  # turn passes -> p2's turn starts -> DoT kills p2
+    check("a timeout that passes the turn still applies turn-start ticks (and their win)", game['winner'] == 'p1',
+          game['winner'])
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

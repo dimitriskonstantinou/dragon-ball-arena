@@ -6,6 +6,7 @@ import copy
 import logging
 import os
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 
@@ -39,6 +40,18 @@ ROOM_LOCKS = {}                        # room_id -> RLock, one per live match (s
 MATCHMAKING_LOCK = threading.Lock()    # MATCHMAKING_QUEUE + seat checks + creating matches
 
 SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
+
+# Turn timer (BE-1): every turn has a deadline; one background ticker passes
+# expired turns (game_engine.timeout_turn has the rules, incl. forfeit).
+TURN_SECONDS = int(os.environ.get('TURN_SECONDS', 60))
+TIMER_TICK_SECONDS = 1.0
+TURN_TIMER_THREAD = os.environ.get('TURN_TIMER_THREAD', '1') != '0'  # tests drive the timer by hand instead
+_timer_started = False
+
+
+def now():
+    """The server clock for turn deadlines (tests move it by patching time.time)."""
+    return time.time()
 
 
 def report_error(e, event):
@@ -159,8 +172,69 @@ def broadcast_state(game):
     """Sends each player their own filtered view (game_engine.view_for) --
     never the raw state, which holds hidden info: the opponent's queued
     moves, invisible traps, socket/account ids."""
+    seconds_left = None
+    if game.get('turn_deadline') is not None and not game.get('winner'):
+        seconds_left = max(0, round(game['turn_deadline'] - now()))
     for role in ('p1', 'p2'):
-        socketio.emit('update-state', game_engine.view_for(game, role), to=game['players'][role]['id'])
+        view = game_engine.view_for(game, role)
+        view.pop('turn_deadline', None)  # server clock; clients get a relative countdown instead
+        view['turn_seconds_left'] = seconds_left
+        socketio.emit('update-state', view, to=game['players'][role]['id'])
+
+
+def start_turn_clock(game):
+    game['turn_deadline'] = now() + TURN_SECONDS
+
+
+def check_turn_timers():
+    """Passes every turn whose deadline has expired. Runs in the ticker
+    thread (needs an app context for end_game's DB write); each match is
+    handled under its lock, and the deadline is re-checked there, so a commit
+    that lands at the same moment wins and the timeout backs off."""
+    for room_id, game in list(GAMES.items()):
+        if game.get('turn_deadline') is None or now() < game['turn_deadline']:
+            continue
+        lock = ROOM_LOCKS.get(room_id)
+        if lock is None:
+            continue
+        with lock:
+            if GAMES.get(room_id) is not game or game.get('winner') or now() < game['turn_deadline']:
+                continue
+            timed_out = game['turn']
+            try:
+                strikes = game_engine.timeout_turn(game)
+            except Exception:
+                log.exception("Turn timeout failed: room=%s", room_id)
+                continue
+            if game.get('winner'):
+                reason = None
+                if strikes >= game_engine.TIMEOUTS_TO_FORFEIT:
+                    reason = (f"{timed_out.upper()} RAN OUT OF TIME {strikes} TURNS IN A ROW AND FORFEITS. "
+                              f"{game['winner'].upper()} WINS!")
+                end_game(room_id, game['winner'], reason=reason)
+            else:
+                start_turn_clock(game)
+                socketio.emit('message', f"{timed_out.upper()} ran out of time -- turn passed "
+                                         f"({strikes}/{game_engine.TIMEOUTS_TO_FORFEIT} in a row forfeits).", to=room_id)
+                broadcast_state(game)
+
+
+def turn_timer_loop():
+    while True:
+        socketio.sleep(TIMER_TICK_SECONDS)
+        try:
+            with app.app_context():
+                check_turn_timers()
+        except Exception:
+            log.exception("Turn timer loop error")
+
+
+def ensure_turn_timer():
+    """Starts the single ticker on the first match (caller holds MATCHMAKING_LOCK)."""
+    global _timer_started
+    if TURN_TIMER_THREAD and not _timer_started:
+        _timer_started = True
+        socketio.start_background_task(turn_timer_loop)
 
 def end_game(room_id, winner, reason=None):
     """Finishes a match exactly once: records the result, sends both players
@@ -426,7 +500,9 @@ def start_match(p1, p2):
         emit('game-start', {'roomId': room_id, 'role': 'p2'}, to=p2['id'])
 
         game_engine.start_turn(game, 'p1')
+        start_turn_clock(game)
         broadcast_state(game)
+    ensure_turn_timer()
 
 
 # --- Socket.IO: in-match actions --------------------------------------------
@@ -472,6 +548,7 @@ def handle_commit(data):
             if game.get('winner'):
                 end_game(room_id, game['winner'])
             else:
+                start_turn_clock(game)
                 broadcast_state(game)
     except Exception as e:
         report_error(e, 'commit-turn')

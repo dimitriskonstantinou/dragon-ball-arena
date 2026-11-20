@@ -129,7 +129,7 @@ Moves resolve in queue order, and re-queuing a character moves its skill to the 
 
 ### 4.2 Backend & multiplayer
 
-**BE-1 — HIGH — No turn timer (by reading)**
+**BE-1 — HIGH — No turn timer (by reading)** — ✅ FIXED in Step 16 (60 s turns, auto-pass, 3 timeouts in a row = forfeit; verified in a real browser against the real ticker)
 A player can stall a match forever; the opponent's only exit is disconnecting, which records *their* loss. Blocks going online.
 **Fix:** server-side deadline per turn (background task), auto-pass on expiry, deadline in the state. Depends on: BE-3 (clean end-of-match path).
 

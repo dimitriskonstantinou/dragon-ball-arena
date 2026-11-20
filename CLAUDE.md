@@ -107,10 +107,16 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   ```
 - **Concurrency:** the server runs every Socket.IO event in its own thread (`async_handlers`); the in-process test
   client does not, so races never show up in normal tests. Anything that reads or changes a live match must hold its
-  lock (`locked_match()` in handlers; `ROOM_LOCKS[room_id]` in background tasks such as the coming turn timer).
+  lock (`locked_match()` in handlers; `ROOM_LOCKS[room_id]` in background tasks such as the turn timer).
   Matchmaking state (queue, seat checks, creating matches) is guarded by `MATCHMAKING_LOCK`. Lock order is always
   `MATCHMAKING_LOCK` -> room lock, never the reverse. Iterate shared dicts over a `list(...)` snapshot. Test races by
   firing events from parallel threads with one step slowed down (see the Step 15 smoke checks).
+- **Turn timer:** every turn's deadline is `game['turn_deadline']` (server clock, never sent; clients get
+  `turn_seconds_left`). Call `start_turn_clock(game)` whenever a new turn starts (match start, commit, timeout). One
+  background ticker (`turn_timer_loop`, started with the first match) runs `check_turn_timers()` every second under
+  each match's lock; the rules (auto-pass, `TIMEOUTS_TO_FORFEIT`) are in `game_engine.timeout_turn`. Config:
+  `TURN_SECONDS` (default 60), `TURN_TIMER_THREAD=0` disables the ticker (the smoke test drives `check_turn_timers()`
+  by hand with a shifted `time.time`). The app's clock is `app.now()`.
 - Module state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`) is **mutated in place, never rebound**.
 - **Every finished match goes through `end_game`**, which pops the room from `GAMES` first (that pop is the
   "ended exactly once" guard), saves the result, sends the final state + message, then closes the Socket.IO room.
@@ -135,7 +141,7 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `auth-required` | not logged in |
 | `match-status` | text while searching |
 | `game-start` | `{roomId, role}` |
-| `update-state` | per-player view (`view_for`) |
+| `update-state` | per-player view (`view_for`) + `turn_seconds_left` (countdown; `null` once the match is over) |
 | `message` | game event text (counter fired, game over) |
 | `error-msg` | `GameError` text or generic server error |
 

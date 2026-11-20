@@ -143,7 +143,9 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 
 ### Stage 1 — Production-ready configuration
 1. `backend/config.py`: read everything from env: `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_ORIGINS`,
-   `ENV=development|production`. In production, refuse to start if `SECRET_KEY` is missing.
+   `ENV=development|production`, `TURN_SECONDS` (already read by app.py since Step 16). In production, refuse to
+   start if `SECRET_KEY` is missing. Note: the turn-timer ticker is a background thread in the one server process;
+   with gevent it becomes a greenlet (`socketio.start_background_task` handles both).
 2. Cookies in prod: `SESSION_COOKIE_SECURE=True`, `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE='Lax'`.
 3. Behind a proxy: wrap the app in `werkzeug.middleware.proxy_fix.ProxyFix` so scheme/IP are correct.
 4. **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS proxies the

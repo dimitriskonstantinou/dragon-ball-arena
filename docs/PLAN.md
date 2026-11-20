@@ -37,5 +37,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 13 | `feature/step13-prune-finished-matches` | `end_game` pops the room first (exactly-once guard), sends final state, closes the Socket.IO room; `ENDED_ROOMS` removed | 220/220 matches kept → 0; ~30 KB/match → flat; smoke 53→59; probe 4→3 |
 | 14 | `feature/step14-safe-match-end` | A failed result save is caught, rolled back and logged; both players still get the final state | final states on DB failure 0/2 → 2/2; smoke 59→65; probe 4→3 |
 | 15 | `feature/step15-room-lock` | Lock per match (`locked_match`) + matchmaking lock; reproduced 2 real races first (double commit skipped the opponent's turn; simultaneous tabs self-matched) | double commit 2 turns → 1; probe 5→3; smoke 65→71; app cov 83→85% |
+| 16 | `feature/step16-turn-timer` | Turn timer: 60 s, auto-pass, 3 timeouts in a row = forfeit; one background ticker under match locks; countdown in the UI | idle stall reproduced → fixed; engine 167→177, smoke 71→80, browser 14→21; probe 4→3 |
 
-**Merged into `dev`:** none of steps 1–15 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–16 yet (user merges in order).

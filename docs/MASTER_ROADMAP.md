@@ -81,7 +81,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | ✅ 2.2 End-of-match persistence errors handled + logged — *Step 14* | BE-6 | Done: real failing COMMIT → both players get the end, error logged, nothing half-saved, next match saves |
 | ✅ 2.3 Per-room lock around engine calls — *Step 15* | BE-5 | Done: double commit resolves 1 turn (was 2); simultaneous tabs never self-match; 4-player x10 stress clean |
 | 2.4 Surrender | BE-4 | `surrender` → loss recorded, both clients notified |
-| 2.5 Turn timer + auto-pass (deadline sent in state) | BE-1 | Idle player's turn passes after N s; repeated AFK → forfeit (rule to confirm) |
+| ✅ 2.5 Turn timer + auto-pass (deadline sent in state) — *Step 16* | BE-1 | Done: 60 s (`TURN_SECONDS`), auto-pass, 3 timeouts in a row forfeit (rules confirmed by the user); countdown in the UI |
 | 2.6 Reconnect grace window (by `user_id`) | BE-2 | Reload mid-match → same match restored within the window |
 | 2.7 Structured battle events from the server (`actor, skill, targets, damage, statuses`) | FE-1 | Each resolved move produces an event in both clients' streams |
 | 2.8 Names instead of roles in messages | BE-7 | "Goku_fan wins" |
@@ -165,10 +165,11 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**2.5 / Step 16: turn timer (BE-1, HIGH).** A player can still stall a match forever; the opponent's only way out is
-leaving, which records *their* loss. Proposed defaults (game-design, confirm or change): **60 s per turn**, on expiry the
-turn **auto-passes** (queued moves dropped, no Ki spent), **3 consecutive timeouts = forfeit**. Server-side deadline
-in the state (so the UI can show a countdown), timer runs under the match lock (Step 15), injectable clock for tests.
-Then 2.4 surrender (small), 2.6 reconnect.
+**2.6 / Step 17: reconnect grace window (BE-2, HIGH).** A page reload, a closed laptop lid or a phone switching from
+Wi-Fi to mobile data still forfeits the match instantly. Proposed (game-design, confirm or change): on disconnect the
+match keeps running and the opponent is told "opponent disconnected, waiting up to 30 s"; the same **account** coming
+back within **30 s** (new socket, any tab) is put back into the match with the current state; otherwise it's a
+forfeit as today. The turn timer keeps running while they're away (so waiting never exceeds the turn limit + grace).
+Then 2.4 surrender (small, MEDIUM).
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

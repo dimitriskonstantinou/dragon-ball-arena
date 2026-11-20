@@ -120,6 +120,8 @@ body { background: var(--bg); color: white; font-family: 'Segoe UI', sans-serif;
 .end-btn { padding: 10px 30px; font-size: 1.2em; background: var(--gold); border: none; cursor: pointer; border-radius: 5px; font-weight: bold; }
 #log { height: 100px; overflow-y: auto; background: #000; border: 1px solid #333; margin-top: 10px; font-family: monospace; color: #0f0; text-align: left; padding: 10px; }
 #instruction { color: var(--gold); font-weight: bold; height: 20px; margin-bottom: 5px; }
+#turn-timer { color: #aaa; font-size: 0.9rem; height: 18px; }
+#turn-timer.urgent { color: var(--red); font-weight: bold; }
 dialog { background: #222; border: 2px solid var(--gold); border-radius: 10px; color: white; width: 500px; box-shadow: 0 0 20px rgba(0,0,0,0.8); padding: 20px; }
 dialog::backdrop { background: rgba(0,0,0,0.7); }
 .modal-section { margin-bottom: 15px; text-align: left; }

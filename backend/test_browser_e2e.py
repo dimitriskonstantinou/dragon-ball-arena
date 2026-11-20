@@ -46,13 +46,13 @@ def check(name, condition, detail=""):
 
 # --- server -------------------------------------------------------------------
 
-def start_server(tmp):
+def start_server(tmp, name='server', **extra_env):
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         port = s.getsockname()[1]
-    env = dict(os.environ, PORT=str(port),
-               DATABASE_URL='sqlite:///' + os.path.join(tmp, 'e2e.db').replace('\\', '/'))
-    log = open(os.path.join(tmp, 'server.log'), 'w', encoding='utf-8')
+    env = dict(os.environ, PORT=str(port), **extra_env,
+               DATABASE_URL='sqlite:///' + os.path.join(tmp, f'{name}.db').replace('\\', '/'))
+    log = open(os.path.join(tmp, f'{name}.log'), 'w', encoding='utf-8')
     proc = subprocess.Popen([sys.executable, 'app.py'], cwd=BACKEND, env=env, stdout=log, stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL)
     url = f'http://127.0.0.1:{port}'
@@ -66,7 +66,7 @@ def start_server(tmp):
             time.sleep(0.1)
     proc.kill()
     log.close()
-    raise RuntimeError("server didn't start; see " + os.path.join(tmp, 'server.log'))
+    raise RuntimeError("server didn't start; see " + os.path.join(tmp, f'{name}.log'))
 
 
 # --- player actions (UI only) -------------------------------------------------
@@ -202,6 +202,9 @@ def test_full_match(browser, url):
     check("matchmaking pairs them and both see the battle board",
           p1.locator('#enemy-team .char-card').count() == 3 and p2.locator('#enemy-team .char-card').count() == 3)
     check("exactly one player has the turn", is_my_turn(p1) != is_my_turn(p2))
+    check("both players see the turn countdown",
+          all('turn ends in' in p.locator('#turn-timer').inner_text() for p in pages),
+          [p.locator('#turn-timer').inner_text() for p in pages])
 
     turns, moves = 0, 0
     while turns < MAX_TURNS and not any(game_over(p) for p in pages):
@@ -263,18 +266,49 @@ def test_disconnect_forfeits_to_opponent(browser, url):
     ctx1.close()
 
 
+def test_idle_player_times_out_and_forfeits(browser, url):
+    """Runs against a server with a 2-second turn limit: nobody acts, so turns
+    pass on their own (the real background ticker) until the player who never
+    moves has timed out 3 times in a row and forfeits."""
+    errors = []
+    ctx1, p1, _ = new_player(browser, url, errors, 'zeta')
+    ctx2, p2, _ = new_player(browser, url, errors, 'eta')
+    find_match(p1, [0, 1, 2])
+    find_match(p2, [0, 1, 2])
+    p1.wait_for_selector('#game-screen', state='visible')
+    p2.wait_for_selector('#game-screen', state='visible')
+    p1.wait_for_function("document.getElementById('turn-timer').innerText.includes('turn ends in')")
+    check("the countdown is shown", True)
+    for p in (p1, p2):
+        p.wait_for_function("['YOU WIN!', 'YOU LOSE!'].includes(document.getElementById('status').innerText)",
+                            timeout=45_000)
+    check("with nobody acting, turns pass on their own until someone forfeits",
+          {status(p1), status(p2)} == {'YOU WIN!', 'YOU LOSE!'}, (status(p1), status(p2)))
+    logs = p1.locator('#log').inner_text() + p2.locator('#log').inner_text()
+    check("players are told each time a turn ran out", 'ran out of time' in logs)
+    check("...and that the match ended by forfeit", 'FORFEITS' in logs)
+    check("the countdown disappears when the match is over",
+          p1.locator('#turn-timer').inner_text() == '' and p2.locator('#turn-timer').inner_text() == '')
+    unexpected = real_errors(errors)
+    check("no JavaScript errors", unexpected == [], unexpected)
+    ctx1.close()
+    ctx2.close()
+
+
 TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_disconnect_forfeits_to_opponent]
+FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits]   # run on a second server with TURN_SECONDS=2
 
 if __name__ == '__main__':
     tmp = tempfile.mkdtemp(prefix='dba_e2e_')
     proc, url, log = start_server(tmp)
+    fast_proc, fast_url, fast_log = start_server(tmp, name='fast_timer_server', TURN_SECONDS='2')
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
-            for t in TESTS:
+            for t, t_url in [(t, url) for t in TESTS] + [(t, fast_url) for t in FAST_TIMER_TESTS]:
                 print(f"{t.__name__}:")
                 try:
-                    t(browser, url)
+                    t(browser, t_url)
                 except Exception as e:
                     FAILURES.append(t.__name__)
                     print(f"  FAIL: {t.__name__} raised {type(e).__name__}: {str(e).splitlines()[0]}")
@@ -290,11 +324,12 @@ if __name__ == '__main__':
                 OPEN_PAGES.clear()
             browser.close()
     finally:
-        proc.terminate()
-        proc.wait(timeout=10)
-        log.close()
+        for server, server_log in ((proc, log), (fast_proc, fast_log)):
+            server.terminate()
+            server.wait(timeout=10)
+            server_log.close()
     print()
     if FAILURES:
         print(f"{len(FAILURES)} FAILURE(S): {FAILURES}\nServer log: {os.path.join(tmp, 'server.log')}")
         raise SystemExit(1)
-    print(f"All {len(TESTS)} browser test functions passed.")
+    print(f"All {len(TESTS) + len(FAST_TIMER_TESTS)} browser test functions passed.")

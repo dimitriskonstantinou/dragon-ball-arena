@@ -30,6 +30,10 @@ import uuid
 
 import app as appmod
 
+# The turn timer is driven by hand below (with a shifted clock), so the real
+# background ticker must not fire at random moments during the test.
+appmod.TURN_TIMER_THREAD = False
+
 FAILURES = []
 
 
@@ -612,6 +616,100 @@ else:
           (stray_errors[:3], started, appmod.MATCHMAKING_QUEUE, list(appmod.GAMES)))
     for c in crowd:
         c.disconnect()
+
+    # --- Step 16 regression: no turn timer -- an idle player could hold a match
+    # forever, and the opponent's only way out (leaving) recorded THEIR loss. ---
+    from contextlib import contextmanager
+
+    @contextmanager
+    def clock_ahead(seconds):
+        real = time.time
+        time.time = lambda: real() + seconds
+        try:
+            yield
+        finally:
+            time.time = real
+
+    def tick():
+        with appmod.app.app_context():
+            appmod.check_turn_timers()
+
+    def text(event):
+        # The test client records args of events emitted outside a request (the
+        # timer) as a bare string instead of a list; real clients get the string.
+        return event['args'] if isinstance(event['args'], str) else event['args'][0]
+
+    _, idle1 = new_player('idle1')
+    _, idle2 = new_player('idle2')
+    idle1.emit('find-match', team_ids)
+    idle2.emit('find-match', team_ids)
+    got = idle1.get_received()
+    start = next(e['args'][0] for e in got if e['name'] == 'game-start')
+    first_state = next(e['args'][0] for e in got if e['name'] == 'update-state')
+    room = start['roomId']
+    g = appmod.GAMES[room]
+    slow_side = start['role']                    # this player never acts
+    other_side = 'p2' if slow_side == 'p1' else 'p1'
+    clients = {start['role']: idle1, other_side: idle2}
+    check("each turn starts with a countdown sent to the players (and no raw server clock)",
+          first_state.get('turn_seconds_left') == appmod.TURN_SECONDS and 'turn_deadline' not in first_state,
+          {k: first_state.get(k) for k in ('turn_seconds_left', 'turn_deadline')})
+
+    with clock_ahead(appmod.TURN_SECONDS - 5):
+        tick()
+    check("nothing happens before the deadline", g['turn'] == slow_side and g['turn_count'] == 1, g['turn'])
+
+    idle1.get_received(); idle2.get_received()
+    with clock_ahead(appmod.TURN_SECONDS + 1):
+        tick()
+    got_slow, got_other = clients[slow_side].get_received(), clients[other_side].get_received()
+    check("after the deadline the idle player's turn passes to the opponent",
+          g['turn'] == other_side and g['players'][slow_side]['timeouts'] == 1, (g['turn'], g['players'][slow_side]))
+    check("...both players are told why and get the new state",
+          all(any(e['name'] == 'message' and 'ran out of time' in text(e) for e in got)
+              and any(e['name'] == 'update-state' for e in got) for got in (got_slow, got_other)))
+
+    # The opponent commits (resetting nothing for the idle player); the idle one keeps timing out.
+    clients[other_side].emit('commit-turn', {'paymentList': []})
+    check("a real commit resets the committing player's streak",
+          g['players'][other_side].get('timeouts', 0) == 0 and g['turn'] == slow_side)
+
+    # Race: the timer fires at the same moment as a (slow) commit -- only one may count.
+    restore = slowed('resolve_turn', appmod.game_engine)
+    count_before = g['turn_count']
+    try:
+        with clock_ahead(appmod.TURN_SECONDS + 1):
+            at_once(lambda: clients[slow_side].emit('commit-turn', {'paymentList': []}), tick)
+    finally:
+        restore()
+    check("a commit and a timeout at the same moment advance the match by exactly one turn",
+          g['turn_count'] == count_before + 1, g['turn_count'] - count_before)
+
+    # Back to the idle player's turn, then let them time out until they forfeit.
+    if g['turn'] != slow_side:
+        clients[other_side].emit('commit-turn', {'paymentList': []})
+    g['players'][slow_side]['timeouts'] = 0
+    with appmod.app.app_context():
+        stats = {uid: appmod.db.session.get(appmod.UserStats, uid).total_losses
+                 for uid in (g['players'][slow_side]['user_id'], g['players'][other_side]['user_id'])}
+    slow_uid, other_uid = g['players'][slow_side]['user_id'], g['players'][other_side]['user_id']
+    idle1.get_received(); idle2.get_received()
+    for _ in range(appmod.game_engine.TIMEOUTS_TO_FORFEIT):
+        with clock_ahead(appmod.TURN_SECONDS + 1):
+            tick()                                    # idle player times out
+        if room in appmod.GAMES and g['turn'] == other_side:
+            clients[other_side].emit('commit-turn', {'paymentList': []})   # opponent plays on
+    got_other = clients[other_side].get_received()
+    check(f"{appmod.game_engine.TIMEOUTS_TO_FORFEIT} timeouts in a row forfeit the match to the opponent",
+          g.get('winner') == other_side and room not in appmod.GAMES, (g.get('winner'), room in appmod.GAMES))
+    check("...and the opponent is told it was a forfeit",
+          any(e['name'] == 'message' and 'FORFEITS' in text(e) for e in got_other), got_other)
+    with appmod.app.app_context():
+        check("...and the loss is recorded for the idle player only",
+              appmod.db.session.get(appmod.UserStats, slow_uid).total_losses == stats[slow_uid] + 1
+              and appmod.db.session.get(appmod.UserStats, other_uid).total_losses == stats[other_uid])
+    idle1.disconnect()
+    idle2.disconnect()
 
 print()
 if FAILURES:

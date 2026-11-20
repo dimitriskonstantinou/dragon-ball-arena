@@ -30,6 +30,10 @@ import random
 
 CHAKRA_TYPES = ["energy", "martial", "spirit", "rage"]
 
+# Consecutive turn timeouts (no commit in time) that forfeit the match. The
+# time limit itself is the server's job (app.TURN_SECONDS); the rule is here.
+TIMEOUTS_TO_FORFEIT = 3
+
 
 class GameError(Exception):
     """A rule violation the player should be told about (not your turn, not
@@ -825,6 +829,25 @@ def cancel_move(game_state, player_id, char_id):
     return game_state
 
 
+def timeout_turn(game_state):
+    """The active player ran out of time: their queued moves are dropped, no
+    Ki is spent, and the turn passes as if they had committed nothing. The
+    TIMEOUTS_TO_FORFEIT-th timeout in a row (no real commit in between)
+    forfeits the match to the opponent. Returns the number of consecutive
+    timeouts for that player."""
+    player_id = game_state['turn']
+    player = game_state['players'][player_id]
+    strikes = player.get('timeouts', 0) + 1
+    if strikes >= TIMEOUTS_TO_FORFEIT:
+        player['timeouts'] = strikes
+        game_state['winner'] = 'p2' if player_id == 'p1' else 'p1'
+        return strikes
+    game_state['pending_moves'] = []
+    resolve_turn(game_state, [])
+    player['timeouts'] = strikes  # after resolve_turn, which resets it for real commits
+    return strikes
+
+
 def resolve_turn(game_state, payment_list):
     moves = game_state.get('pending_moves', [])
     player_id = game_state['turn']
@@ -866,6 +889,7 @@ def resolve_turn(game_state, payment_list):
 
 
 def _apply_turn(game_state, player_id, player, opponent, payment_list, resolved_moves):
+    player['timeouts'] = 0  # the player acted in time: their timeout streak resets
     for die in payment_list:
         player['resources'].remove(die)
 
