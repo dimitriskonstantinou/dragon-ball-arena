@@ -31,6 +31,12 @@ import random
 CHAKRA_TYPES = ["energy", "martial", "spirit", "rage"]
 
 
+class GameError(Exception):
+    """A rule violation the player should be told about (not your turn, not
+    enough Ki, invalid target...). Anything else raised by the engine is a
+    bug: app.py logs it and shows the player a generic message instead."""
+
+
 def roll_dice(amount):
     return [random.choice(CHAKRA_TYPES) for _ in range(amount)]
 
@@ -691,41 +697,56 @@ def resolve_target(game_state, player_id, actor_char, skill, target_pid, target_
     expected_pid = opponent_id if target_type == 'enemy' else player_id
     if target_pid != expected_pid:
         side = "an enemy" if target_type == 'enemy' else "an ally"
-        raise Exception(f"{skill['name']} must target {side}!")
+        raise GameError(f"{skill['name']} must target {side}!")
     if not isinstance(target_index, int) or isinstance(target_index, bool):
-        raise Exception("Invalid target!")
+        raise GameError("Invalid target!")
     team = game_state['players'][expected_pid]['team']
     if not 0 <= target_index < len(team):
-        raise Exception("Invalid target!")
+        raise GameError("Invalid target!")
     if team[target_index]['health'] <= 0:
-        raise Exception(f"{team[target_index]['name']} has already been defeated!")
+        raise GameError(f"{team[target_index]['name']} has already been defeated!")
     return expected_pid, target_index
 
 
+def check_winner(game_state):
+    """Sets and returns game_state['winner'] once a whole team is down."""
+    p1_alive = any(c['health'] > 0 for c in game_state['players']['p1']['team'])
+    p2_alive = any(c['health'] > 0 for c in game_state['players']['p2']['team'])
+    if not p1_alive:
+        game_state['winner'] = 'p2'
+    elif not p2_alive:
+        game_state['winner'] = 'p1'
+    return game_state.get('winner')
+
+
 def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_index):
+    """Queues one skill for the active player. Returns None normally, or
+    {'countered': dmg, 'message': str} if a counter-trap cancelled the move
+    (state changed: HP lost, maybe the match ended). Raises GameError for
+    rule violations."""
     player = game_state['players'][player_id]
-    if game_state['turn'] != player_id: raise Exception("Not your turn!")
+    if game_state['turn'] != player_id: raise GameError("Not your turn!")
 
     actor_char = next((c for c in player['team'] if c['id'] == char_id), None)
 
-    if not actor_char: raise Exception("Character not found")
+    if not actor_char: raise GameError("Character not found")
     if actor_char['health'] <= 0:
-        raise Exception(f"{actor_char['name']} has been defeated and cannot act!")
+        raise GameError(f"{actor_char['name']} has been defeated and cannot act!")
 
     used_skill = next((s for s in actor_char['skills'] if s['id'] == skill_id), None)
-    if not used_skill: raise Exception("Skill not found")
+    if not used_skill: raise GameError("Skill not found")
 
     if used_skill.get('locked'):
-        raise Exception(used_skill.get('locked_reason', f"{used_skill['name']} is locked."))
+        raise GameError(used_skill.get('locked_reason', f"{used_skill['name']} is locked."))
 
     char_status = actor_char.get('status', [])
     if has_status(char_status, 'stun'):
-        raise Exception(f"{actor_char['name']} is stunned and cannot act!")
+        raise GameError(f"{actor_char['name']} is stunned and cannot act!")
     if has_status(char_status, 'silence', target_classes=used_skill.get('classes', [])):
-        raise Exception(f"{actor_char['name']} is silenced and cannot use that skill!")
+        raise GameError(f"{actor_char['name']} is silenced and cannot use that skill!")
 
     if used_skill['currentCooldown'] > 0:
-        raise Exception(f"{used_skill['name']} is on cooldown for {used_skill['currentCooldown']} more turn(s)!")
+        raise GameError(f"{used_skill['name']} is on cooldown for {used_skill['currentCooldown']} more turn(s)!")
 
     # Before the counter-mark check, so an invalid click can't trip the trap.
     target_pid, target_index = resolve_target(game_state, player_id, actor_char, used_skill,
@@ -737,23 +758,27 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
     # move never queues, and they take piercing damage instead.
     counter_mark = consume_status(actor_char, 'marked_for_counter')
     if counter_mark:
+        # A game event, not an error: the move is cancelled, the damage is
+        # real, and both players need the new state (see app.handle_queue).
         dmg = counter_mark.get('value', 20)
         apply_damage(actor_char, dmg, ignore_reduction=True)
-        raise Exception(f"{actor_char['name']}'s attack was countered! Took {dmg} piercing damage.")
+        check_winner(game_state)
+        return {'countered': dmg,
+                'message': f"{actor_char['name']}'s attack was countered by a hidden trap! Took {dmg} piercing damage."}
 
     for chakra_type in used_skill.get('cost', {}):
         if chakra_type == 'random':
             continue
         for s in player.get('status', []):
             if s['type'] == 'chakra_restrict' and s.get('chakra_type') in (None, chakra_type):
-                raise Exception(f"{chakra_type.capitalize()} chakra is restricted!")
+                raise GameError(f"{chakra_type.capitalize()} chakra is restricted!")
 
     current_queue = [m for m in game_state.get('pending_moves', []) if m['charId'] != char_id]
 
     # The pool must cover this skill together with everything already queued
     # (excluding this character's own previous queue entry, which this replaces).
     if not can_afford(player['resources'], [m['cost'] for m in current_queue] + [used_skill['cost']]):
-        raise Exception(f"Not enough Ki for {used_skill['name']}!")
+        raise GameError(f"Not enough Ki for {used_skill['name']}!")
 
     new_move = {
         'playerId': player_id,
@@ -766,7 +791,7 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
     }
     current_queue.append(new_move)
     game_state['pending_moves'] = current_queue
-    return game_state
+    return None
 
 
 def cancel_move(game_state, player_id, char_id):
@@ -785,11 +810,11 @@ def resolve_turn(game_state, payment_list):
     opponent = game_state['players'][opponent_id]
 
     if not check_payment_validity(player['resources'], payment_list):
-        raise Exception("Cheat detected!")
+        raise GameError("Cheat detected!")
     # Owning the dice isn't enough -- they must pay the queued costs exactly,
     # otherwise an empty payment would cast every queued skill for free.
     if not payment_matches_costs(payment_list, [m['cost'] for m in moves]):
-        raise Exception("Payment doesn't match the cost of your queued skills!")
+        raise GameError("Payment doesn't match the cost of your queued skills!")
 
     for die in payment_list:
         player['resources'].remove(die)
@@ -825,12 +850,7 @@ def resolve_turn(game_state, payment_list):
 
         skill['currentCooldown'] = skill['cooldown'] + 1
 
-    p1_alive = sum(1 for c in game_state['players']['p1']['team'] if c['health'] > 0)
-    p2_alive = sum(1 for c in game_state['players']['p2']['team'] if c['health'] > 0)
-
-    if p1_alive == 0: game_state['winner'] = 'p2'
-    elif p2_alive == 0: game_state['winner'] = 'p1'
-    else:
+    if not check_winner(game_state):
         next_player = 'p2' if player_id == 'p1' else 'p1'
         start_turn(game_state, next_player)
 

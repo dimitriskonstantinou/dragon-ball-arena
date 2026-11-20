@@ -725,12 +725,10 @@ def test_wolf_fang_fist_counters_marked_enemy():
                      'effects': [{'type': 'damage', 'value': 30}], 'cooldown': 0, 'currentCooldown': 0}]
     hp_before_b = b['health']
     hp_before_a = a['health']
-    blocked_msg = None
-    try:
-        ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
-    except Exception as e:
-        blocked_msg = str(e)
-    check("the marked enemy's attempted skill is rejected, never queued", blocked_msg is not None, blocked_msg)
+    result = ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
+    check("the counter is reported as a game event (not an error) with its damage",
+          result is not None and result.get('countered') == 20 and 'countered' in result.get('message', ''), result)
+    check("the marked enemy's attempted skill is never queued", game['pending_moves'] == [], game['pending_moves'])
     check("the marked enemy takes 20 piercing damage for attempting it",
           b['health'] == hp_before_b - 20, b['health'])
     check("the would-be victim (Yamcha) took no damage -- the enemy's move never resolved",
@@ -916,6 +914,46 @@ def test_view_for_hides_private_info():
     check("the player who placed the mark still sees it",
           any(s['type'] == 'marked_for_counter' for s in p1_view['players']['p2']['team'][0]['status']))
     check("building views never modifies the live game state", game == live_before)
+
+
+def test_rule_violations_raise_game_error():
+    """app.py shows GameError messages to players and logs anything else as
+    a bug -- so every rule violation must be a GameError."""
+    def raises_game_error(fn):
+        try:
+            fn()
+            return False
+        except ge.GameError:
+            return True
+        except Exception:
+            return False
+
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [{"id": "s", "name": "s", "cost": {"energy": 1}, "target_type": "enemy",
+                    "effects": [{"type": "damage", "value": 5}], "cooldown": 0, "currentCooldown": 0}]
+    check("not your turn -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p2', 'B', 's', 'p1', 0)))
+    check("not enough Ki -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)))
+    game['players']['p1']['resources'] = ['energy']
+    check("invalid target -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p1', 'A', 's', 'p2', 9)))
+    check("unknown skill -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p1', 'A', 'nope', 'p2', 0)))
+    ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+    check("wrong payment -> GameError", raises_game_error(lambda: ge.resolve_turn(game, [])))
+
+
+def test_counter_that_kills_last_character_ends_match():
+    """Regression: the counter-trap applied damage inside queue_move with no
+    win check, so a team wiped by it left the match running."""
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    b['health'] = 15
+    b['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
+                    'effects': [{'type': 'damage', 'value': 5}], 'cooldown': 0, 'currentCooldown': 0}]
+    ge.add_status(b, {'type': 'marked_for_counter', 'value': 20, 'duration': 2, 'tag': 'harmful', 'invisible': True})
+    game['turn'] = 'p2'
+    result = ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
+    check("lethal counter is reported", result is not None and result['countered'] == 20, result)
+    check("lethal counter on the last character ends the match", game.get('winner') == 'p1', game.get('winner'))
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

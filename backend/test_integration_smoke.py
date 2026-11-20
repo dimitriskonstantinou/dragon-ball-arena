@@ -213,8 +213,42 @@ else:
             check(f"the first team member's own copy of the shared skill was untouched",
                   first_member_skill['currentCooldown'] == 0, first_member_skill['currentCooldown'])
 
-    # --- Force the match to a decisive end so we can check DB persistence ---
+    # --- Regression: a malformed payload used to send the raw Python error
+    # (e.g. "'myPlayerKey'") to the player and log nothing. ---
+    p2_client.get_received()
+    p2_client.emit('queue-skill', {'roomId': room_id})
+    errors = [e['args'][0] for e in p2_client.get_received() if e['name'] == 'error-msg']
+    check("an unexpected server error shows the player a generic message, not internals",
+          errors == [appmod.SERVER_ERROR_MSG], errors)
+
+    # --- Regression: a counter-trap used to be reported as an error to the
+    # attacker only, so its HP loss wasn't shown to anyone until later. ---
     # (turn auto-advanced to p2 after the commit above)
+    trapped = next((c for c in game['players']['p2']['team']
+                    if c['health'] > 0 and not any(s['type'] == 'stun' for s in c.get('status', []))), None)
+    trap_skill = trapped and next((s for s in trapped['skills'] if not s.get('locked') and s['currentCooldown'] == 0
+                                   and s.get('target_type', 'enemy') in ('enemy', 'self', 'enemy_team')), None)
+    if not trap_skill:
+        print("\nSKIPPED: counter-trap broadcast check needs an unstunned p2 character with a usable skill.")
+    else:
+        hp_before = trapped['health']
+        trapped['status'].append({'type': 'marked_for_counter', 'value': 20, 'duration': 2,
+                                  'tag': 'harmful', 'invisible': True})
+        p1_client.get_received()
+        p2_client.get_received()
+        target_pid = 'p2' if trap_skill.get('target_type') == 'self' else 'p1'
+        p2_client.emit('queue-skill', {
+            'roomId': room_id, 'charId': trapped['id'], 'skillId': trap_skill['id'], 'myPlayerKey': 'p2',
+            'targetPlayerKey': target_pid, 'targetIndex': 0
+        })
+        got1, got2 = p1_client.get_received(), p2_client.get_received()
+        check("a counter-trap is not reported as an error", not any(e['name'] == 'error-msg' for e in got2), got2)
+        check("a counter-trap's damage is applied", trapped['health'] == max(0, hp_before - 20), trapped['health'])
+        check("both players receive the new state and the counter message",
+              all(any(e['name'] == 'update-state' for e in g) and any(e['name'] == 'message' for e in g)
+                  for g in (got1, got2)), (got1, got2))
+
+    # --- Force the match to a decisive end so we can check DB persistence ---
     for c in game['players']['p2']['team']:
         c['health'] = 0
     p2_client.get_received()

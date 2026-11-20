@@ -152,13 +152,13 @@ Each phase goes on its own feature branch off `main` and merges only when green.
 - [ ] Smoke test defaults to a temp DB
 
 ### Phase 1 — Anti-cheat & correctness (P0 #1–10)
-- [ ] `GameError`; engine raises only that for player errors
-- [ ] Server-side cost validation in `queue_move` + exact payment check in `resolve_turn`
-- [ ] Target validation (side, index, alive, `self` = actor), dead-actor rejection
+- [x] Server-side cost validation in `queue_move` + exact payment check in `resolve_turn` — *Step 1* (`feature/step1-cost-validation`)
+- [x] Target validation (side, index, alive, `self` = actor), dead-actor rejection — *Step 2* (`feature/step2-target-validation`)
+- [x] `view_for(game, role)` per-player state (no invisible statuses, no enemy queue, no sids) — *Step 3* (`feature/step3-per-player-view`)
+- [x] `GameError`; engine raises only that for player errors; other errors logged, generic message to player — *Step 4* (`feature/step4-game-errors`)
+- [x] Counter-mark returns a result instead of raising; state broadcast to both; lethal counter ends the match — *Step 4*
 - [ ] Atomic `resolve_turn`
-- [ ] Counter-mark returns a result instead of raising; state broadcast
 - [ ] Fix `set_skill_cost_on_stack` NameError; apply `scale_skill_by_stack` description template
-- [ ] `view_for(game, role)` per-player state (no invisible statuses, no enemy queue, no sids)
 - **Done when:** probe script reports 0 of items 1–12 reproduced; new regression tests pass; payload bytes ≤ baseline.
 
 ### Phase 2 — Match lifecycle (P1 #11–17)

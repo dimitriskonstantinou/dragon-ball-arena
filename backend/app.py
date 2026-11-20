@@ -4,12 +4,16 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timezone
 import copy
 import json
+import logging
 import os
 import uuid
 
 import characters
 import game_engine
+from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
+
+log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
@@ -27,6 +31,18 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 GAMES = {}
 MATCHMAKING_QUEUE = []
 SID_ROOM_MAP = {}  # sid -> roomId, for O(1) disconnect/forfeit lookup
+
+SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
+
+
+def report_error(e, event):
+    """GameErrors are rule violations -- tell the player. Anything else is a
+    bug: log the full traceback and don't leak internals to the client."""
+    if isinstance(e, GameError):
+        emit('error-msg', str(e), to=request.sid)
+    else:
+        log.exception("Unhandled error in %s", event)
+        emit('error-msg', SERVER_ERROR_MSG, to=request.sid)
 
 
 def ensure_db_ready():
@@ -323,7 +339,7 @@ def handle_queue(data):
         try:
             my_player_key = data['myPlayerKey']
             if game['players'].get(my_player_key, {}).get('id') != request.sid:
-                raise Exception("Not authorized for this player slot!")
+                raise GameError("Not authorized for this player slot!")
 
             # Skill ids are only unique *within one character's own kit* --
             # several characters intentionally share an id (e.g. the
@@ -336,9 +352,9 @@ def handle_queue(data):
             char_id = data.get('charId')
             actor_char = next((c for c in player['team'] if c['id'] == char_id), None)
             if not actor_char or not any(s['id'] == data['skillId'] for s in actor_char['skills']):
-                raise Exception("Character not found for this skill!")
+                raise GameError("Character not found for this skill!")
 
-            game_engine.queue_move(
+            result = game_engine.queue_move(
                 game,
                 my_player_key,
                 char_id, # Pass the found ID explicitly
@@ -346,22 +362,28 @@ def handle_queue(data):
                 data['targetPlayerKey'],
                 data['targetIndex']
             )
-            broadcast_state(game)
+            if result and result.get('countered'):
+                socketio.emit('message', result['message'], to=room_id)
+            if game.get('winner'):
+                end_game(room_id, game['winner'])
+            else:
+                broadcast_state(game)
         except Exception as e:
-            print(f"Error in queue-skill: {e}") # Print to server console for debugging
-            emit('error-msg', str(e), to=request.sid)
+            report_error(e, 'queue-skill')
 
 @socketio.on('cancel-skill')
 def handle_cancel(data):
     room_id = data.get('roomId')
     if room_id in GAMES:
         game = GAMES[room_id]
-        my_player_key = data['myPlayerKey']
-        if game['players'].get(my_player_key, {}).get('id') != request.sid:
-            emit('error-msg', "Not authorized for this player slot!", to=request.sid)
-            return
-        game_engine.cancel_move(game, my_player_key, data['charId'])
-        broadcast_state(game)
+        try:
+            my_player_key = data['myPlayerKey']
+            if game['players'].get(my_player_key, {}).get('id') != request.sid:
+                raise GameError("Not authorized for this player slot!")
+            game_engine.cancel_move(game, my_player_key, data['charId'])
+            broadcast_state(game)
+        except Exception as e:
+            report_error(e, 'cancel-skill')
 
 @socketio.on('commit-turn')
 def handle_commit(data):
@@ -384,7 +406,8 @@ def handle_commit(data):
                 else:
                     broadcast_state(game)
             except Exception as e:
-                emit('error-msg', str(e), to=request.sid)
+                report_error(e, 'commit-turn')
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     socketio.run(app, host='0.0.0.0', port=5000)

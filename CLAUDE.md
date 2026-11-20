@@ -91,7 +91,13 @@ Safe way to run the smoke test without touching the real DB:
 
 ## Known sharp edges (see PLAN.md §3 for the full list)
 
-- The server does **not** yet validate that payment covers skill costs, or that targets are legal.
-- The full game state (including "invisible" statuses and the opponent's queued moves) is broadcast to both players.
-- Engine errors are bare `Exception`s used as user messages, and real bugs get shown to players the same way.
+- **Never emit the raw game state to clients.** Always `broadcast_state(game)` (per-player `game_engine.view_for`),
+  which strips socket/account ids, the opponent's queue and invisible statuses.
+- **Rule violations raise `game_engine.GameError`** (shown to the player). Any other exception is treated as a bug:
+  `app.report_error` logs the traceback and the player gets `SERVER_ERROR_MSG`. Don't raise bare `Exception`
+  for game rules. Game *events* (like a counter-trap firing) are return values, not exceptions.
+- Costs and targets are validated server-side (`can_afford`, `payment_matches_costs`, `resolve_target`); the client's
+  affordability math in `app.js` is still a simpler approximation (fixed in the UI phase).
+- Still open (PLAN.md §3): `resolve_turn` isn't atomic, socket payload shapes aren't validated, the client still
+  sends `myPlayerKey`, no turn timer/reconnect, `GAMES` is never pruned.
 - Windows dev machine (Python 3.14): use the `;` separator in `PYTHONPATH`, and avoid Unix-only shell tricks in tooling.

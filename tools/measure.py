@@ -59,8 +59,10 @@ def section_tests(tmp_db_url):
         fails = len(re.findall(r'\bFAIL\b', text))
         result = 'ok' if proc.returncode == 0 else f'EXIT {proc.returncode}'
         out(f'| {name} | {result} | {passes} | {fails} | {secs:.2f}s |')
+        # Tracebacks are only interesting when the suite itself failed --
+        # the server deliberately logs some (unexpected-error tests).
         for line in text.splitlines():
-            if 'FAIL' in line or 'Traceback' in line or 'Error' in line:
+            if re.search(r'\bFAIL\b', line) or (proc.returncode != 0 and ('Traceback' in line or 'Error' in line)):
                 out(f'    {line.strip()}')
     out()
 
