@@ -32,11 +32,8 @@ coverage don't drop, pyflakes doesn't grow.
 | 9 | `feature/step9-one-account-one-seat` | One account can't queue twice or play itself | smoke →43, cov 86%, bugs →4 |
 | 10 | `feature/step10-audit` | Full audit, master roadmap, CLAUDE.md rewrite (docs only) | Baseline re-recorded; 0 code changes |
 | 11 | `feature/step11-winner-on-tick` | ENG-1: a team wiped by a turn-start tick loses immediately; decisions recorded | checks 162→167 / 43→44, bugs 5→4 |
-
 | 12a | `feature/step12a-content-pipeline` | Content as JSON files (single source) + Pydantic validation + VS Code schemas; Playwright browser tests; Spirit Ball icon 404 fixed | checks 211→279 (+content 53, +browser 14, smoke +1); cov 86→88%; probe 4=4 |
-
 | 12b | `feature/step12b-catalog-runtime` | Gameplay reads the in-memory catalog; `characters` table = id registry synced at startup (never deleted); shim removed; lobby display-only; all-unlocked policy applied to old accounts | SQL per connect/find-match 3→1 (0 roster reads); lobby 10,343→7,437 B; smoke 45→53; cov 88→90% |
-
 | 13 | `feature/step13-prune-finished-matches` | `end_game` pops the room first (exactly-once guard), sends final state, closes the Socket.IO room; `ENDED_ROOMS` removed | 220/220 matches kept → 0; ~30 KB/match → flat; smoke 53→59; probe 4→3 |
 
 **Merged into `dev`:** none of steps 1–13 yet (user merges in order).
