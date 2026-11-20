@@ -31,5 +31,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 8 | `feature/step8-socket-validation` | Identity from connection; payload validation; cancel/duplicate-team bugs fixed | smoke →37, cov 85%, bugs →5 |
 | 9 | `feature/step9-one-account-one-seat` | One account can't queue twice or play itself | smoke →43, cov 86%, bugs →4 |
 | 10 | `feature/step10-audit` | Full audit, master roadmap, CLAUDE.md rewrite (docs only) | Baseline re-recorded; 0 code changes |
+| 11 | `feature/step11-winner-on-tick` | ENG-1: a team wiped by a turn-start tick loses immediately; decisions recorded | checks 162→167 / 43→44, bugs 5→4 |
 
-**Merged into `dev`:** none of steps 1–10 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–11 yet (user merges in order).

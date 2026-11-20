@@ -1092,6 +1092,45 @@ def test_cancel_move_only_cancels_your_own_move_on_your_turn():
     check("you can still cancel your own move", game['pending_moves'] == [], game['pending_moves'])
 
 
+def test_team_wiped_at_turn_start_loses_immediately():
+    """Regression (ENG-1): start_turn's status tick (DoT, delayed damage)
+    could wipe a team without any winner being declared -- the match went on
+    with a dead team, and if the wiped player held the turn they could stall
+    forever."""
+    import characters
+    # Real content: Piccolo's Special Beam Cannon detonates at the start of his next turn.
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    a['skills'] = copy.deepcopy(characters.CHARACTERS['piccolo_saiyan_saga']['skills'])
+    b['health'] = 30
+    play(game, 'p1', 'A', 'special_beam_cannon', 'p2', 0)
+    check("(setup) the charge doesn't kill yet", b['health'] == 30 and not game['winner'])
+    dice_before = list(game['players']['p1']['resources'])
+    ge.resolve_turn(game, [])  # p2 passes -> p1's turn starts -> detonation
+    check("a delayed hit that wipes a team at turn start ends the match", game['winner'] == 'p1', game['winner'])
+    check("...without rolling dice for a finished game", game['players']['p1']['resources'] == dice_before,
+          game['players']['p1']['resources'])
+
+    # Worst case: the wiped player is the one whose turn is starting.
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    b['health'] = 5
+    ge.add_status(b, {'type': 'dot', 'value': 10, 'duration': 4, 'tag': 'harmful'})
+    ge.resolve_turn(game, [])  # p1 passes -> p2's turn starts -> DoT kills p2's last character
+    check("a DoT that kills the starting player's last character ends the match",
+          game['winner'] == 'p1' and b['health'] == 0, (game['winner'], b['health']))
+
+    # A tick that doesn't kill must leave the game running normally.
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'dot', 'value': 10, 'duration': 4, 'tag': 'harmful'})
+    ge.resolve_turn(game, [])
+    check("a non-lethal tick keeps the game going (turn passes, dice rolled)",
+          game['winner'] is None and game['turn'] == 'p2' and len(game['players']['p2']['resources']) == 1
+          and b['health'] == 90, (game['winner'], game['turn'], game['players']['p2']['resources'], b['health']))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

@@ -131,8 +131,9 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
   the engine multiplies by 2. Exception: `prime_skill` uses `2N + 2` (see the engine comment).
 - Cooldown: after use `currentCooldown = cooldown + 1`, decremented at the start of the owner's turn.
 - Statuses: `{type, value?, duration, classes?, tag: 'harmful'|'buff', invisible?}`; player-level ones on `player['status']`.
-- Known engine gaps (audit): ENG-1 no winner on turn-start wipe, ENG-2 mutual KO, ENG-3 dodge per effect, ENG-4
-  invulnerable targetable, ENG-7 unseeded RNG.
+- `start_turn` checks the winner right after ticking statuses; anything that can kill must be followed by `check_winner`.
+- Known engine gaps (audit): ENG-2 mutual KO, ENG-3 dodge per effect, ENG-4 invulnerable targetable, ENG-7 unseeded RNG
+  (rules decided, see below).
 
 ### Adding an effect type
 1. Branch in `apply_effect` (+ `tick_statuses` if timed). (ENG-6: a registry refactor is planned; then add a function.)
@@ -184,7 +185,12 @@ migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end
 ## Important decisions (and why)
 - **Server-authoritative engine, per-player views** (Steps 1–9): anti-cheat for online PvP.
 - **Python/Flask/Socket.IO stays** (DEPLOY_PLAN §1): turn-based traffic is light; one process scales far.
-- **Content authored in `characters.py`**, synced to the DB (by the user's choice, 2026-11-02).
+- **Content architecture (2026-11-20, roadmap 1.13):** version-controlled JSON files (one per character, kit inside,
+  JSON Schema + semantic validation, shared skills referenced) are the single source of truth, loaded once into an
+  in-memory catalog. Gameplay never reads content from the DB; the `characters` table is only an id registry for
+  FKs. Bad content stops the server from starting. Until 1.13 lands, `characters.py` + reseed is still how it works.
+- **Rules decided (2026-11-20, delegated to Claude):** mutual KO = draw; invulnerable = untargetable except skills
+  that explicitly ignore invulnerability; dodge/counter/reflect apply per skill, not per effect.
 - **Vanilla JS** (no framework): small app, no build step.
 - **Single process, in-memory matches for v1**; Redis only when load tests require it.
 

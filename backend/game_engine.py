@@ -665,6 +665,11 @@ def start_turn(game_state, player_id):
     # 2. Global Status Tick
     tick_statuses(game_state)
 
+    # Ticks (DoT, delayed damage) can wipe a team before anyone acts -- the
+    # match ends right here, otherwise it would continue with a dead team.
+    if check_winner(game_state):
+        return game_state
+
     player = game_state['players'][player_id]
 
     # 3. Generate Dice

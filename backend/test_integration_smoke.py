@@ -283,13 +283,22 @@ else:
         check("commit-turn without a paymentList gets a clear validation message",
               len(errors) == 1 and 'paymentList' in errors[0], errors)
 
-    # --- Force the match to a decisive end so we can check DB persistence ---
+    # --- End the match the way ENG-1 used to break it: p2's whole team is
+    # wiped by delayed hits detonating at the start of p1's turn. The match
+    # must end immediately (no further commit needed) and persist. ---
     for c in game['players']['p2']['team']:
-        c['health'] = 0
+        if c['health'] > 0:
+            c['health'] = 5
+            c['status'].append({'type': 'delayed_damage', 'value': 40, 'duration': 1, 'tag': 'harmful'})
+    p1_client.get_received()
     p2_client.get_received()
     p2_client.emit('commit-turn', {'paymentList': []})
-    p2_client.get_received()
-    check("wiping a team's HP and committing ends the match", game.get('winner') == 'p1', game.get('winner'))
+    got1, got2 = p1_client.get_received(), p2_client.get_received()
+    check("a team wiped by turn-start detonations ends the match immediately", game.get('winner') == 'p1',
+          game.get('winner'))
+    check("...and both players receive the final state with the winner and a game-over message",
+          all(any(e['name'] == 'update-state' and e['args'][0].get('winner') == 'p1' for e in got)
+              and any(e['name'] == 'message' for e in got) for got in (got1, got2)), (got1, got2))
 
     winner_uid = game['players']['p1']['user_id']
     loser_uid = game['players']['p2']['user_id']

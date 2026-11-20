@@ -33,7 +33,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 
 **Risks:** merging 10 stacked branches; mitigated by merging in order (they're linear).
 
-## Phase 1 — Engine integrity · *Steps 1–7 done; 5 items left*
+## Phase 1 — Engine integrity · *Steps 1–7 + 11 done; 4 items + content pipeline left*
 
 **Objective:** the rules are correct, deterministic where intended, and unexploitable.
 **Problems:** ENG-1 (no winner on tick wipe), ENG-2 (mutual KO), ENG-3 (dodge per effect), ENG-4 (targeting invulnerable), ENG-7 (unseeded RNG).
@@ -41,11 +41,22 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 
 | Task | Needs a user decision? | Done when |
 |---|---|---|
-| 1.8 ENG-1: `check_winner` after turn-start ticks; app ends the game | No | Probe/regression: SBC/DoT wipe → winner set immediately, both clients get game over |
-| 1.9 ENG-2: mutual-KO rule | **Yes:** draw, or the acting player wins | Rule encoded + tested both ways |
-| 1.10 ENG-4 + CON-2: invulnerable = untargetable (except skills that ignore it) or fix the text | **Yes** | Rule + text + tests consistent |
-| 1.11 ENG-3: reactive defenses apply per skill | Confirm semantics | Knee Attack fully dodged by one dodge |
+| ✅ 1.8 ENG-1: `check_winner` after turn-start ticks — *Step 11* | No | Done: probe #22 fixed; engine + smoke regression tests |
+| 1.9 ENG-2: mutual KO = **draw** (decided) | Needs a draws column → do after migrations (DB-1) or add with care | Draw shown to both, stats count it, test |
+| 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) | — | Rule + text + UI cue + tests consistent |
+| 1.11 ENG-3: reactive defenses apply **per skill** (decided) | — | Knee Attack fully dodged by one dodge |
 | 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
+| **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | See below |
+
+**1.13 Content pipeline (decided architecture).** One authoritative source: version-controlled JSON files, one per
+character with its kit inside, validated by a JSON Schema (`backend/content/character.schema.json`, also gives VS Code
+autocomplete) plus semantic checks (references, images, costs, effect types). Shared skills (`afterimage_technique`)
+are defined once and referenced. Loaded once at startup into an in-memory catalog; **gameplay never reads content from
+the DB**. The `characters` table becomes an id registry for unlock/match FKs, synced automatically (removed characters
+are marked inactive, never deleted). `characters.py` is converted automatically (equality test) and removed.
+Content tests: every file loads, every reference/image exists, **every skill can be cast once in a sandbox match**.
+Done when: one source of truth, server refuses to start on invalid content with a clear message, no manual reseed,
+no DB query for roster data on connect/find-match, all existing checks unchanged.
 
 **Measurable:** probe has 0 engine items; engine coverage ≥ 90%.
 
@@ -141,7 +152,6 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.8 / ENG-1: declare the winner when a team dies at turn start.** It's a verified core-rules bug (a match can
-continue with a dead team, and the loser can stall it forever), it's small and isolated, and Phase 2's timer and cleanup
-work depend on matches ending at the right moment. Phase 0's 0.1–0.3 (browser playtest, merge, reseed) are
-yours or quick, and should happen around it.
+**1.13: content pipeline** (Step 12). The user is actively adding characters, the two-copies problem (CON-6) bites on
+every edit, and every DB-free gameplay path helps scale. Then Phase 2 (room cleanup, timer, reconnect) before going online.
+Phase 0's 0.1–0.3 (browser playtest, merge, reseed) remain the user's.

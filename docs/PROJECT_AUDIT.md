@@ -85,7 +85,7 @@ Format: **ID — Severity — Title** · *Where* · Problem / Why it matters · 
 
 ### 4.1 Game engine
 
-**ENG-1 — HIGH — No winner when a team dies from a start-of-turn tick (verified)**
+**ENG-1 — HIGH — No winner when a team dies from a start-of-turn tick (verified) — ✅ FIXED in Step 11**
 *Where:* `start_turn` → `tick_statuses` (game_engine.py); `check_winner` only runs inside `_apply_turn` / counter path.
 Delayed damage, DoT or Ki drain resolving at turn start can wipe a team, and the game carries on. Reproduced:
 Piccolo's Special Beam Cannon detonated on Raditz (30 HP) → Raditz at 0 HP, `winner = None`, game continues.
@@ -93,17 +93,17 @@ If the wiped team's owner has the turn, they can simply never commit; with no tu
 leave, and leaving counts as a loss.
 **Fix:** call `check_winner` after `tick_statuses` in `start_turn`; app ends the game when `start_turn` produces a winner. Safe now: yes. Depends on: —.
 
-**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)**
+**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw*
 *Where:* `check_winner` checks p1's team first. Tien (10 HP) killing Raditz with Tri-Beam (15 self-damage) → winner `p2`
 although p1 acted. Also reachable with Kaioken self-damage and reflect.
 **Fix:** needs a rule decision: draw, or "the acting player wins". Then encode it in `check_winner`. Safe now: after the decision.
 
-**ENG-3 — MEDIUM (latent) — Dodge/counter/reflect protect against one *effect*, not one *skill* (verified)**
+**ENG-3 — MEDIUM (latent) — Dodge/counter/reflect protect against one *effect*, not one *skill* (verified)** — *decided: per skill*
 *Where:* `apply_damage` / `is_harmful_blocked`. Knee Attack (damage + stun) vs Dodge: the damage was dodged, the stun still landed.
 No current character grants dodge/counter/reflect, so this is latent until one does.
 **Fix:** resolve reactive defenses once per skill application. Safe now: yes, with tests. Depends on: decision on intended semantics (proposed: one dodge = whole skill).
 
-**ENG-4 — MEDIUM — Invulnerable characters can still be targeted (verified)**
+**ENG-4 — MEDIUM — Invulnerable characters can still be targeted (verified)** — *decided: untargetable, except skills that ignore invulnerability*
 *Where:* `resolve_target`. The attacker's Ki and cooldown are spent for nothing. Every "Afterimage/Block" text says "Untargetable".
 **Fix (decision):** either reject targeting invulnerable enemies (Naruto-Arena-like, needs a UI cue), or change the text to "immune". Recommended: untargetable, except skills that explicitly ignore invulnerability (Spirit Ball, affliction).
 
@@ -216,7 +216,7 @@ There's no per-skill usage or win-rate data. **Fix:** log per-match skill usage 
 
 **CON-5 — LOW — No character metadata** (role, short bio, saga label) for a roster/details screen.
 
-**CON-6 — MEDIUM (local only) — Local DB is stale (verified)**
+**CON-6 — MEDIUM (local only) — Local DB is stale (verified)** — *root cause addressed by the content pipeline (roadmap 1.13)*
 `game.db` has 3 characters (Goku, Piccolo, Raditz); `characters.py` has 5. Tien and Yamcha can't be picked locally until `seed_db.py` runs.
 Root cause: two sources of truth (file + DB). **Fix:** reseed now; in production the deploy release step syncs automatically (DEPLOY_PLAN).
 
