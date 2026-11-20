@@ -1,113 +1,193 @@
-# CLAUDE.md
+# CLAUDE.md — Dragon Ball Arena engineering guide
 
-Dragon Ball Arena: a browser-based, turn-based 3v3 tactics game in the style of Naruto-Arena, with a
-Dragon Ball theme. Flask + Flask-SocketIO + SQLAlchemy (SQLite in dev) backend, vanilla JS frontend
-with no build step.
+Dragon Ball Arena is a browser-based, turn-based 3v3 tactics game whose gameplay structure is inspired by
+Naruto-Arena, with an original Dragon Ball identity (we don't copy its visuals or assets). Target: a public
+online game, **1v1 PvP only** (no bots), many concurrent matches.
 
-Target: public online deployment, 1v1 PvP only (no bots), many concurrent matches.
+Stack: Python (Flask + Flask-SocketIO + SQLAlchemy; SQLite in dev, Postgres planned), vanilla JS frontend with no
+build step.
 
-Plans live in `docs/`: [PLAN.md](docs/PLAN.md) (review + roadmap), [UI_PLAN.md](docs/UI_PLAN.md) and
-[DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md) (tech stack, hosting, step-by-step deployment).
-Check them before starting work, and tick items off when they're done.
+## Read first
 
-## Commands (run from `backend/` unless noted)
+| Doc | Use it for |
+|---|---|
+| [docs/PROJECT_AUDIT.md](docs/PROJECT_AUDIT.md) | Current findings (IDs like ENG-1, BE-3), architecture map, what not to change |
+| [docs/MASTER_ROADMAP.md](docs/MASTER_ROADMAP.md) | Phases, tasks, next task |
+| [docs/PLAN.md](docs/PLAN.md) | Step log: what each executed step changed + numbers |
+| [docs/UI_PLAN.md](docs/UI_PLAN.md) · [docs/DEPLOY_PLAN.md](docs/DEPLOY_PLAN.md) | UI detail · hosting/environments/deploy stages |
+| [README.md](README.md) | Player-facing setup + effect-type reference (partly outdated; roadmap 4.8) |
+
+Update the audit/roadmap/step log when a finding is fixed or a decision is made. Don't create new overlapping docs.
+
+## Folder structure
+
+```
+backend/
+  app.py                    HTTP auth routes, static serving, Socket.IO handlers, in-memory match state
+  game_engine.py            Pure rules engine (no Flask/DB): turns, validation, effects, statuses, per-player views
+  characters.py             Content: CHARACTERS roster (the user authors this)
+  models.py                 SQLAlchemy models
+  seed_db.py                Sync characters table from characters.py (never touches accounts)
+  test_game_engine.py       Engine unit + per-character kit tests (no DB)
+  test_integration_smoke.py Full stack in-process: HTTP + Socket.IO + DB
+  photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
+  game.db                   Local SQLite (gitignored; holds real local accounts)
+frontend/  index.html · app.js (single file) · style.css
+tools/     measure.py (metrics snapshot) · probe_exploits.py (reproduces known bugs)
+docs/      plans, audit, roadmap, step log, measurements/
+```
+
+## Commands
+
+From `backend/` unless noted:
 
 ```
 pip install -r requirements.txt
-python app.py                         # http://localhost:5000 (open 2 windows / 1 incognito to play both sides)
-python test_game_engine.py            # engine unit tests, no DB/server, ~0.1s
-python test_integration_smoke.py      # full stack in-process; WARNING: uses backend/game.db unless DATABASE_URL is set
-python seed_db.py                     # sync characters table from characters.py (only when the user asks)
-python tools/measure.py [--save f.md] # from repo root: tests, coverage, lint, sizes, assets, payload
+python app.py                          # http://localhost:5000; open 2 windows (1 incognito) to play both sides
+python test_game_engine.py             # ~0.1 s
+DATABASE_URL=sqlite:///<temp>/smoke.db python test_integration_smoke.py   # ALWAYS set a temp DB (default = real game.db)
+python seed_db.py                      # only when the user asks (batch rule)
+python ../tools/measure.py --save ../docs/measurements/<date>-<step>-before.md   # or from repo root: python tools/measure.py
+python ../tools/probe_exploits.py      # CONFIRMED = bug still present; uses a temp DB
 ```
 
-Safe way to run the smoke test without touching the real DB:
-`DATABASE_URL=sqlite:///<some temp path>/smoke.db python test_integration_smoke.py`
+`measure.py` uses `coverage`, `pyflakes` and `pillow` if installed (otherwise it skips those sections). In this
+environment they live outside the project; put that folder on `PYTHONPATH` (`;` separator on Windows). Ad-hoc
+audit tools (`pip-audit`, `radon`) also go in a scratch folder, never into `requirements.txt`.
 
-## Workflow rules
+## Workflow (how every change is made)
 
-- **One step at a time, user-approved.** Work through PLAN.md items in priority order, one fix per step. For each
-  step: say what you'll change and why, measure before, change, measure after, report exactly what changed
-  (files, behavior, numbers). Then **stop and wait** for the user's go-ahead. Never start the next step, or
-  make extra changes nobody asked for, on your own.
-- **One branch per step**: `feature/stepN-<short-name>`, created from the previous step's branch (steps build on
-  each other). Commit the code, tests and that step's `docs/measurements/*` files together, then push the branch.
-  The user merges the steps into `dev` in order.
-- **Measure before and after every change**: `python tools/measure.py --save docs/measurements/<date>-<item>-{before,after}.md`.
-  No regressions: FAIL stays 0, PASS/coverage don't drop, pyflakes count doesn't grow.
-- Every bug fix gets a regression test in `test_game_engine.py` (engine) or `test_integration_smoke.py` (transport/DB).
-- Branches = environments: **`main` = PROD** (only released code, via a `dev → main` PR), **`dev` = DEV/staging**
-  (integration branch, auto-deploys to the test site once hosting exists). New work: branch from `dev` (or commit
-  straight to `dev` for small things); never commit directly to `main`. Details: DEPLOY_PLAN.md §2b.
-- Don't commit or reseed after every small edit: batch changes and commit/reseed when the user says the batch is done.
-- Never delete `backend/game.db` to "reset" anything; it holds real accounts. Re-run `seed_db.py` for character changes.
+1. **One step at a time, user-approved.** Pick the next roadmap task. Say what changes and why; measure before;
+   change; measure after; report (files, behavior, numbers, remaining problems, next task). Then **stop and wait**
+   for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
+   preferences, architecture-level choices or irreversible actions.
+2. **One branch per step:** `feature/stepN-<name>` from the previous step's branch. Commit code + tests + docs +
+   that step's `docs/measurements/*` together, push, add a row to `docs/PLAN.md`. The user merges into `dev` in order.
+3. **Bugs:** reproduce → add a probe item or failing test → fix → verify → run everything. Ask whether the bug hints
+   at a bigger design problem.
+4. **Measure honestly:** explain every metric that moved. If something can't be measured, say so. Passing tests
+   don't prove a change is good; also check payload, complexity, UX and security.
+5. Branches = environments: **`main` = PROD** (release PRs only, never commit directly), **`dev` = DEV/staging**.
+6. Don't commit or reseed after every micro-edit (batch rule). Never delete `backend/game.db`.
 
-## Architecture
+### Definition of done
 
-- `backend/game_engine.py`: **pure functions over plain dicts**, no Flask/DB imports. Turn lifecycle
-  (`start_turn` → `queue_move`/`cancel_move` → `resolve_turn`) plus `apply_effect`, one big `if/elif` on effect `type`.
-  Keep it pure; that's what makes it testable.
-- `backend/app.py`: HTTP auth routes (`/api/register|login|logout|me`), static serving, Socket.IO handlers
-  (`find-match`, `queue-skill`, `cancel-skill`, `commit-turn`). In-memory state: `GAMES`, `MATCHMAKING_QUEUE`,
-  `SID_ROOM_MAP`, `ENDED_ROOMS`. Games are lost on server restart.
-- `backend/characters.py`: content (roster + skills). **The running game reads characters from the DB**, which
-  `seed_db.py` syncs from this file, so content edits need a reseed to show up in-game. The user authors all
-  content here; in production the sync runs automatically as a deploy release step.
-- `backend/models.py`: User, UserStats, Character (skills as a JSON blob), UserCharacter (unlocks),
-  Mission/UserMissionProgress (schema only, not wired), Match.
-- `frontend/app.js`: one file; renders on every `update-state` broadcast. Payment modal handles random costs.
+Implementation finished · existing behavior intact · regression/new tests added and all green · errors handled ·
+security considered · before/after measured and explained · docs updated (audit/roadmap/step log/CLAUDE.md as
+relevant) · no new dependencies without reason · no unexplained TODOs · self-reviewed diff · anything not verified
+(e.g. not played in a browser) is **stated as unverified**.
 
-## Game rules worth knowing
+## Architecture & conventions
 
-- Turns **alternate** (they aren't simultaneous): the active player queues at most one skill per character, then
-  `commit-turn` pays and resolves only their moves. First turn of the match gives 1 Ki die; after that 1 per living character.
-- Ki types: `energy`, `martial`, `spirit`, `rage`; `random` in a cost means any type.
-- **Durations are stored in ticks: 1 turn = 2 ticks.** Every status ticks down at the start of *every* player's turn.
-  Effects author `duration` in turns and the engine multiplies by 2. Exception: `prime_skill` uses `2N + 2`
-  (see the comment in the engine for why).
-- Cooldown: after use, `currentCooldown = cooldown + 1`, decremented at the start of the owner's turn.
-- Status dicts: `{type, value?, duration, classes?, tag: 'harmful'|'buff', invisible?}`. Player-level statuses
-  (chakra restrict/drain) live on `player['status']`.
+### Backend (`app.py`)
+- **Never emit raw game state.** Always `broadcast_state(game)` → per-player `game_engine.view_for`, which strips
+  socket/account ids, the opponent's queue, invisible statuses on your own characters, and skill `effects`/`base_*`.
+- **Socket handler pattern** (use it for every new event):
+  ```python
+  @socketio.on('event')
+  def handle_event(data):
+      try:
+          require(data, field=type, ...)          # shape/type validation -> GameError
+          room_id, game, role = current_match()  # identity from request.sid, never from the payload
+          ...engine call...
+          broadcast_state(game)                  # or end_game(...) if game['winner']
+      except Exception as e:
+          report_error(e, 'event')               # GameError -> message; anything else -> logged + generic msg
+  ```
+- Module state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`, `ENDED_ROOMS`) is **mutated in place, never rebound**.
+- One account, one seat: `find-match` rejects accounts already queued or in an unfinished match.
+- Use `log` (logging), not `print`, in new code.
 
-## Content conventions
+### Socket.IO API (client ↔ server contract; document changes here)
 
-- Character ids are **saga-versioned**: `goku_saiyan_saga`, not `goku`. A later version is a new entry.
-- Every character's 4th skill is the universal `afterimage_technique` (`invulnerable`, duration 1, cooldown 4,
-  1 random). Name/image can be re-flavored ("Block", "Fake Death"), but the id and mechanics stay identical.
-- **Skill ids are unique only within one character's kit** (several share `afterimage_technique`, `kamehameha`).
-  Always look skills up by `(charId, skillId)`, never by skill id alone.
-- Skill icons go in `backend/photos/skills/`, portraits in `backend/photos/characters/`. Don't auto-source anime
-  stills; the user supplies the art. Heads-up: the current files are JPEG/WEBP despite the `.png` names.
-- No percentage-based upgrades in kits (design rule); prefer flat numbers.
-- After adding or changing a skill, run `test_game_engine.py`: `test_content_smoke` catches unknown effect
-  types, and each character has a kit test.
+| Client → server | Payload | Notes |
+|---|---|---|
+| `find-match` | `[id, id, id]` | 3 distinct unlocked character ids |
+| `queue-skill` | `{charId, skillId, targetPlayerKey, targetIndex}` | `self`/team skills: server picks the target |
+| `cancel-skill` | `{charId}` | own move, own turn only |
+| `commit-turn` | `{paymentList: [ki, ...]}` | must pay queued costs exactly |
 
-## Adding a new effect type
+| Server → client | Payload |
+|---|---|
+| `character-list` | unlocked characters (on connect) |
+| `auth-required` | not logged in |
+| `match-status` | text while searching |
+| `game-start` | `{roomId, role}` |
+| `update-state` | per-player view (`view_for`) |
+| `message` | game event text (counter fired, game over) |
+| `error-msg` | `GameError` text or generic server error |
 
-1. Add an `elif etype == '...'` branch in `apply_effect` (and tick handling in `tick_statuses` if it's a timed status).
-2. Add it to the known-types list in `test_content_smoke` and write a focused unit test.
-3. If it creates a visible status, add an entry to `STATUS_META` in `frontend/app.js`.
-4. Document it in the README effect table.
+HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /api/logout`, `GET /api/me`.
 
-## Known sharp edges (see PLAN.md §3 for the full list)
+### Game engine (`game_engine.py`)
+- **Pure functions over plain dicts.** No Flask/DB imports; that's what makes it fast (~0.5 ms/turn) and testable.
+- Rule violations raise `GameError`; game *events* (e.g. a counter-trap firing) are **return values**, not exceptions.
+- `resolve_turn` = validate → deep-copy snapshot → `_apply_turn` → restore **in place** on any crash. All per-turn
+  mutations belong inside `_apply_turn`.
+- Server-side validation is authoritative: `resolve_target`, `can_afford`, `payment_matches_costs`. The client may
+  display but never decides damage, Ki, cooldowns, legality or outcomes.
+- Turns **alternate**. First turn of the match: 1 Ki die; after that 1 per living character. Moves resolve in queue order.
+- **Durations are ticks: 1 turn = 2 ticks**, and every status ticks at the start of *every* turn. Authors write turns;
+  the engine multiplies by 2. Exception: `prime_skill` uses `2N + 2` (see the engine comment).
+- Cooldown: after use `currentCooldown = cooldown + 1`, decremented at the start of the owner's turn.
+- Statuses: `{type, value?, duration, classes?, tag: 'harmful'|'buff', invisible?}`; player-level ones on `player['status']`.
+- Known engine gaps (audit): ENG-1 no winner on turn-start wipe, ENG-2 mutual KO, ENG-3 dodge per effect, ENG-4
+  invulnerable targetable, ENG-7 unseeded RNG.
 
-- **Never emit the raw game state to clients.** Always `broadcast_state(game)` (per-player `game_engine.view_for`),
-  which strips socket/account ids, the opponent's queue, invisible statuses, and every skill's `effects` /
-  `base_*` backups. The client only gets display fields (name, description, cost, cooldowns, locked, classes,
-  target_type, image). If the frontend ever needs effect data, send a derived display field, not the raw `effects`.
-- **Rule violations raise `game_engine.GameError`** (shown to the player). Any other exception is treated as a bug:
-  `app.report_error` logs the traceback and the player gets `SERVER_ERROR_MSG`. Don't raise bare `Exception`
-  for game rules. Game *events* (like a counter-trap firing) are return values, not exceptions.
-- Costs and targets are validated server-side (`can_afford`, `payment_matches_costs`, `resolve_target`); the client's
-  affordability math in `app.js` is still a simpler approximation (fixed in the UI phase).
-- `resolve_turn` is all-or-nothing: it validates first, then applies via `_apply_turn` against a deep-copy snapshot
-  and restores it **in place** on any crash (`GAMES` holds that exact dict, so never rebind it). Keep new
-  per-turn mutations inside `_apply_turn` so they're covered by the rollback.
-- **Socket handlers never trust identity from the payload.** Get room + role with `current_match()` (from
-  `request.sid`), validate the payload first with `require(data, field=type, ...)`, and wrap the body in
-  `try: ... except Exception as e: report_error(e, '<event>')`. Follow this pattern for every new event.
-- **One account, one seat**: `find-match` rejects an account that is already queued (any tab) or in an unfinished
-  match (`user_in_active_match`). Module-level state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`) is mutated in
-  place, never rebound, because tests and other code hold references to these objects.
-- Still open (PLAN.md §3): no turn timer/reconnect/surrender, `GAMES` is never pruned, no per-room lock.
-- Windows dev machine (Python 3.14): use the `;` separator in `PYTHONPATH`, and avoid Unix-only shell tricks in tooling.
+### Adding an effect type
+1. Branch in `apply_effect` (+ `tick_statuses` if timed). (ENG-6: a registry refactor is planned; then add a function.)
+2. Add to `test_content_smoke`'s known types + a focused unit test (normal, blocked/invulnerable, edge cases).
+3. Visible status → `STATUS_META` in `frontend/app.js`. If the client needs data from it, send a display field, not `effects`.
+4. Document in the README effect table.
+
+### Characters & abilities (`characters.py`)
+- Data-driven only: no per-character code paths in the engine. New mechanic = new reusable effect type.
+- Ids are **saga-versioned** (`goku_saiyan_saga`); a later version is a new entry.
+- Every character's 4th skill is the universal `afterimage_technique` (invulnerable 1 turn, cooldown 4, 1 random);
+  name/image may be re-flavored, mechanics/id stay identical.
+- **Skill ids are unique only within a kit.** Always address skills by `(charId, skillId)`.
+- Flat numbers, no percentage upgrades (design rule). Texts that numbers change must use `new_description`
+  (boost/cost changes) or `description_template` with `{value}` (only on `scale_skill_by_stack`).
+- After any content change: `test_game_engine.py` (content smoke + kit tests). The running game reads the **DB**,
+  so a reseed is needed to see changes locally (production syncs on deploy).
+
+### Database
+- SQLAlchemy ORM only, no raw SQL. `seed_db.py` touches only `characters`. Mission tables are intentional,
+  unused groundwork (don't delete). No migrations yet: adding Flask-Migrate is required before the first schema
+  change that must survive (DB-1).
+
+### Frontend
+- Vanilla JS, no framework, no build step (decision; see UI_PLAN). Planned: ES modules, DOM helpers instead of
+  `innerHTML` with data, event delegation, one design system (CSS custom properties).
+- The client renders state and sends intents; it is never a source of truth for rules. Its affordability math must
+  match the server's algorithm (FE-3, still open).
+- Every action needs feedback, every error a readable message, every visible button must work.
+
+### Security requirements
+- Treat every client input as hostile; validate shape (`require`) and rules (engine) server-side.
+- Never send hidden information to the client (`view_for`). Never trust client-sent identity.
+- No secrets in code. `SECRET_KEY`/CORS/cookie flags are **deploy blockers** (SEC-1/SEC-2) until env-driven.
+- New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
+
+### Performance requirements
+Measure first (`measure.py`, ad-hoc timing). Current: 0.5 ms/turn, 0.23 ms per player view, 8.4 KB per
+`update-state`. Payload bytes must not grow without reason; skill icons must be sized for display (AST-1).
+
+### Assets
+User supplies all art (don't auto-source anime stills). Portraits → `photos/characters/`, icons → `photos/skills/`.
+Planned: real extensions + resize via a tool (AST-1).
+
+### Deployment
+Not deployed yet. Follow DEPLOY_PLAN: DEV site from `dev`, PROD from `main`, separate DBs/secrets, Postgres +
+migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end live matches until state moves to Redis.
+
+## Important decisions (and why)
+- **Server-authoritative engine, per-player views** (Steps 1–9): anti-cheat for online PvP.
+- **Python/Flask/Socket.IO stays** (DEPLOY_PLAN §1): turn-based traffic is light; one process scales far.
+- **Content authored in `characters.py`**, synced to the DB (by the user's choice, 2026-11-02).
+- **Vanilla JS** (no framework): small app, no build step.
+- **Single process, in-memory matches for v1**; Redis only when load tests require it.
+
+## Environment notes
+Windows dev machine, Python 3.14 locally (production: pin 3.12). Use `;` in `PYTHONPATH`. The in-process
+Socket.IO test client re-raises handler crashes to the caller, so wrap probe calls in `try/except`.

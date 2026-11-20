@@ -1,7 +1,7 @@
 # Dragon Ball Arena — Technology & Deployment Plan
 
 Goal: public online game, **1v1 player-vs-player only** (no bots), many matches running at the same time.
-Companion to [PLAN.md](PLAN.md) (code fixes) and [UI_PLAN.md](UI_PLAN.md).
+Companion to [MASTER_ROADMAP.md](MASTER_ROADMAP.md) (Phase 8) and [UI_PLAN.md](UI_PLAN.md).
 
 ---
 
@@ -133,12 +133,12 @@ Check current pricing when you sign up; all of these have small paid tiers suita
 
 Each stage ends with a **check**. Measure before/after as usual (`tools/measure.py`), plus the stage-specific numbers.
 
-### Stage 0 — Prerequisites (from PLAN.md) — *must be done before anyone else plays*
-1. PLAN Phase 1: server-side cost/target validation, per-player state view. **Without this, players can cheat
-   by sending crafted socket messages from the browser console.**
-2. PLAN Phase 2: role from `request.sid`, payload validation, turn timer, surrender, reconnect grace window,
-   room cleanup, per-room locking, no self-matching.
-3. PLAN Phase 3 security items: CORS origins, required `SECRET_KEY`, cookie flags, login rate limit.
+### Stage 0 — Prerequisites (MASTER_ROADMAP Phases 1–3) — *must be done before anyone else plays*
+1. Roadmap Phase 1: ✅ cost/target validation, per-player views, atomic turns (Steps 1–7). Open: ENG-1 (winner on
+   turn-start wipe) and the rule decisions ENG-2/ENG-4.
+2. Roadmap Phase 2: ✅ identity from `request.sid`, payload validation, no self-matching (Steps 8–9). Open: room
+   cleanup, turn timer, surrender, reconnect grace window, per-room locking.
+3. Roadmap Phase 3: CORS origins, required `SECRET_KEY`, cookie flags, login rate limit, session revocation.
 - **Check:** `python tools/probe_exploits.py` reports nothing reproduced; all tests green.
 
 ### Stage 1 — Production-ready configuration
@@ -174,7 +174,7 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 2. `Dockerfile` on `python:3.12-slim`: install requirements, copy `backend/` + `frontend/`, non-root user,
    `CMD` = the gunicorn line. `.dockerignore` excludes `game.db`, `__pycache__`, `.git`.
 3. Serve the socket.io client JS from our own server (not cdn.socket.io), versioned with the backend.
-4. Optimize images (PLAN §5): ~2 MB → ~200 KB, since every player downloads them.
+4. Optimize images (audit AST-1): ~2 MB → ~200 KB, since every player downloads them.
 5. Static caching headers for `/photos/*` and JS/CSS (with a version query string on deploy).
 - **Check:** `docker build` + `docker run` locally → two browsers play a full match over websockets
   (DevTools → Network → WS shows `101 Switching Protocols`).

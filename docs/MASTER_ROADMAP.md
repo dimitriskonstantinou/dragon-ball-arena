@@ -1,0 +1,147 @@
+# Dragon Ball Arena — Master Roadmap
+
+Built from [PROJECT_AUDIT.md](PROJECT_AUDIT.md) (2026-11-20). Finding IDs (ENG-1, BE-3, …) refer to the audit.
+Detailed sub-plans: UI → [UI_PLAN.md](UI_PLAN.md), deployment → [DEPLOY_PLAN.md](DEPLOY_PLAN.md).
+Executed steps and their numbers: [PLAN.md](PLAN.md) (step log).
+
+**How work flows:** one task = one step = one branch (`feature/stepN-<name>`), measured before/after with
+`tools/measure.py` (+ `tools/probe_exploits.py` when relevant), with tests and docs in the same commit, reported, then
+the user approves the next step. Priority order: security → data integrity → broken core play → engine correctness
+→ architecture → tests → gameplay completeness → integration → UI/UX → performance → polish.
+
+```
+P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Security & config ─┬─▶ P8 Deployment (DEV, then PROD)
+                       │                      │                                    │
+                       └──▶ P4 Content system ┴──▶ P5 Frontend foundation ─▶ P6 Battle UX ─▶ P7 Lobby & roster
+                                                                                    └─▶ P9 Progression ─▶ P10 Competitive ─▶ P11 Balance & roster growth
+```
+
+---
+
+## Phase 0 — Stability & baseline · *mostly done*
+
+**Objective:** a trustworthy baseline and a safe way to change code.
+**Current state:** measure + probe tools, audit, CLAUDE.md, 205 checks green. Steps 1–9 are pushed but **not merged into `dev`** and **not yet played in a browser**.
+
+| Task | Why | Done when |
+|---|---|---|
+| 0.1 Browser playtest of steps 1–9 (2 windows, full match) | TST-3: protocol/state changes unverified in a real UI | A full match plays to the end; findings logged |
+| 0.2 Merge steps 1–9 (+10 audit) into `dev` in order | `dev` is the integration branch | `dev` = step10 tip, tests green on `dev` |
+| 0.3 Reseed local DB | CON-6: Tien/Yamcha missing locally | `characters` table = 5 rows |
+| 0.4 Smoke test defaults to a temp DB | TST-1/DB-4: documented command writes to real DB | Running it leaves `game.db` unchanged (checked by mtime) |
+| 0.5 Extend `measure.py`: DB size, dependency count, engine timing | Audit metrics currently ad hoc | Metrics appear in every report |
+
+**Risks:** merging 10 stacked branches; mitigated by merging in order (they're linear).
+
+## Phase 1 — Engine integrity · *Steps 1–7 done; 5 items left*
+
+**Objective:** the rules are correct, deterministic where intended, and unexploitable.
+**Problems:** ENG-1 (no winner on tick wipe), ENG-2 (mutual KO), ENG-3 (dodge per effect), ENG-4 (targeting invulnerable), ENG-7 (unseeded RNG).
+**Files:** `game_engine.py`, `app.py` (end game after `start_turn`), `test_game_engine.py`, `test_integration_smoke.py`.
+
+| Task | Needs a user decision? | Done when |
+|---|---|---|
+| 1.8 ENG-1: `check_winner` after turn-start ticks; app ends the game | No | Probe/regression: SBC/DoT wipe → winner set immediately, both clients get game over |
+| 1.9 ENG-2: mutual-KO rule | **Yes:** draw, or the acting player wins | Rule encoded + tested both ways |
+| 1.10 ENG-4 + CON-2: invulnerable = untargetable (except skills that ignore it) or fix the text | **Yes** | Rule + text + tests consistent |
+| 1.11 ENG-3: reactive defenses apply per skill | Confirm semantics | Knee Attack fully dodged by one dodge |
+| 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
+
+**Measurable:** probe has 0 engine items; engine coverage ≥ 90%.
+
+## Phase 2 — Match lifecycle & server robustness
+
+**Objective:** a match always ends correctly, can't be held hostage, survives a page reload, and never leaks memory.
+**Current state:** matches end only by wipe or disconnect; nothing is cleaned up; no timer/surrender/reconnect.
+**Files:** `app.py` (likely split into modules here, BE-9), `game_engine.py` (pass turn), frontend (timer display, surrender button), tests.
+
+| Task | Finding | Done when |
+|---|---|---|
+| 2.1 Remove finished rooms after the final broadcast; late events answered cleanly | BE-3 | Probe "never pruned" gone; memory flat over 1,000 simulated matches |
+| 2.2 End-of-match persistence errors handled + logged | BE-6 | Simulated DB failure → game still ends, error logged |
+| 2.3 Per-room lock around engine calls | BE-5 | Concurrent-commit test can't double-resolve |
+| 2.4 Surrender | BE-4 | `surrender` → loss recorded, both clients notified |
+| 2.5 Turn timer + auto-pass (deadline sent in state) | BE-1 | Idle player's turn passes after N s; repeated AFK → forfeit (rule to confirm) |
+| 2.6 Reconnect grace window (by `user_id`) | BE-2 | Reload mid-match → same match restored within the window |
+| 2.7 Structured battle events from the server (`actor, skill, targets, damage, statuses`) | FE-1 | Each resolved move produces an event in both clients' streams |
+| 2.8 Names instead of roles in messages | BE-7 | "Goku_fan wins" |
+
+**Risks:** background timer tasks in tests (use an injectable clock); reconnect touches identity. Do it after 2.1.
+
+## Phase 3 — Security & production configuration
+
+**Objective:** safe to put on the internet. Overlaps DEPLOY_PLAN Stages 0–1.
+
+| Task | Finding | Done when |
+|---|---|---|
+| 3.1 `config.py`: env-driven settings; refuse to start without `SECRET_KEY` in prod | SEC-1 | Probe item gone; prod start without key fails clearly |
+| 3.2 Allowed origins from env; cookie `SameSite=Lax`, `Secure`, `HttpOnly` | SEC-2 | Probe item gone; cross-origin socket refused (test) |
+| 3.3 Login/register rate limits | SEC-3 | N failed logins → 429 (test) |
+| 3.4 Session versioning + lifetime | SEC-4 | Logout invalidates old cookies (test) |
+| 3.5 Case-insensitive usernames, email check, IntegrityError handled | SEC-5 | Tests for each |
+| 3.6 Relative image URLs, `/healthz`, logging config, self-hosted socket.io | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
+
+## Phase 4 — Content system & cleanup
+
+**Objective:** adding the 6th to the 50th character is cheap and safe.
+
+| Task | Finding | Done when |
+|---|---|---|
+| 4.1 Effect registry refactor (behavior-preserving) | ENG-6 | `apply_effect` CC < 10; all checks unchanged |
+| 4.2 Strip cost text from descriptions | CON-1 | measure "hardcoded cost text" = 0 |
+| 4.3 Class-tagging rule + content-test enforcement | CON-3 | Every skill tagged per rule |
+| 4.4 Dead code / duplicates (primed restore, `effect` fallback, `aoe_damage`) | ENG-8 | pyflakes 0; no behavior change |
+| 4.5 Lobby list uses the display-field stripping | BE-10 | `character-list` ≤ 7.7 KB for 5 chars |
+| 4.6 Image normalization + resize tool | AST-1 | Misnamed = 0, assets ≤ 400 KB |
+| 4.7 Character metadata (role, bio, saga) | CON-5 | Shown in roster screen (P7) |
+| 4.8 README refresh (turn model, effect table, limitations) | docs drift | README matches code |
+
+## Phase 5 — Frontend foundation (UI_PLAN UI-1 + UI-2)
+
+**Objective:** a maintainable frontend before redesigning screens.
+**Tasks:** auth `<form>`s, correct how-to-play, game-over → back to lobby / play again and **render the final state** (FE-2),
+toasts instead of log errors / `alert`, ES-module split, DOM helper (no `innerHTML` with data, SEC-7), event delegation,
+dead code removed (FE-6), **server-equivalent affordability math** (FE-3).
+**Done when:** 0 `innerHTML` with data, 0 inline handlers, game over → lobby without reload, client and server agree on affordability (shared test vectors).
+
+## Phase 6 — Battle experience (UI_PLAN UI-3 + UI-4)
+
+**Depends on:** Phase 2 (events, timer, surrender), Phase 5.
+**Tasks:** icon skills + detail panel with inline disabled reasons, valid-target highlighting, auto-target self, auto-pay with
+"adjust", queue-order display (ENG-9), battle log from server events, floating numbers, turn banner, timer bar, Ki symbols (colorblind).
+**Measurable:** clicks per typical turn 11 → ≤ 6; board fits 1366×768; opponent actions 100% visible; keyboard-only turn possible.
+
+## Phase 7 — Lobby, team builder & roster (UI_PLAN UI-5)
+
+Skill preview before picking, team slots, remember last team, cancel search, roster/character details (uses 4.7),
+responsive breakpoints, accessibility pass. **Measurable:** Lighthouse accessibility ≥ 90 (baseline to be recorded first).
+
+## Phase 8 — Deployment (DEPLOY_PLAN Stages 1–9)
+
+DEV (staging) online first, PROD after Phases 1–3 are done and DEV has been played on.
+Key items: Postgres + Flask-Migrate (DB-1/DB-2), gunicorn + gevent, Docker, CI (TST-2), load test (capacity is currently
+unmeasured), domain/HTTPS, Sentry + uptime, backups, restart warnings.
+**Measurable:** load test p95 < 200 ms at 2× expected peak; restore test passed; alerts fire.
+
+## Phase 9 — Accounts & progression
+
+Mission-based unlocks (schema exists, unused). **Needs design decisions:** auto-tracked vs manual missions; JSON vs
+normalized skills. Also: profile page, match history (needs DB-3 index), privacy page + account deletion (GDPR).
+
+## Phase 10 — Competitive systems
+
+Ranking/ladder (e.g. Elo/Glicko), private matches (invite code), replays (needs ENG-7), seasonal stats.
+
+## Phase 11 — Balance, roster growth & polish
+
+Per-skill usage/win-rate telemetry (CON-4), balance sheet doc, roster expansion (new sagas, new mechanics as needed:
+transformations, passives, conditionals, ultimates), visual polish, sound.
+
+---
+
+## Next task
+
+**1.8 / ENG-1: declare the winner when a team dies at turn start.** It's a verified core-rules bug (a match can
+continue with a dead team, and the loser can stall it forever), it's small and isolated, and Phase 2's timer and cleanup
+work depend on matches ending at the right moment. Phase 0's 0.1–0.3 (browser playtest, merge, reseed) are
+yours or quick, and should happen around it.
