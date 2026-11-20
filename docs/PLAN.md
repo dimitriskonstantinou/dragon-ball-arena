@@ -40,5 +40,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 16 | `feature/step16-turn-timer` | Turn timer: 60 s, auto-pass, 3 timeouts in a row = forfeit; one background ticker under match locks; countdown in the UI | idle stall reproduced → fixed; engine 167→177, smoke 71→80, browser 14→21; probe 4→3 |
 | 17 | `feature/step17-reconnect` | Disconnect mid-match = 30 s grace instead of instant forfeit; same account rejoins from any tab (`rejoin_match`); opponent sees connected status | reload-forfeit reproduced → fixed in a real browser; smoke 80→96, browser 21→27; probe 4→3 |
 | 18 | `feature/step18-surrender` | `surrender` event (any turn) + button behind a confirm dialog; loss recorded for the surrendering player | "no way to surrender" reproduced → fixed; engine 177→181, smoke 96→102, browser 27→34; probe 4→3 |
+| 19 | `feature/step19-config-secret-key` | `config.py`: validated env settings; staging/production refuse to start without a strong `SECRET_KEY`; hardcoded key removed (dev: random per-machine key file) | prod start without key: exit 0 → refused; new config suite (25 checks); probe 3→2 |
 
-**Merged into `dev`:** none of steps 1–18 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–19 yet (user merges in order).

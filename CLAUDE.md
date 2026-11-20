@@ -47,7 +47,7 @@ docs/      plans, audit, roadmap, step log, measurements/
 
 ## Commands
 
-From `backend/` unless noted:
+From `backend/` unless noted (settings: see `config.py`; the defaults need nothing set):
 
 ```
 pip install -r requirements-dev.txt && python -m playwright install chromium   # runtime + test tools
@@ -221,7 +221,12 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
 ### Security requirements
 - Treat every client input as hostile; validate shape (`require`) and rules (engine) server-side.
 - Never send hidden information to the client (`view_for`). Never trust client-sent identity.
-- No secrets in code. `SECRET_KEY`/CORS/cookie flags are **deploy blockers** (SEC-1/SEC-2) until env-driven.
+- No secrets in code. **All settings come from `config.py`** (`config.load()` at app import): `ENV`
+  (development | staging | production), `SECRET_KEY`, `DATABASE_URL`, `PORT`, `TURN_SECONDS`, `RECONNECT_SECONDS`,
+  `TURN_TIMER_THREAD`. Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
+  `test_config.py`. Staging/production refuse to start without a strong `SECRET_KEY`; development generates a random
+  key once into `backend/.dev_secret_key` (git-ignored; delete it to log every local session out).
+- Still deploy blockers: CORS + cookie flags (SEC-2), rate limits (SEC-3), session revocation (SEC-4).
 - New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
 
 ### Performance requirements

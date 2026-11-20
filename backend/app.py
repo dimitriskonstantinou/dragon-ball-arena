@@ -10,6 +10,7 @@ import time
 import uuid
 from contextlib import contextmanager
 
+import config
 import content_loader
 import game_engine
 from game_engine import GameError
@@ -17,14 +18,18 @@ from models import db, User, UserStats, Character, UserCharacter, Match
 
 log = logging.getLogger(__name__)
 
+try:
+    settings = config.load()
+except config.ConfigError as e:
+    raise SystemExit(f"Configuration error: {e}")
+
 app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'frontend'))
 
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
-    'DATABASE_URL', f"sqlite:///{os.path.join(BASE_DIR, 'game.db')}")
+app.config['SECRET_KEY'] = settings.secret_key
+app.config['SQLALCHEMY_DATABASE_URI'] = settings.database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
@@ -43,13 +48,13 @@ SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
 
 # Turn timer (BE-1): every turn has a deadline; one background ticker passes
 # expired turns (game_engine.timeout_turn has the rules, incl. forfeit).
-TURN_SECONDS = int(os.environ.get('TURN_SECONDS', 60))
+TURN_SECONDS = settings.turn_seconds
 TIMER_TICK_SECONDS = 1.0
-TURN_TIMER_THREAD = os.environ.get('TURN_TIMER_THREAD', '1') != '0'  # tests drive the timer by hand instead
+TURN_TIMER_THREAD = settings.turn_timer_thread  # tests drive the timer by hand instead
 
 # Reconnect grace window (BE-2): a player who drops mid-match has this long to
 # come back (same account, any tab) before forfeiting. user_id -> room_id.
-RECONNECT_SECONDS = int(os.environ.get('RECONNECT_SECONDS', 30))
+RECONNECT_SECONDS = settings.reconnect_seconds
 DISCONNECTED_USERS = {}
 _timer_started = False
 
@@ -630,4 +635,5 @@ if __name__ == '__main__':
     # docs/DEPLOY_PLAN.md). allow_unsafe_werkzeug lets it also start without
     # a terminal attached (e.g. from the browser tests).
     logging.basicConfig(level=logging.INFO)
-    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), allow_unsafe_werkzeug=True)
+    log.info("Starting in %s mode on port %d", settings.env, settings.port)
+    socketio.run(app, host='0.0.0.0', port=settings.port, allow_unsafe_werkzeug=True)

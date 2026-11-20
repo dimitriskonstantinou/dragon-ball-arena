@@ -174,7 +174,7 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 
 ### 4.3 Security & fair play
 
-**SEC-1 — HIGH (deploy blocker; CRITICAL once online) — Hardcoded fallback `SECRET_KEY` (verified)**
+**SEC-1 — HIGH (deploy blocker; CRITICAL once online) — Hardcoded fallback `SECRET_KEY` (verified)** — ✅ FIXED in Step 19 (`config.py`: staging/production refuse to start without a strong key; no key in the code; dev uses a random per-machine key file)
 `app.py:23`. If deployed without the env var, anyone knowing the default can sign a session cookie for any `user_id`, which is full account takeover.
 **Fix:** refuse to start without `SECRET_KEY` outside development.
 
