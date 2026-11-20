@@ -146,8 +146,14 @@ After the fix: 0 rooms left after 1,020 matches; memory growth flat (161 KB fixe
 
 **BE-4 — MEDIUM — No surrender (by reading).** Fix: `surrender` event → `end_game`.
 
-**BE-5 — MEDIUM (unverified) — No per-room locking under `async_mode=threading`**
+**BE-5 — MEDIUM (unverified) — No per-room locking under `async_mode=threading`** — ✅ FIXED in Step 15; **was HIGH (verified exploit)**
 Handlers mutate shared dicts. Two near-simultaneous `commit-turn` events could interleave. Not demonstrated.
+*Step 15 findings:* the server runs **every** Socket.IO event in its own thread (`async_handlers=True`; the test
+client turns that off, which is why no test saw it). Reproduced with parallel threads: (1) a double commit resolved
+**two** turns -- the opponent's turn was skipped and the same player moved again; (2) two tabs of one account searching
+at the same instant were matched against each other (bypassing Step 9). Also latent: `user_in_active_match` iterated
+`GAMES` while other threads changed it (RuntimeError risk); `MATCHMAKING_QUEUE.pop(0)` twice could race.
+Fixed with a lock per match (`locked_match()`, re-checks the match after waiting) and a matchmaking lock.
 **Fix:** per-room `threading.Lock` around engine calls (cheap insurance), revisit with gevent in deployment.
 
 **BE-6 — MEDIUM — End-of-match persistence errors are unhandled (by reading)** — ✅ FIXED in Step 14 (reproduced first: 0/2 players saw the end; now 2/2, error logged with room/winner/user ids)

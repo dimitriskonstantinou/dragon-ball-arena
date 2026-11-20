@@ -98,13 +98,19 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   @socketio.on('event')
   def handle_event(data):
       try:
-          require(data, field=type, ...)          # shape/type validation -> GameError
-          room_id, game, role = current_match()  # identity from request.sid, never from the payload
-          ...engine call...
-          broadcast_state(game)                  # or end_game(...) if game['winner']
+          require(data, field=type, ...)                    # shape/type validation -> GameError
+          with locked_match() as (room_id, game, role):    # identity from request.sid + the match's lock
+              ...engine call...
+              broadcast_state(game)                        # or end_game(...) if game['winner']
       except Exception as e:
-          report_error(e, 'event')               # GameError -> message; anything else -> logged + generic msg
+          report_error(e, 'event')    # GameError -> message; anything else -> logged + generic msg
   ```
+- **Concurrency:** the server runs every Socket.IO event in its own thread (`async_handlers`); the in-process test
+  client does not, so races never show up in normal tests. Anything that reads or changes a live match must hold its
+  lock (`locked_match()` in handlers; `ROOM_LOCKS[room_id]` in background tasks such as the coming turn timer).
+  Matchmaking state (queue, seat checks, creating matches) is guarded by `MATCHMAKING_LOCK`. Lock order is always
+  `MATCHMAKING_LOCK` -> room lock, never the reverse. Iterate shared dicts over a `list(...)` snapshot. Test races by
+  firing events from parallel threads with one step slowed down (see the Step 15 smoke checks).
 - Module state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`) is **mutated in place, never rebound**.
 - **Every finished match goes through `end_game`**, which pops the room from `GAMES` first (that pop is the
   "ended exactly once" guard), saves the result, sends the final state + message, then closes the Socket.IO room.
@@ -233,6 +239,9 @@ migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end
 - **Single process, in-memory matches for v1**; Redis only when load tests require it.
 
 ## Environment notes
+**Never `import app` (scripts, `python -c`, REPL) without `DATABASE_URL` pointing at a temp DB**: importing it runs
+`ensure_db_ready()`, which writes to the real `backend/game.db` (registry sync). This happened once in Step 15
+(characters table only; accounts untouched). All test/tool scripts already set a temp DB.
 Windows dev machine, Python 3.14 locally (production: pin 3.12). Use `;` in `PYTHONPATH`. The in-process
 Socket.IO test client re-raises handler crashes to the caller, so wrap probe calls in `try/except`.
 `python app.py` passes `allow_unsafe_werkzeug=True` so it can start without a terminal (browser tests); it is the

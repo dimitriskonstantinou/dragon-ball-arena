@@ -427,6 +427,7 @@ else:
     check("...and after all of them no match is left in memory",
           appmod.GAMES == {} and not any(r in appmod.socketio.server.manager.rooms.get('/', {}) for r in finished),
           list(appmod.GAMES))
+    check("...and no per-match locks are left behind either", appmod.ROOM_LOCKS == {}, list(appmod.ROOM_LOCKS))
 
     # --- Step 14 regression: if saving the result failed, end_game raised before
     # the final broadcast, so neither player saw the match end. Simulated with a
@@ -524,6 +525,93 @@ else:
     check("an account already in an unfinished match can't search for another",
           errors == ["This account is already in a match in another tab!"], errors)
     check("...and wasn't queued", appmod.MATCHMAKING_QUEUE == [], appmod.MATCHMAKING_QUEUE)
+
+    # --- Step 15 regression: the real server runs every event in its own thread
+    # (async_handlers), while this test client handles events synchronously. So
+    # these checks fire events from parallel threads, widening the race window by
+    # slowing one step down (50 ms) like a busy server would. ---
+    import threading
+    import time
+
+    def at_once(*calls):
+        threads = [threading.Thread(target=c) for c in calls]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    def slowed(name, target=appmod):
+        real = getattr(target, name)
+
+        def slow(*args, **kwargs):
+            time.sleep(0.05)
+            return real(*args, **kwargs)
+        setattr(target, name, slow)
+        return lambda: setattr(target, name, real)
+
+    def new_player(tag):
+        http = appmod.app.test_client()
+        register(http, f'{tag}_{suffix}', f'{tag}_{suffix}@test.local')
+        client = appmod.socketio.test_client(appmod.app, flask_test_client=http)
+        client.get_received()
+        return http, client
+
+    _, racer1 = new_player('race1')
+    _, racer2 = new_player('race2')
+    racer1.emit('find-match', team_ids)
+    racer2.emit('find-match', team_ids)
+    start = next(e['args'][0] for e in racer1.get_received() if e['name'] == 'game-start')
+    g = appmod.GAMES[start['roomId']]
+    mover = racer1 if start['role'] == 'p1' else racer2
+    turns_before = g['turn_count']
+    mover.get_received()
+    restore = slowed('resolve_turn', appmod.game_engine)
+    try:
+        at_once(lambda: mover.emit('commit-turn', {'paymentList': []}),
+                lambda: mover.emit('commit-turn', {'paymentList': []}))
+    finally:
+        restore()
+    errors = [e['args'][0] for e in mover.get_received() if e['name'] == 'error-msg']
+    check("a double commit (two threads at once) resolves only one turn",
+          g['turn_count'] == turns_before + 1 and g['turn'] != start['role'], (g['turn_count'] - turns_before, g['turn']))
+    check("...and the second commit is told it's not your turn", errors == ["Not your turn!"], errors)
+    racer1.disconnect()  # ends that match (forfeit) so the accounts are free again
+    racer2.disconnect()
+
+    http_tabs, tab1 = new_player('tabs')
+    tab2 = appmod.socketio.test_client(appmod.app, flask_test_client=http_tabs)
+    tab2.get_received()
+    restore = slowed('characters_for_user')
+    try:
+        at_once(lambda: tab1.emit('find-match', team_ids), lambda: tab2.emit('find-match', team_ids))
+    finally:
+        restore()
+    got = tab1.get_received() + tab2.get_received()
+    check("two tabs of one account searching at the same instant are never matched together",
+          not any(e['name'] == 'game-start' for e in got)
+          and [e['args'][0] for e in got if e['name'] == 'error-msg']
+          == ["This account is already searching for a match in another tab!"], got)
+    tab1.disconnect()
+    tab2.disconnect()
+    check("(cleanup) queue empty after the tabs left", appmod.MATCHMAKING_QUEUE == [], appmod.MATCHMAKING_QUEUE)
+
+    crowd = [new_player(f'crowd{i}')[1] for i in range(4)]
+    client_by_sid = {appmod.socketio.server.manager.sid_from_eio_sid(c.eio_sid, '/'): c for c in crowd}
+    stray_errors, started = [], 0
+    for _ in range(10):
+        at_once(*[(lambda c=c: c.emit('find-match', team_ids)) for c in crowd])
+        received = [c.get_received() for c in crowd]
+        stray_errors += [e for r in received for e in r if e['name'] == 'error-msg']
+        started += sum(1 for r in received for e in r if e['name'] == 'game-start')
+        for g in list(appmod.GAMES.values()):  # end the matches so everyone can search again
+            for ch in g['players']['p2']['team']:
+                ch['health'] = 0
+            client_by_sid[g['players']['p1']['id']].emit('commit-turn', {'paymentList': []})
+    check("4 players searching at the same instant, 10 rounds: every one matched, no errors or crashes",
+          stray_errors == [] and started == 4 * 10 and appmod.MATCHMAKING_QUEUE == [] and appmod.GAMES == {},
+          (stray_errors[:3], started, appmod.MATCHMAKING_QUEUE, list(appmod.GAMES)))
+    for c in crowd:
+        c.disconnect()
 
 print()
 if FAILURES:

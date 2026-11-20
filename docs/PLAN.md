@@ -36,5 +36,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 12b | `feature/step12b-catalog-runtime` | Gameplay reads the in-memory catalog; `characters` table = id registry synced at startup (never deleted); shim removed; lobby display-only; all-unlocked policy applied to old accounts | SQL per connect/find-match 3→1 (0 roster reads); lobby 10,343→7,437 B; smoke 45→53; cov 88→90% |
 | 13 | `feature/step13-prune-finished-matches` | `end_game` pops the room first (exactly-once guard), sends final state, closes the Socket.IO room; `ENDED_ROOMS` removed | 220/220 matches kept → 0; ~30 KB/match → flat; smoke 53→59; probe 4→3 |
 | 14 | `feature/step14-safe-match-end` | A failed result save is caught, rolled back and logged; both players still get the final state | final states on DB failure 0/2 → 2/2; smoke 59→65; probe 4→3 |
+| 15 | `feature/step15-room-lock` | Lock per match (`locked_match`) + matchmaking lock; reproduced 2 real races first (double commit skipped the opponent's turn; simultaneous tabs self-matched) | double commit 2 turns → 1; probe 5→3; smoke 65→71; app cov 83→85% |
 
-**Merged into `dev`:** none of steps 1–14 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–15 yet (user merges in order).

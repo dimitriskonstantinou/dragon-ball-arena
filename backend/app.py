@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 import copy
 import logging
 import os
+import threading
 import uuid
+from contextlib import contextmanager
 
 import content_loader
 import game_engine
@@ -30,6 +32,11 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 GAMES = {}
 MATCHMAKING_QUEUE = []
 SID_ROOM_MAP = {}  # sid -> roomId, for O(1) disconnect/forfeit lookup
+
+# The server runs every Socket.IO event in its own thread, so shared state needs
+# locks. Lock order is always MATCHMAKING_LOCK -> a room lock, never the reverse.
+ROOM_LOCKS = {}                        # room_id -> RLock, one per live match (see locked_match)
+MATCHMAKING_LOCK = threading.Lock()    # MATCHMAKING_QUEUE + seat checks + creating matches
 
 SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
 
@@ -166,6 +173,7 @@ def end_game(room_id, winner, reason=None):
     game = GAMES.pop(room_id, None)
     if not game:
         return
+    ROOM_LOCKS.pop(room_id, None)  # threads still waiting on it re-check GAMES and back off
     game['winner'] = winner
     for p_key in ('p1', 'p2'):
         SID_ROOM_MAP.pop(game['players'][p_key]['id'], None)
@@ -281,23 +289,25 @@ def handle_connect():
 def handle_disconnect():
     sid = request.sid
 
-    MATCHMAKING_QUEUE[:] = [p for p in MATCHMAKING_QUEUE if p['id'] != sid]  # in place: keep the same list object
+    with MATCHMAKING_LOCK:
+        MATCHMAKING_QUEUE[:] = [p for p in MATCHMAKING_QUEUE if p['id'] != sid]  # in place: keep the same list object
 
-    room_id = SID_ROOM_MAP.pop(sid, None)
-    if not room_id:
+    lock = ROOM_LOCKS.get(SID_ROOM_MAP.get(sid))
+    if lock is None:
+        SID_ROOM_MAP.pop(sid, None)
         return
-    game = GAMES.get(room_id)
-    if not game or game.get('winner'):
-        return
-
-    if game['players']['p1']['id'] == sid:
-        winner = 'p2'
-    elif game['players']['p2']['id'] == sid:
-        winner = 'p1'
-    else:
-        return
-
-    end_game(room_id, winner, reason="OPPONENT DISCONNECTED! " + winner.upper() + " WINS!")
+    with lock:
+        room_id = SID_ROOM_MAP.pop(sid, None)
+        game = GAMES.get(room_id)
+        if not game or game.get('winner'):
+            return
+        if game['players']['p1']['id'] == sid:
+            winner = 'p2'
+        elif game['players']['p2']['id'] == sid:
+            winner = 'p1'
+        else:
+            return
+        end_game(room_id, winner, reason="OPPONENT DISCONNECTED! " + winner.upper() + " WINS!")
 
 def require(data, **fields):
     """Validates a socket payload: a dict whose listed keys have the given
@@ -324,9 +334,25 @@ def current_match():
     return room_id, game, role
 
 
+@contextmanager
+def locked_match():
+    """Yields (room_id, game, role) for this connection while holding that
+    match's lock. Every event that reads or changes a live match must go
+    through it: events run in parallel threads, and without the lock e.g. a
+    double "commit" could resolve the opponent's turn as well. The match is
+    looked up again once the lock is held, because it may have ended while
+    this event waited."""
+    lock = ROOM_LOCKS.get(SID_ROOM_MAP.get(request.sid))
+    if lock is None:
+        raise GameError("You are not in a match.")
+    with lock:
+        yield current_match()
+
+
 def user_in_active_match(user_id):
+    # list(): other threads add/remove matches while we look.
     return any(not g.get('winner') and user_id in (g['players']['p1']['user_id'], g['players']['p2']['user_id'])
-               for g in GAMES.values())
+               for g in list(GAMES.values()))
 
 
 @socketio.on('find-match')
@@ -336,16 +362,6 @@ def handle_find_match(selected_char_ids):
         user = current_user()
         if not user:
             raise GameError("You must be logged in to find a match!")
-        if sid in SID_ROOM_MAP:
-            raise GameError("You are already in a match!")
-        if any(p['id'] == sid for p in MATCHMAKING_QUEUE):
-            raise GameError("You are already searching for a match!")
-        # Checked per ACCOUNT, not per connection: otherwise one account in two
-        # tabs could be matched against itself (and record its own win + loss).
-        if any(p['user_id'] == user.id for p in MATCHMAKING_QUEUE):
-            raise GameError("This account is already searching for a match in another tab!")
-        if user_in_active_match(user.id):
-            raise GameError("This account is already in a match in another tab!")
         if (not isinstance(selected_char_ids, list) or len(selected_char_ids) != 3
                 or not all(isinstance(c, str) for c in selected_char_ids)):
             raise GameError("You must select exactly 3 characters!")
@@ -357,36 +373,49 @@ def handle_find_match(selected_char_ids):
         my_team = [copy.deepcopy(available_chars[c]) for c in selected_char_ids if c in available_chars]
         if len(my_team) != 3:
             raise GameError("One or more selected characters aren't unlocked on this account!")
+
+        # Seat checks + joining the queue + pairing are one atomic step, or two
+        # tabs of the same account could both pass the checks at once.
+        with MATCHMAKING_LOCK:
+            if sid in SID_ROOM_MAP:
+                raise GameError("You are already in a match!")
+            if any(p['id'] == sid for p in MATCHMAKING_QUEUE):
+                raise GameError("You are already searching for a match!")
+            # Checked per ACCOUNT, not per connection: otherwise one account in two
+            # tabs could be matched against itself (and record its own win + loss).
+            if any(p['user_id'] == user.id for p in MATCHMAKING_QUEUE):
+                raise GameError("This account is already searching for a match in another tab!")
+            if user_in_active_match(user.id):
+                raise GameError("This account is already in a match in another tab!")
+
+            MATCHMAKING_QUEUE.append({'id': sid, 'user_id': user.id, 'username': user.username, 'team': my_team})
+            emit('match-status', "Searching for opponent...")
+            if len(MATCHMAKING_QUEUE) >= 2:
+                start_match(MATCHMAKING_QUEUE.pop(0), MATCHMAKING_QUEUE.pop(0))
     except Exception as e:
         report_error(e, 'find-match')
-        return
 
-    player_entry = {'id': sid, 'user_id': user.id, 'username': user.username, 'team': my_team}
-    MATCHMAKING_QUEUE.append(player_entry)
 
-    emit('match-status', "Searching for opponent...")
-
-    if len(MATCHMAKING_QUEUE) >= 2:
-        p1 = MATCHMAKING_QUEUE.pop(0)
-        p2 = MATCHMAKING_QUEUE.pop(0)
-
-        room_id = str(uuid.uuid4())[:8]
-
-        # Initialize Game with turn_count = 0
-        GAMES[room_id] = {
-            'roomId': room_id,
-            'turn': None,
-            'winner': None,
-            'turn_count': 0,
-            'started_at': datetime.now(timezone.utc).isoformat(),
-            'players': {
-                'p1': {'id': p1['id'], 'user_id': p1['user_id'], 'username': p1['username'],
-                       'resources': [], 'status': [], 'team': p1['team']},
-                'p2': {'id': p2['id'], 'user_id': p2['user_id'], 'username': p2['username'],
-                       'resources': [], 'status': [], 'team': p2['team']}
-            },
-            'pending_moves': []
-        }
+def start_match(p1, p2):
+    """Creates a match for two queued players (caller holds MATCHMAKING_LOCK)."""
+    room_id = str(uuid.uuid4())[:8]
+    game = {
+        'roomId': room_id,
+        'turn': None,
+        'winner': None,
+        'turn_count': 0,
+        'started_at': datetime.now(timezone.utc).isoformat(),
+        'players': {
+            'p1': {'id': p1['id'], 'user_id': p1['user_id'], 'username': p1['username'],
+                   'resources': [], 'status': [], 'team': p1['team']},
+            'p2': {'id': p2['id'], 'user_id': p2['user_id'], 'username': p2['username'],
+                   'resources': [], 'status': [], 'team': p2['team']}
+        },
+        'pending_moves': []
+    }
+    lock = ROOM_LOCKS[room_id] = threading.RLock()  # exists before any event can find the room
+    with lock:
+        GAMES[room_id] = game
         SID_ROOM_MAP[p1['id']] = room_id
         SID_ROOM_MAP[p2['id']] = room_id
 
@@ -396,31 +425,29 @@ def handle_find_match(selected_char_ids):
         emit('game-start', {'roomId': room_id, 'role': 'p1'}, to=p1['id'])
         emit('game-start', {'roomId': room_id, 'role': 'p2'}, to=p2['id'])
 
-        game = GAMES[room_id]
         game_engine.start_turn(game, 'p1')
-
         broadcast_state(game)
 
 
 # --- Socket.IO: in-match actions --------------------------------------------
-# The acting player's room and role always come from current_match() (their
-# own connection), never from the payload.
+# The acting player's room and role always come from locked_match() (their own
+# connection, under the match's lock), never from the payload.
 
 @socketio.on('queue-skill')
 def handle_queue(data):
     try:
         require(data, charId=str, skillId=str, targetPlayerKey=str, targetIndex=int)
-        room_id, game, role = current_match()
-        # Skill ids are only unique within one character's kit, so the client
-        # must say which character acted; queue_move looks up (charId, skillId).
-        result = game_engine.queue_move(game, role, data['charId'], data['skillId'],
-                                        data['targetPlayerKey'], data['targetIndex'])
-        if result and result.get('countered'):
-            socketio.emit('message', result['message'], to=room_id)
-        if game.get('winner'):
-            end_game(room_id, game['winner'])
-        else:
-            broadcast_state(game)
+        with locked_match() as (room_id, game, role):
+            # Skill ids are only unique within one character's kit, so the client
+            # must say which character acted; queue_move looks up (charId, skillId).
+            result = game_engine.queue_move(game, role, data['charId'], data['skillId'],
+                                            data['targetPlayerKey'], data['targetIndex'])
+            if result and result.get('countered'):
+                socketio.emit('message', result['message'], to=room_id)
+            if game.get('winner'):
+                end_game(room_id, game['winner'])
+            else:
+                broadcast_state(game)
     except Exception as e:
         report_error(e, 'queue-skill')
 
@@ -428,9 +455,9 @@ def handle_queue(data):
 def handle_cancel(data):
     try:
         require(data, charId=str)
-        room_id, game, role = current_match()
-        game_engine.cancel_move(game, role, data['charId'])
-        broadcast_state(game)
+        with locked_match() as (room_id, game, role):
+            game_engine.cancel_move(game, role, data['charId'])
+            broadcast_state(game)
     except Exception as e:
         report_error(e, 'cancel-skill')
 
@@ -438,14 +465,14 @@ def handle_cancel(data):
 def handle_commit(data):
     try:
         require(data, paymentList=list)
-        room_id, game, role = current_match()
-        if role != game['turn']:
-            raise GameError("Not your turn!")
-        game_engine.resolve_turn(game, data['paymentList'])
-        if game.get('winner'):
-            end_game(room_id, game['winner'])
-        else:
-            broadcast_state(game)
+        with locked_match() as (room_id, game, role):
+            if role != game['turn']:
+                raise GameError("Not your turn!")
+            game_engine.resolve_turn(game, data['paymentList'])
+            if game.get('winner'):
+                end_game(room_id, game['winner'])
+            else:
+                broadcast_state(game)
     except Exception as e:
         report_error(e, 'commit-turn')
 
