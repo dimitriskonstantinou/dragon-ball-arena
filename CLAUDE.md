@@ -103,6 +103,9 @@ Safe way to run the smoke test without touching the real DB:
 - `resolve_turn` is all-or-nothing: it validates first, then applies via `_apply_turn` against a deep-copy snapshot
   and restores it **in place** on any crash (`GAMES` holds that exact dict, so never rebind it). Keep new
   per-turn mutations inside `_apply_turn` so they're covered by the rollback.
-- Still open (PLAN.md §3): socket payload shapes aren't fully validated, the client still sends `myPlayerKey`,
-  no turn timer/reconnect, `GAMES` is never pruned.
+- **Socket handlers never trust identity from the payload.** Get room + role with `current_match()` (from
+  `request.sid`), validate the payload first with `require(data, field=type, ...)`, and wrap the body in
+  `try: ... except Exception as e: report_error(e, '<event>')`. Follow this pattern for every new event.
+- Still open (PLAN.md §3): no turn timer/reconnect/surrender, `GAMES` is never pruned, the same account can
+  queue twice, no per-room lock.
 - Windows dev machine (Python 3.14): use the `;` separator in `PYTHONPATH`, and avoid Unix-only shell tricks in tooling.

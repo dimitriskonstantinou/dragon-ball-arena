@@ -804,9 +804,12 @@ def queue_move(game_state, player_id, char_id, skill_id, target_pid, target_inde
 
 
 def cancel_move(game_state, player_id, char_id):
-    current_queue = game_state.get('pending_moves', [])
-    new_queue = [m for m in current_queue if m['charId'] != char_id]
-    game_state['pending_moves'] = new_queue
+    # Both teams can field the same character id, so without these checks the
+    # opponent could cancel your queued move during your turn.
+    if game_state['turn'] != player_id:
+        raise GameError("Not your turn!")
+    game_state['pending_moves'] = [m for m in game_state.get('pending_moves', [])
+                                   if not (m['charId'] == char_id and m['playerId'] == player_id)]
     return game_state
 
 

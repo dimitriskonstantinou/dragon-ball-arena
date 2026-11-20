@@ -166,7 +166,10 @@ Each phase goes on its own feature branch off `main` and merges only when green.
   along inside skill `effects`, which Step 7 stopped sending.)
 
 ### Phase 2 — Match lifecycle (P1 #11–17)
-- [ ] Derive role from `request.sid`; validate all socket payloads
+- [x] Derive room + role from `request.sid` (`current_match()`); validate all socket payloads (`require()`);
+  client no longer sends `roomId`/`myPlayerKey`; out-of-turn commit answered — *Step 8* (`feature/step8-socket-validation`)
+- [x] *(found in Step 8)* `cancel_move` let the opponent cancel your queued move (same character id on both teams) — *Step 8*
+- [x] *(found in Step 8)* `find-match` accepted 3 copies of the same character (duplicate ids break charId lookups) — *Step 8*
 - [ ] Queue dedupe by `user_id`
 - [ ] Turn timer + auto-pass; surrender; reconnect grace window
 - [ ] Prune finished rooms; per-room lock

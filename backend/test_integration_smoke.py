@@ -132,7 +132,7 @@ else:
     p1_client.get_received()
     p2_client.get_received()
     p1_client.emit('queue-skill', {
-        'roomId': room_id, 'charId': actor['id'], 'skillId': skill['id'], 'myPlayerKey': 'p1',
+        'charId': actor['id'], 'skillId': skill['id'],
         'targetPlayerKey': 'p2', 'targetIndex': 0
     })
     received = p1_client.get_received()
@@ -154,13 +154,13 @@ else:
 
     # Regression: an empty payment used to cast costed skills for free.
     if skill['cost']:
-        p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
+        p1_client.emit('commit-turn', {'paymentList': []})
         received = p1_client.get_received()
         check("commit-turn with an empty payment for a costed skill is rejected",
               any(e['name'] == 'error-msg' for e in received) and skill['currentCooldown'] == 0,
               (received, skill['currentCooldown']))
 
-    p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': list(game['players']['p1']['resources'])})
+    p1_client.emit('commit-turn', {'paymentList': list(game['players']['p1']['resources'])})
     received = p1_client.get_received()
     update = next((e for e in received if e['name'] == 'update-state'), None)
     check("commit-turn resolves and broadcasts update-state", update is not None)
@@ -197,15 +197,15 @@ else:
         game['players']['p1']['resources'] = resources_for_cost(other_skill['cost'])
         p1_client.get_received()
         p1_client.emit('queue-skill', {
-            'roomId': room_id, 'charId': other_char['id'], 'skillId': shared_skill_id,
-            'myPlayerKey': 'p1', 'targetPlayerKey': 'p1', 'targetIndex': other_index
+            'charId': other_char['id'], 'skillId': shared_skill_id,
+            'targetPlayerKey': 'p1', 'targetIndex': other_index
         })
         received = p1_client.get_received()
         errors = [e for e in received if e['name'] == 'error-msg']
         check(f"queueing {other_char['name']}'s shared skill '{shared_skill_id}' produces no error",
               errors == [], errors)
 
-        p1_client.emit('commit-turn', {'roomId': room_id, 'paymentList': list(game['players']['p1']['resources'])})
+        p1_client.emit('commit-turn', {'paymentList': list(game['players']['p1']['resources'])})
         p1_client.get_received()
         check(f"the shared skill went on cooldown for {other_char['name']} specifically "
               f"(not silently the first team member with that skill id)",
@@ -217,12 +217,36 @@ else:
                   first_member_skill['currentCooldown'] == 0, first_member_skill['currentCooldown'])
 
     # --- Regression: a malformed payload used to send the raw Python error
-    # (e.g. "'myPlayerKey'") to the player and log nothing. ---
+    # (e.g. "'myPlayerKey'") to the player and log nothing. Now it's a
+    # validation message; a genuine crash (simulated) gets the generic one. ---
     p2_client.get_received()
     p2_client.emit('queue-skill', {'roomId': room_id})
     errors = [e['args'][0] for e in p2_client.get_received() if e['name'] == 'error-msg']
+    check("a malformed queue-skill payload gets a clear validation message",
+          len(errors) == 1 and errors[0].startswith("Invalid request"), errors)
+
+    real_queue_move = appmod.game_engine.queue_move
+    def crashing_queue_move(*args, **kwargs):
+        raise RuntimeError("simulated bug")
+    appmod.game_engine.queue_move = crashing_queue_move
+    try:
+        p2_client.emit('queue-skill', {'charId': 'x', 'skillId': 'y', 'targetPlayerKey': 'p1', 'targetIndex': 0})
+        errors = [e['args'][0] for e in p2_client.get_received() if e['name'] == 'error-msg']
+    finally:
+        appmod.game_engine.queue_move = real_queue_move
     check("an unexpected server error shows the player a generic message, not internals",
           errors == [appmod.SERVER_ERROR_MSG], errors)
+
+    # --- The acting player always comes from the connection, never the payload ---
+    p1_client.get_received()
+    p1_client.emit('queue-skill', {'charId': game['players']['p2']['team'][0]['id'], 'skillId': 'x',
+                                   'myPlayerKey': 'p2', 'targetPlayerKey': 'p1', 'targetIndex': 0})
+    errors = [e['args'][0] for e in p1_client.get_received() if e['name'] == 'error-msg']
+    check("claiming the other slot via myPlayerKey is ignored (p1 acting on p2's turn -> Not your turn)",
+          errors == ["Not your turn!"], errors)
+    p1_client.emit('commit-turn', {'paymentList': []})
+    errors = [e['args'][0] for e in p1_client.get_received() if e['name'] == 'error-msg']
+    check("commit-turn out of turn is answered, not silently ignored", errors == ["Not your turn!"], errors)
 
     # --- Regression: a counter-trap used to be reported as an error to the
     # attacker only, so its HP loss wasn't shown to anyone until later. ---
@@ -241,7 +265,7 @@ else:
         p2_client.get_received()
         target_pid = 'p2' if trap_skill.get('target_type') == 'self' else 'p1'
         p2_client.emit('queue-skill', {
-            'roomId': room_id, 'charId': trapped['id'], 'skillId': trap_skill['id'], 'myPlayerKey': 'p2',
+            'charId': trapped['id'], 'skillId': trap_skill['id'],
             'targetPlayerKey': target_pid, 'targetIndex': 0
         })
         got1, got2 = p1_client.get_received(), p2_client.get_received()
@@ -254,15 +278,16 @@ else:
     # --- Regression: a missing paymentList used to crash resolve_turn with a raw TypeError ---
     if not game.get('winner'):
         p2_client.get_received()
-        p2_client.emit('commit-turn', {'roomId': room_id})
+        p2_client.emit('commit-turn', {})
         errors = [e['args'][0] for e in p2_client.get_received() if e['name'] == 'error-msg']
-        check("commit-turn without a paymentList gets a clear rule message", errors == ["Invalid payment!"], errors)
+        check("commit-turn without a paymentList gets a clear validation message",
+              len(errors) == 1 and 'paymentList' in errors[0], errors)
 
     # --- Force the match to a decisive end so we can check DB persistence ---
     for c in game['players']['p2']['team']:
         c['health'] = 0
     p2_client.get_received()
-    p2_client.emit('commit-turn', {'roomId': room_id, 'paymentList': []})
+    p2_client.emit('commit-turn', {'paymentList': []})
     p2_client.get_received()
     check("wiping a team's HP and committing ends the match", game.get('winner') == 'p1', game.get('winner'))
 
@@ -283,6 +308,20 @@ else:
         check("a Match row was created for this game",
               match_row is not None and {match_row.player1_id, match_row.player2_id} == {winner_uid, loser_uid},
               match_row)
+
+    # --- Regression: find-match payloads weren't validated (a non-list
+    # crashed the handler; 3 copies of one character were accepted). ---
+    p1_client.get_received()
+    p1_client.emit('find-match', 5)
+    errors = [e['args'][0] for e in p1_client.get_received() if e['name'] == 'error-msg']
+    check("find-match with a non-list payload gets a clear message", errors == ["You must select exactly 3 characters!"], errors)
+    same = game['players']['p1']['team'][0]['id']
+    p1_client.emit('find-match', [same, same, same])
+    got = p1_client.get_received()
+    errors = [e['args'][0] for e in got if e['name'] == 'error-msg']
+    check("find-match rejects the same character picked 3 times",
+          errors == ["Pick 3 different characters!"] and not any(e['name'] == 'match-status' for e in got), got)
+    check("...and nobody was put in the matchmaking queue", appmod.MATCHMAKING_QUEUE == [], appmod.MATCHMAKING_QUEUE)
 
 print()
 if FAILURES:

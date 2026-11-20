@@ -1070,6 +1070,28 @@ def test_view_for_strips_skill_mechanics():
           all('effects' in s for p in game['players'].values() for c in p['team'] for s in c['skills']))
 
 
+def test_cancel_move_only_cancels_your_own_move_on_your_turn():
+    """Regression: cancel_move had no turn/owner check and matched on charId
+    only -- with the same character on both teams, the opponent could cancel
+    your queued move during your turn."""
+    game = make_game()
+    for p in ('p1', 'p2'):
+        game['players'][p]['team'][0]['id'] = 'goku'  # same character on both teams
+    game['players']['p1']['team'][0]['skills'] = [{"id": "s", "name": "s", "cost": {}, "target_type": "enemy",
+                                                   "effects": [{"type": "damage", "value": 5}],
+                                                   "cooldown": 0, "currentCooldown": 0}]
+    ge.queue_move(game, 'p1', 'goku', 's', 'p2', 0)
+    try:
+        ge.cancel_move(game, 'p2', 'goku')
+        err = None
+    except Exception as e:
+        err = e
+    check("the opponent can't cancel during your turn", isinstance(err, ge.GameError), repr(err))
+    check("...and your queued move survives", len(game['pending_moves']) == 1, game['pending_moves'])
+    ge.cancel_move(game, 'p1', 'goku')
+    check("you can still cancel your own move", game['pending_moves'] == [], game['pending_moves'])
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

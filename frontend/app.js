@@ -3,7 +3,6 @@
 // from, and doesn't connect at all until we know the user is logged in.
 const socket = io({ autoConnect: false });
 let myRole = null;
-let myRoomId = null;
 let selectedCharId = null;
 let selectedSkillId = null;
 let selectedSkillObj = null;
@@ -146,7 +145,6 @@ function findMatch() {
 socket.on('match-status', (msg) => { document.getElementById('lobby-status').innerText = msg; });
 
 socket.on('game-start', (data) => {
-    myRoomId = data.roomId;
     myRole = data.role;
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
@@ -496,10 +494,8 @@ function onEnemyClicked(targetIndex) {
 
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
     socket.emit('queue-skill', {
-        roomId: myRoomId,
         charId: selectedCharId,
         skillId: selectedSkillId,
-        myPlayerKey: myRole,
         targetPlayerKey: enemyRole,
         targetIndex: targetIndex
     });
@@ -512,10 +508,8 @@ function onAllyClicked(targetIndex) {
     if (type !== 'ally' && type !== 'ally_team' && type !== 'self') return;
 
     socket.emit('queue-skill', {
-        roomId: myRoomId,
         charId: selectedCharId,
         skillId: selectedSkillId,
-        myPlayerKey: myRole,
         targetPlayerKey: myRole,
         targetIndex: targetIndex
     });
@@ -533,14 +527,14 @@ function resetTargeting() {
 }
 
 function cancelMove(charId) {
-    socket.emit('cancel-skill', { roomId: myRoomId, myPlayerKey: myRole, charId: charId });
+    socket.emit('cancel-skill', { charId: charId });
 }
 
 // --- PAYMENT MODAL ---
 function openPaymentModal() {
     const moves = currentGameState.pending_moves || [];
     if(moves.length === 0) {
-        socket.emit('commit-turn', { roomId: myRoomId, paymentList: [] });
+        socket.emit('commit-turn', { paymentList: [] });
         return;
     }
     const modal = document.getElementById('payment-modal');
@@ -634,7 +628,7 @@ function removeRandomSelection(slotIndex) {
 
 function submitPayment() {
     const finalPayment = [...payment_auto, ...payment_random_selected];
-    socket.emit('commit-turn', { roomId: myRoomId, paymentList: finalPayment });
+    socket.emit('commit-turn', { paymentList: finalPayment });
     closeModal();
 }
 

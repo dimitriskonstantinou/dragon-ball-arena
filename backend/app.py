@@ -260,32 +260,55 @@ def handle_disconnect():
 
     end_game(room_id, winner, reason="OPPONENT DISCONNECTED! " + winner.upper() + " WINS!")
 
+def require(data, **fields):
+    """Validates a socket payload: a dict whose listed keys have the given
+    types (bools never count as ints). Raises GameError otherwise."""
+    if not isinstance(data, dict):
+        raise GameError("Invalid request.")
+    for key, expected in fields.items():
+        value = data.get(key)
+        if not isinstance(value, expected) or isinstance(value, bool):
+            raise GameError(f"Invalid request: '{key}' is missing or malformed.")
+    return data
+
+
+def current_match():
+    """(room_id, game, role) for this connection, from the server's own
+    records -- never from roomId/myPlayerKey sent by the client."""
+    room_id = SID_ROOM_MAP.get(request.sid)
+    game = GAMES.get(room_id)
+    if not game or game.get('winner'):
+        raise GameError("You are not in a match.")
+    role = next((r for r in ('p1', 'p2') if game['players'][r]['id'] == request.sid), None)
+    if not role:
+        raise GameError("You are not in a match.")
+    return room_id, game, role
+
+
 @socketio.on('find-match')
 def handle_find_match(selected_char_ids):
-    sid = request.sid
-    user = current_user()
-    if not user:
-        emit('error-msg', "You must be logged in to find a match!")
-        return
+    try:
+        sid = request.sid
+        user = current_user()
+        if not user:
+            raise GameError("You must be logged in to find a match!")
+        if sid in SID_ROOM_MAP:
+            raise GameError("You are already in a match!")
+        if any(p['id'] == sid for p in MATCHMAKING_QUEUE):
+            raise GameError("You are already searching for a match!")
+        if (not isinstance(selected_char_ids, list) or len(selected_char_ids) != 3
+                or not all(isinstance(c, str) for c in selected_char_ids)):
+            raise GameError("You must select exactly 3 characters!")
+        # Duplicate ids would break every charId lookup in the match.
+        if len(set(selected_char_ids)) != 3:
+            raise GameError("Pick 3 different characters!")
 
-    if sid in SID_ROOM_MAP:
-        emit('error-msg', "You are already in a match!")
-        return
-    if any(p['id'] == sid for p in MATCHMAKING_QUEUE):
-        emit('error-msg', "You are already searching for a match!")
-        return
-    if len(selected_char_ids) != 3:
-        emit('error-msg', "You must select exactly 3 characters!")
-        return
-
-    available_chars = characters_for_user(user, request.host_url)
-    my_team = []
-    for char_id in selected_char_ids:
-        if char_id in available_chars:
-            my_team.append(copy.deepcopy(available_chars[char_id]))
-
-    if len(my_team) != 3:
-        emit('error-msg', "One or more selected characters aren't unlocked on this account!")
+        available_chars = characters_for_user(user, request.host_url)
+        my_team = [copy.deepcopy(available_chars[c]) for c in selected_char_ids if c in available_chars]
+        if len(my_team) != 3:
+            raise GameError("One or more selected characters aren't unlocked on this account!")
+    except Exception as e:
+        report_error(e, 'find-match')
         return
 
     player_entry = {'id': sid, 'user_id': user.id, 'username': user.username, 'team': my_team}
@@ -330,83 +353,51 @@ def handle_find_match(selected_char_ids):
 
 
 # --- Socket.IO: in-match actions --------------------------------------------
+# The acting player's room and role always come from current_match() (their
+# own connection), never from the payload.
 
 @socketio.on('queue-skill')
 def handle_queue(data):
-    room_id = data.get('roomId')
-    if room_id in GAMES:
-        game = GAMES[room_id]
-        try:
-            my_player_key = data['myPlayerKey']
-            if game['players'].get(my_player_key, {}).get('id') != request.sid:
-                raise GameError("Not authorized for this player slot!")
-
-            # Skill ids are only unique *within one character's own kit* --
-            # several characters intentionally share an id (e.g. the
-            # universal "afterimage_technique" skill). So the character
-            # must come from the client explicitly, not be guessed by
-            # searching the whole team for a matching skill id (that would
-            # silently resolve to whichever team member happens to be
-            # listed first, not the one the player actually clicked).
-            player = game['players'][my_player_key]
-            char_id = data.get('charId')
-            actor_char = next((c for c in player['team'] if c['id'] == char_id), None)
-            if not actor_char or not any(s['id'] == data['skillId'] for s in actor_char['skills']):
-                raise GameError("Character not found for this skill!")
-
-            result = game_engine.queue_move(
-                game,
-                my_player_key,
-                char_id, # Pass the found ID explicitly
-                data['skillId'],
-                data['targetPlayerKey'],
-                data['targetIndex']
-            )
-            if result and result.get('countered'):
-                socketio.emit('message', result['message'], to=room_id)
-            if game.get('winner'):
-                end_game(room_id, game['winner'])
-            else:
-                broadcast_state(game)
-        except Exception as e:
-            report_error(e, 'queue-skill')
+    try:
+        require(data, charId=str, skillId=str, targetPlayerKey=str, targetIndex=int)
+        room_id, game, role = current_match()
+        # Skill ids are only unique within one character's kit, so the client
+        # must say which character acted; queue_move looks up (charId, skillId).
+        result = game_engine.queue_move(game, role, data['charId'], data['skillId'],
+                                        data['targetPlayerKey'], data['targetIndex'])
+        if result and result.get('countered'):
+            socketio.emit('message', result['message'], to=room_id)
+        if game.get('winner'):
+            end_game(room_id, game['winner'])
+        else:
+            broadcast_state(game)
+    except Exception as e:
+        report_error(e, 'queue-skill')
 
 @socketio.on('cancel-skill')
 def handle_cancel(data):
-    room_id = data.get('roomId')
-    if room_id in GAMES:
-        game = GAMES[room_id]
-        try:
-            my_player_key = data['myPlayerKey']
-            if game['players'].get(my_player_key, {}).get('id') != request.sid:
-                raise GameError("Not authorized for this player slot!")
-            game_engine.cancel_move(game, my_player_key, data['charId'])
-            broadcast_state(game)
-        except Exception as e:
-            report_error(e, 'cancel-skill')
+    try:
+        require(data, charId=str)
+        room_id, game, role = current_match()
+        game_engine.cancel_move(game, role, data['charId'])
+        broadcast_state(game)
+    except Exception as e:
+        report_error(e, 'cancel-skill')
 
 @socketio.on('commit-turn')
 def handle_commit(data):
-    room_id = data.get('roomId')
-    payment_list = data.get('paymentList')
-
-    if room_id in GAMES:
-        game = GAMES[room_id]
-        if game.get('winner'): return
-
-        sender_role = None
-        if game['players'].get('p1') and game['players']['p1']['id'] == request.sid: sender_role = 'p1'
-        elif game['players'].get('p2') and game['players']['p2']['id'] == request.sid: sender_role = 'p2'
-
-        if sender_role == game['turn']:
-            try:
-                game_engine.resolve_turn(game, payment_list)
-                if game.get('winner'):
-                    end_game(room_id, game['winner'])
-                else:
-                    broadcast_state(game)
-            except Exception as e:
-                report_error(e, 'commit-turn')
+    try:
+        require(data, paymentList=list)
+        room_id, game, role = current_match()
+        if role != game['turn']:
+            raise GameError("Not your turn!")
+        game_engine.resolve_turn(game, data['paymentList'])
+        if game.get('winner'):
+            end_game(room_id, game['winner'])
+        else:
+            broadcast_state(game)
+    except Exception as e:
+        report_error(e, 'commit-turn')
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
