@@ -105,7 +105,10 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
       except Exception as e:
           report_error(e, 'event')               # GameError -> message; anything else -> logged + generic msg
   ```
-- Module state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`, `ENDED_ROOMS`) is **mutated in place, never rebound**.
+- Module state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`) is **mutated in place, never rebound**.
+- **Every finished match goes through `end_game`**, which pops the room from `GAMES` first (that pop is the
+  "ended exactly once" guard), saves the result, sends the final state + message, then closes the Socket.IO room.
+  Nothing about a finished match stays in memory; don't keep references to finished games elsewhere.
 - One account, one seat: `find-match` rejects accounts already queued or in an unfinished match.
 - Use `log` (logging), not `print`, in new code.
 

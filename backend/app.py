@@ -148,9 +148,6 @@ def persist_match_result(game, winner_role):
     db.session.commit()
 
 
-ENDED_ROOMS = set()
-
-
 def broadcast_state(game):
     """Sends each player their own filtered view (game_engine.view_for) --
     never the raw state, which holds hidden info: the opponent's queued
@@ -159,26 +156,26 @@ def broadcast_state(game):
         socketio.emit('update-state', game_engine.view_for(game, role), to=game['players'][role]['id'])
 
 def end_game(room_id, winner, reason=None):
-    game = GAMES.get(room_id)
-    # NOTE: game_engine.resolve_turn() sets game['winner'] itself the moment
-    # a team is wiped, *before* this function ever runs -- so "winner is
-    # already set" can't be used to detect "this room was already cleaned
-    # up," or this whole function would always no-op on the normal (combat)
-    # win path and only ever work for the disconnect path. Track completion
-    # separately instead.
-    if not game or room_id in ENDED_ROOMS:
+    """Finishes a match exactly once: records the result, sends both players
+    the final state + message, then forgets the room entirely (GAMES entry,
+    sid mappings, Socket.IO room) so finished matches don't pile up in memory.
+    The room is popped first: a second call (e.g. a disconnect racing the final
+    commit) finds nothing and returns. ('winner' can't be the guard -- the
+    engine sets it before this runs.) Late events from either player then get
+    "You are not in a match." from current_match()."""
+    game = GAMES.pop(room_id, None)
+    if not game:
         return
-    ENDED_ROOMS.add(room_id)
     game['winner'] = winner
     for p_key in ('p1', 'p2'):
-        sid = game['players'][p_key]['id']
-        SID_ROOM_MAP.pop(sid, None)
+        SID_ROOM_MAP.pop(game['players'][p_key]['id'], None)
 
     persist_match_result(game, winner)
 
     broadcast_state(game)
     message = f"GAME OVER! {winner.upper()} WINS!" if not reason else reason
     socketio.emit('message', message, to=room_id)
+    socketio.close_room(room_id)
 
 
 # --- static file / photo serving --------------------------------------------

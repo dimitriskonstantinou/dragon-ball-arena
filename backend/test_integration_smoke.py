@@ -396,6 +396,38 @@ else:
               match_row is not None and {match_row.player1_id, match_row.player2_id} == {winner_uid, loser_uid},
               match_row)
 
+    # --- Step 13 regression: finished matches used to stay in memory forever
+    # (GAMES, ENDED_ROOMS and the Socket.IO room; ~30 KB each). ---
+    socket_rooms = appmod.socketio.server.manager.rooms.get('/', {})
+    check("a finished match is removed from memory", room_id not in appmod.GAMES, list(appmod.GAMES))
+    check("...and its Socket.IO room is closed", room_id not in socket_rooms)
+    check("...and neither player is still mapped to it",
+          not any(r == room_id for r in appmod.SID_ROOM_MAP.values()))
+    p1_client.get_received()
+    p1_client.emit('commit-turn', {'paymentList': []})
+    errors = [e['args'][0] for e in p1_client.get_received() if e['name'] == 'error-msg']
+    check("a late action after the match ended gets a clear answer", errors == ["You are not in a match."], errors)
+
+    def play_quick_match():
+        """Both players queue again; the match ends at once (p2's team wiped)."""
+        p1_client.get_received(); p2_client.get_received()
+        p1_client.emit('find-match', team_ids)
+        p2_client.emit('find-match', team_ids)
+        start = next((e['args'][0] for e in p1_client.get_received() if e['name'] == 'game-start'), None)
+        if not start:
+            return None
+        g = appmod.GAMES[start['roomId']]
+        for ch in g['players']['p2']['team']:
+            ch['health'] = 0
+        (p1_client if start['role'] == 'p1' else p2_client).emit('commit-turn', {'paymentList': []})
+        return start['roomId'] if g.get('winner') else None
+
+    finished = [play_quick_match() for _ in range(20)]
+    check("the same two players can play again and again (20 more matches)", all(finished), finished)
+    check("...and after all of them no match is left in memory",
+          appmod.GAMES == {} and not any(r in appmod.socketio.server.manager.rooms.get('/', {}) for r in finished),
+          list(appmod.GAMES))
+
     # --- Regression: find-match payloads weren't validated (a non-list
     # crashed the handler; 3 copies of one character were accepted). ---
     p1_client.get_received()

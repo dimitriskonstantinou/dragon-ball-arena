@@ -36,7 +36,7 @@ Browser (frontend/index.html + app.js + style.css, vanilla JS, socket.io client 
   │ WS    socket.io events (same cookie authenticates the socket)
   ▼
 backend/app.py  (Flask + Flask-SocketIO, async_mode=threading, single process)
-  │ in-memory: GAMES{room→state}, MATCHMAKING_QUEUE[], SID_ROOM_MAP{sid→room}, ENDED_ROOMS{}
+  │ in-memory: GAMES{room→state} (live matches only, since Step 13), MATCHMAKING_QUEUE[], SID_ROOM_MAP{sid→room}
   │ handlers: connect, disconnect, find-match, queue-skill, cancel-skill, commit-turn
   │ → validate payload (require) → identify player (current_match, from request.sid)
   │ → call game_engine → broadcast_state (per-player view_for) / report_error
@@ -137,8 +137,11 @@ A player can stall a match forever; the opponent's only exit is disconnecting, w
 `handle_disconnect` ends the match immediately. A page reload or a phone switching networks loses the match. Blocks going online.
 **Fix:** grace window keyed by `user_id`, re-attach the new socket, re-send state. Depends on: BE-3.
 
-**BE-3 — HIGH — Finished matches are never removed from memory (verified)**
+**BE-3 — HIGH — Finished matches are never removed from memory (verified)** — ✅ FIXED in Step 13
 `GAMES` and `ENDED_ROOMS` only grow. Measured ~27 KB retained per finished match: about 270 MB/day at 10k matches/day.
+*Step 13:* a third copy was found, Socket.IO's room membership (players stayed in every old match room while
+connected). Re-measured with 200 real matches through the handlers: ~30 KB/match retained, 220/220 matches kept.
+After the fix: 0 rooms left after 1,020 matches; memory growth flat (161 KB fixed cache warm-up, not per match).
 **Fix:** remove the room after the final broadcast; handle late events cleanly. Safe now: yes.
 
 **BE-4 — MEDIUM — No surrender (by reading).** Fix: `surrender` event → `end_game`.
