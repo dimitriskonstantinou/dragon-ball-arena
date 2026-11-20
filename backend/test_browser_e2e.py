@@ -117,6 +117,8 @@ def queue_skills(page):
     """For each of my characters, queue its first usable skill (damage first)."""
     queued = 0
     for i in range(page.locator('#my-team .char-card').count()):
+        if game_over(page):  # a counter-trap can end the match mid-queue
+            break
         card = page.locator('#my-team .char-card').nth(i)
         buttons = card.locator('.skill-btn:not([disabled])')
         if buttons.count() == 0:
@@ -205,6 +207,8 @@ def test_full_match(browser, url):
     while turns < MAX_TURNS and not any(game_over(p) for p in pages):
         active = p1 if is_my_turn(p1) else p2
         moves += queue_skills(active)
+        if any(game_over(p) for p in pages):
+            break  # e.g. a hidden counter-trap killed the last character while queueing
         end_turn(active)
         wait_for_turn_change(pages, active)
         turns += 1

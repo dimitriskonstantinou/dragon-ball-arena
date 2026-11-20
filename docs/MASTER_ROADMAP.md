@@ -46,7 +46,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 | 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) | — | Rule + text + UI cue + tests consistent |
 | 1.11 ENG-3: reactive defenses apply **per skill** (decided) | — | Knee Attack fully dodged by one dodge |
 | 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
-| **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | **12a ✅ done**, 12b next; see below |
+| ✅ **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | **Done in Steps 12a + 12b**; 12c (socket payloads) later |
 
 **1.13 Content pipeline (decided architecture).** One authoritative source: version-controlled JSON files, one per
 character with its kit inside, validated by Pydantic models (`content_schema.py`, which also generate the JSON Schema
@@ -61,9 +61,10 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 - **12a ✅ (Step 12a):** content files + Pydantic models + generated schemas + loader with cross-reference checks;
   5 characters converted (exact equality with the old dicts); `characters.py` is a shim over the loader (so the JSON is
   already the only copy); `test_content.py` (53 checks incl. every skill castable); Playwright browser tests.
-- **12b (next):** app/engine read the in-memory catalog instead of the DB `skills_json`; `characters` table becomes an
-  id registry synced automatically at startup (inactive instead of deleted); remove the shim and `ensure_db_ready`
-  seeding duplication; lobby list uses display fields only (BE-10).
+- **12b ✅ (Step 12b):** gameplay reads `content_loader.catalog()` (in memory) instead of the DB; `characters` table is an
+  id registry synced at every startup (never deleted from; legacy `skills_json` emptied); shim and seeding duplication
+  removed; lobby list display-only (BE-10, 10,343 → 7,437 B); connect/find-match 3 → 1 SQL statement each, 0 roster reads;
+  every account sees every active character (TEMP unlock policy, no query).
 - **12c (later, small):** Pydantic models for socket payloads, replacing `require()` with identical messages.
 
 **Measurable:** probe has 0 engine items; engine coverage ≥ 90%.
@@ -110,7 +111,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | 4.2 Strip cost text from descriptions | CON-1 | measure "hardcoded cost text" = 0 |
 | 4.3 Class-tagging rule + content-test enforcement | CON-3 | Every skill tagged per rule |
 | 4.4 Dead code / duplicates (primed restore, `effect` fallback, `aoe_damage`) | ENG-8 | pyflakes 0; no behavior change |
-| 4.5 Lobby list uses the display-field stripping | BE-10 | `character-list` ≤ 7.7 KB for 5 chars |
+| ✅ 4.5 Lobby list uses the display-field stripping — *Step 12b* | BE-10 | Done: 7,437 B for 5 chars |
 | 4.6 Image normalization + resize tool | AST-1 | Misnamed = 0, assets ≤ 400 KB |
 | 4.7 Character metadata (role, bio, saga) | CON-5 | Shown in roster screen (P7) |
 | 4.8 README refresh (turn model, effect table, limitations) | docs drift | README matches code |
@@ -164,7 +165,7 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.13 / Step 12b: finish the content pipeline.** Removes the stale-DB problem (CON-6) for good and takes all roster
-reads off the database (scales better, nothing to reseed). Then Phase 2 (room cleanup, timer, reconnect) before going
-online. Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
-Phase 0's 0.2–0.3 (merge, reseed) remain the user's; 0.1 is now automated.
+**2.1 / Step 13: remove finished matches from memory (BE-3).** Measured leak of ~27 KB per finished match, it blocks
+going online, and the turn timer (2.5) and reconnect (2.6) build on a clean end-of-match path. Then 2.2–2.6.
+Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
+Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

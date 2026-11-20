@@ -45,7 +45,9 @@ backend/game_engine.py  (pure functions over plain dicts, no Flask/DB)
   start_turn → queue_move / cancel_move → resolve_turn (validate → snapshot → _apply_turn → check_winner)
   apply_effect (one if/elif over ~45 effect types) · tick_statuses · view_for
   ▲
-backend/characters.py  (content: CHARACTERS dict)  ──seed_db.py──▶  SQLite characters table (skills as JSON)
+backend/content/*.json ──content_loader (Pydantic)──▶ catalog() in memory ──▶ app/engine (teams)
+                                                      └──startup sync──▶ SQLite characters table (id registry only)
+(updated 2026-11-20, Steps 12a/12b; this diagram originally showed characters.py → DB skills blob)
 backend/models.py  (SQLAlchemy: User, UserStats, Character, UserCharacter, Mission*, UserMissionProgress*, Match)
                     * schema only, unused
 ```
@@ -55,7 +57,7 @@ backend/models.py  (SQLAlchemy: User, UserStats, Character, UserCharacter, Missi
 | 1 | Frontend ↔ backend | Auth over JSON HTTP; everything in-match over Socket.IO. Client sends **intents** (`queue-skill {charId, skillId, targetPlayerKey, targetIndex}`, `cancel-skill {charId}`, `commit-turn {paymentList}`, `find-match [ids]`); server pushes `update-state` (per-player view), `message`, `error-msg`, `game-start`, `match-status`, `character-list`, `auth-required`. |
 | 2 | Request processing | Each socket handler: `require()` validates shape → `current_match()` derives room+role from the connection → engine call → `broadcast_state()`. Errors: `GameError` → message to sender; anything else → logged traceback + generic message (`report_error`). |
 | 3 | Game engine | Alternating turns. `start_turn` ticks all statuses (1 turn = 2 ticks), rolls Ki (1 die on the very first turn, then 1 per living character), decrements the active player's cooldowns. `queue_move` validates everything; `resolve_turn` validates payment, snapshots, applies moves in queue order, checks the winner, starts the next turn. |
-| 4 | Characters/abilities | Dicts in `characters.py`; a skill = `{id, name, description, cost, target_type, classes?, image, effects[], cooldown, currentCooldown, locked?}`. Effects are typed dicts interpreted by `apply_effect`. Skill ids are unique only within a kit. |
+| 4 | Characters/abilities | *(Since Steps 12a/12b: JSON files in `backend/content/`, validated by Pydantic, served from an in-memory catalog.)* Originally dicts in `characters.py`; a skill = `{id, name, description, cost, target_type, classes?, image, effects[], cooldown, currentCooldown, locked?}`. Effects are typed dicts interpreted by `apply_effect`. Skill ids are unique only within a kit. |
 | 5 | Team creation | `find-match`: logged in, not already queued/in a match (per account), exactly 3 distinct ids, all unlocked for the account (every account currently unlocks everything). Teams are deep copies of DB rows. |
 | 6 | Combat actions | Queue (validated: turn, actor alive, skill exists/unlocked, not stunned/silenced, off cooldown, legal target, Ki affordable together with the queue, not restricted) → commit (payment must match exactly) → all-or-nothing resolution. |
 | 7 | State storage | Live matches: process memory only (lost on restart, never pruned). Accounts/stats/matches/roster: SQLite via SQLAlchemy. |
@@ -157,7 +159,7 @@ Handlers mutate shared dicts. Two near-simultaneous `commit-turn` events could i
 **BE-9 — IMPROVEMENT — `app.py` mixes auth, static serving, matchmaking and match handlers (414 lines)**
 Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the timer/reconnect work lands.
 
-**BE-10 — LOW — Lobby `character-list` still sends skill `effects` (measured)**
+**BE-10 — LOW — Lobby `character-list` still sends skill `effects` (measured)** — ✅ FIXED in Step 12b (10,343 → 7,437 B)
 10,343 B for 5 characters, of which 2,646 B are `effects` the client never reads (Step 7 stripped them only from match updates).
 **Fix:** reuse the same display-field stripping for the lobby list.
 
@@ -216,7 +218,7 @@ There's no per-skill usage or win-rate data. **Fix:** log per-match skill usage 
 
 **CON-5 — LOW — No character metadata** (role, short bio, saga label) for a roster/details screen.
 
-**CON-6 — MEDIUM (local only) — Local DB is stale (verified)** — *content now has one source (Step 12a); the stale DB copy itself goes away in Step 12b*
+**CON-6 — MEDIUM (local only) — Local DB is stale (verified)** — ✅ FIXED in Steps 12a/12b: gameplay no longer reads the DB copy; the registry syncs at startup
 `game.db` has 3 characters (Goku, Piccolo, Raditz); `characters.py` has 5. Tien and Yamcha can't be picked locally until `seed_db.py` runs.
 Root cause: two sources of truth (file + DB). **Fix:** reseed now; in production the deploy release step syncs automatically (DEPLOY_PLAN).
 
@@ -229,6 +231,7 @@ Full detail in [UI_PLAN.md](UI_PLAN.md). Re-verified on 2026-11-20:
 **FE-1 — HIGH (UX) — You can't see what the opponent did.** No battle events from the server; HP just changes.
 **FE-2 — MEDIUM — Game over is a dead end and hides the final hit (verified by reading)**
 `update-state` returns before redrawing when `game.winner` is set (app.js ~L167), so the board keeps the pre-finish HP. There's also no "back to lobby"; the player must reload.
+*Seen in the browser tests (2026-11-20):* after a lethal counter-trap, the loser's board still showed the dead character at 5 HP with an enabled skill button next to "YOU LOSE!".
 **FE-3 — MEDIUM — Client affordability math differs from the server's** (`calculateRemainingDice` spends random costs with `pool.shift()`), so a skill can look usable and then be rejected, or the reverse.
 **FE-4 — MEDIUM — Not responsive, not accessible (measured):** 0 media queries, 0 ARIA attributes, click-only `div`s, color-only Ki dice (red/green).
 **FE-5 — MEDIUM — Manual dice picking for every "any type" cost**, every turn (~11 clicks per typical turn).

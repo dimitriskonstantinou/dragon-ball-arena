@@ -35,4 +35,6 @@ coverage don't drop, pyflakes doesn't grow.
 
 | 12a | `feature/step12a-content-pipeline` | Content as JSON files (single source) + Pydantic validation + VS Code schemas; Playwright browser tests; Spirit Ball icon 404 fixed | checks 211→279 (+content 53, +browser 14, smoke +1); cov 86→88%; probe 4=4 |
 
-**Merged into `dev`:** none of steps 1–12a yet (user merges in order).
+| 12b | `feature/step12b-catalog-runtime` | Gameplay reads the in-memory catalog; `characters` table = id registry synced at startup (never deleted); shim removed; lobby display-only; all-unlocked policy applied to old accounts | SQL per connect/find-match 3→1 (0 roster reads); lobby 10,343→7,437 B; smoke 45→53; cov 88→90% |
+
+**Merged into `dev`:** none of steps 1–12b yet (user merges in order).

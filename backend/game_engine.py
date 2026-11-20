@@ -582,14 +582,21 @@ def view_for(game_state, role):
         view['pending_moves'] = []
     for char in view['players'][role]['team']:
         char['status'] = [s for s in char.get('status', []) if not s.get('invisible')]
-    # Skill mechanics are server-only: the client renders name/description/
-    # cost/cooldown and never reads 'effects' or prime_skill's 'base_*' backups.
     for player in view['players'].values():
         for char in player['team']:
-            for skill in char.get('skills', []):
-                for key in [k for k in skill if k == 'effects' or k.startswith('base_')]:
-                    del skill[key]
+            strip_skill_internals(char)
     return view
+
+
+def strip_skill_internals(character):
+    """Removes server-only skill data from a character dict IN PLACE (pass a
+    copy) and returns it. The client renders name/description/cost/cooldown
+    and never reads 'effects' or prime_skill's 'base_*' backups. Used for
+    both match views and the lobby roster, so the rule lives in one place."""
+    for skill in character.get('skills', []):
+        for key in [k for k in skill if k == 'effects' or k.startswith('base_')]:
+            del skill[key]
+    return character
 
 
 # --- turn lifecycle ----------------------------------------------------------
@@ -845,7 +852,7 @@ def resolve_turn(game_state, payment_list):
         resolved_moves.append((move, actor_char, skill))
 
     # --- 2. Apply all-or-nothing: on any unexpected crash (a bug, e.g. a
-    # malformed effect in characters.py), restore the pre-commit state IN
+    # effect the content checks didn't catch), restore the pre-commit state IN
     # PLACE -- app.py's GAMES holds this exact dict -- and re-raise so the
     # error gets logged. The player can then retry or cancel.
     snapshot = copy.deepcopy(game_state)

@@ -179,3 +179,15 @@ def load_catalog(content_dir=cs.CONTENT_DIR, photos_dir=PHOTOS_DIR):
     if problems:
         raise ContentError(problems)
     return catalog
+
+
+_CATALOG = None
+
+
+def catalog():
+    """The validated roster, loaded once per process and shared read-only.
+    Callers that modify a character (teams, image URLs) must deep-copy it."""
+    global _CATALOG
+    if _CATALOG is None:
+        _CATALOG = load_catalog()
+    return _CATALOG

@@ -434,8 +434,8 @@ def test_win_condition_still_works():
 
 def test_content_smoke():
     """Load the real character roster and make sure every skill's effects
-    reference known effect types (catches typos in characters.py)."""
-    import characters
+    reference known effect types (catches typos in the content files)."""
+    import content_loader
     known_types = {
         'damage', 'piercing_damage', 'affliction_damage', 'self_damage', 'aoe_damage', 'dot',
         'heal', 'hot', 'team_heal', 'heal_block', 'stun', 'silence', 'defense', 'remove_defense',
@@ -450,33 +450,33 @@ def test_content_smoke():
         'damage_ignore_invuln', 'expiring_defense', 'mark_for_counter',
     }
     bad = []
-    for cid, char in characters.CHARACTERS.items():
+    for cid, char in content_loader.catalog().items():
         for skill in char['skills']:
             for effect in skill.get('effects', []):
                 if effect['type'] not in known_types:
                     bad.append((cid, skill['id'], effect['type']))
-    check("every skill effect type in characters.py is recognized by the engine", bad == [], bad)
+    check("every skill effect type in the content is recognized by the engine", bad == [], bad)
 
     # description_template needs a computed {value}; only scale_skill_by_stack
     # has one (it once sat on set_skill_cost_on_stack and raised NameError).
     misplaced = [(cid, skill['id'], effect['type'])
-                 for cid, char in characters.CHARACTERS.items() for skill in char['skills']
+                 for cid, char in content_loader.catalog().items() for skill in char['skills']
                  for effect in skill.get('effects', [])
                  if 'description_template' in effect and effect['type'] != 'scale_skill_by_stack']
     check("description_template is only used on scale_skill_by_stack", misplaced == [], misplaced)
 
 
 def test_goku_saiyan_saga_kit():
-    """Exercises Goku's real kit straight from characters.py (not synthetic
+    """Exercises Goku's real kit straight from the content files (not synthetic
     skills), so a future balance tweak that breaks the intended interactions
     gets caught. Kaioken is a permanent, repeatable, escalating transform
     (not a temporary buff) that rewrites Kamehameha and Kaioken Attack in
     place -- this is the main thing worth regression-testing here."""
-    import characters
-    if 'goku_saiyan_saga' not in characters.CHARACTERS:
+    import content_loader
+    if 'goku_saiyan_saga' not in content_loader.catalog():
         print("  SKIPPED: goku_saiyan_saga not in the current roster")
         return
-    skills_by_id = {s['id']: s for s in characters.CHARACTERS['goku_saiyan_saga']['skills']}
+    skills_by_id = {s['id']: s for s in content_loader.catalog()['goku_saiyan_saga']['skills']}
     check("goku_saiyan_saga has the 3 signature skills + the universal one",
           set(skills_by_id) == {'kamehameha', 'kaioken', 'kaioken_attack', 'afterimage_technique'},
           set(skills_by_id))
@@ -584,12 +584,12 @@ def test_tien_best_friend_primes_tri_beam():
     version -- unlike Kaioken's permanent transform, this must revert, either
     when Tri-Beam actually gets used (consumed) or when the priming window
     runs out unused (expired). Both paths are tested against Tien's real
-    data from characters.py."""
-    import characters
-    if 'tien_saiyan_saga' not in characters.CHARACTERS:
+    data from the content files."""
+    import content_loader
+    if 'tien_saiyan_saga' not in content_loader.catalog():
         print("  SKIPPED: tien_saiyan_saga not in the current roster")
         return
-    skills_by_id = {s['id']: s for s in characters.CHARACTERS['tien_saiyan_saga']['skills']}
+    skills_by_id = {s['id']: s for s in content_loader.catalog()['tien_saiyan_saga']['skills']}
     base_tri_beam_cost = dict(skills_by_id['tri_beam']['cost'])
     base_tri_beam_effects = copy.deepcopy(skills_by_id['tri_beam']['effects'])
 
@@ -654,11 +654,11 @@ def test_yamcha_puar_becomes_spirit_ball_for_a_window():
     combo payoff): using the primed 'Spirit Ball' does NOT immediately
     revert it back to Puar -- it stays Spirit Ball (gated only by its own
     cooldown) until the full 3-turn window itself runs out."""
-    import characters
-    if 'yamcha_saiyan_saga' not in characters.CHARACTERS:
+    import content_loader
+    if 'yamcha_saiyan_saga' not in content_loader.catalog():
         print("  SKIPPED: yamcha_saiyan_saga not in the current roster")
         return
-    skills_by_id = {s['id']: s for s in characters.CHARACTERS['yamcha_saiyan_saga']['skills']}
+    skills_by_id = {s['id']: s for s in content_loader.catalog()['yamcha_saiyan_saga']['skills']}
     base_puar_cost = dict(skills_by_id['puar']['cost'])
     base_puar_name = skills_by_id['puar']['name']
     base_puar_cooldown = skills_by_id['puar']['cooldown']
@@ -1047,11 +1047,11 @@ def test_set_skill_cost_on_stack_updates_text():
 def test_view_for_strips_skill_mechanics():
     """Skill effects (and prime_skill's base_* backups) are server-only; they
     were most of the payload and the client never reads them."""
-    import characters
+    import content_loader
     game = make_game()
     a = game['players']['p1']['team'][0]
-    a['skills'] = copy.deepcopy(characters.CHARACTERS['tien_saiyan_saga']['skills'])
-    game['players']['p2']['team'][0]['skills'] = copy.deepcopy(characters.CHARACTERS['goku_saiyan_saga']['skills'])
+    a['skills'] = copy.deepcopy(content_loader.catalog()['tien_saiyan_saga']['skills'])
+    game['players']['p2']['team'][0]['skills'] = copy.deepcopy(content_loader.catalog()['goku_saiyan_saga']['skills'])
     play(game, 'p1', 'A', 'best_friend', 'p1', 0)  # primes Tri-Beam -> creates base_* backups
     check("(setup) priming created base_* backups on the live skill",
           any(k.startswith('base_') for s in a['skills'] for k in s))
@@ -1097,12 +1097,12 @@ def test_team_wiped_at_turn_start_loses_immediately():
     could wipe a team without any winner being declared -- the match went on
     with a dead team, and if the wiped player held the turn they could stall
     forever."""
-    import characters
+    import content_loader
     # Real content: Piccolo's Special Beam Cannon detonates at the start of his next turn.
     game = make_game()
     a = game['players']['p1']['team'][0]
     b = game['players']['p2']['team'][0]
-    a['skills'] = copy.deepcopy(characters.CHARACTERS['piccolo_saiyan_saga']['skills'])
+    a['skills'] = copy.deepcopy(content_loader.catalog()['piccolo_saiyan_saga']['skills'])
     b['health'] = 30
     play(game, 'p1', 'A', 'special_beam_cannon', 'p2', 0)
     check("(setup) the charge doesn't kill yet", b['health'] == 30 and not game['winner'])

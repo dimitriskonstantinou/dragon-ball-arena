@@ -30,10 +30,9 @@ backend/
     shared_abilities.json     skills shared roster-wide (afterimage_technique)
     *.schema.json             GENERATED from content_schema.py -- never edit by hand
   content_schema.py         Pydantic models of the content format (validation only, no game logic)
-  content_loader.py         load_catalog(): load + validate + resolve shared skills -> engine-shaped dicts
-  characters.py             Compatibility layer: CHARACTERS = load_catalog() (no data here)
+  content_loader.py         load_catalog() validates + resolves; catalog() = the roster, loaded once per process
   models.py                 SQLAlchemy models
-  seed_db.py                Sync characters table from the content (never touches accounts)
+  seed_db.py                Manual registry sync (the server already syncs at startup; rarely needed)
   test_game_engine.py       Engine unit + per-character kit tests (no DB)
   test_content.py           Content: real roster loads, schema current, invalid cases, every skill castable
   test_integration_smoke.py Full stack in-process: HTTP + Socket.IO + DB
@@ -58,7 +57,7 @@ python test_content.py                 # content validation
 DATABASE_URL=sqlite:///<temp>/smoke.db python test_integration_smoke.py   # ALWAYS set a temp DB (default = real game.db)
 python test_browser_e2e.py             # ~15 s; own server + temp DB
 python content_schema.py               # after changing content_schema.py: regenerate content/*.schema.json
-python seed_db.py                      # only when the user asks (batch rule)
+python seed_db.py                      # rarely needed: the server syncs the registry on start
 python ../tools/measure.py --save ../docs/measurements/<date>-<step>-before.md   # or from repo root: python tools/measure.py
 python ../tools/probe_exploits.py      # CONFIRMED = bug still present; uses a temp DB
 ```
@@ -170,11 +169,18 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
 - Validation = shape (Pydantic: unknown/typo'd fields rejected, ranges) + cross-references (images exist, skill_id /
   effect_index / stack_key / prime marks resolve, locked skills unlockable, universal skill exactly once). All
   problems are reported together; the server refuses to start on invalid content.
-- After any content change: `test_content.py` + `test_game_engine.py`. Until Step 12b, the running game still reads
-  the **DB copy**, so a reseed is needed to see changes locally (production syncs on deploy).
+- After any content change: `test_content.py` + `test_game_engine.py`, then restart the server. Gameplay reads the
+  in-memory `content_loader.catalog()` (never the DB), so there is nothing to reseed.
+- `catalog()` is shared and read-only: anything that changes a character (teams, image URLs) must `copy.deepcopy` it
+  first (`characters_for_user` does; a smoke check guards it).
 
 ### Database
-- SQLAlchemy ORM only, no raw SQL. `seed_db.py` touches only `characters`. Mission tables are intentional,
+- The `characters` table is an **id registry** (FK target for unlocks/missions), synced at every startup by
+  `app.sync_character_registry()`: insert/update, **never delete** (removed characters stay registered and are just
+  not offered). Its `skills_json` column is legacy (always `'[]'`), dropped with the first migration.
+- Unlocks: `app.unlocked_character_ids()` = every active character (TEMP policy until missions; no DB query).
+  `UserCharacter` rows are still written on register for the future mission system.
+- SQLAlchemy ORM only, no raw SQL. The registry sync touches only `characters`. Mission tables are intentional,
   unused groundwork (don't delete). No migrations yet: adding Flask-Migrate is required before the first schema
   change that must survive (DB-1).
 
@@ -211,8 +217,8 @@ migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end
 - **Python/Flask/Socket.IO stays** (DEPLOY_PLAN §1): turn-based traffic is light; one process scales far.
 - **Content architecture (2026-11-20, roadmap 1.13):** version-controlled JSON files (one per character, kit inside,
   Pydantic validation + generated JSON Schema, shared skills referenced) are the single source of truth.
-  **12a done:** files + validation + `characters.py` shim. **12b next:** gameplay reads the in-memory catalog (never
-  the DB); the `characters` table becomes an id registry for FKs (removed characters marked inactive, not deleted).
+  **Done (Steps 12a + 12b):** gameplay reads the in-memory catalog (never the DB); the `characters` table is an id
+  registry for FKs, synced at startup, never deleted from; the lobby gets display fields only.
 - **Rules decided (2026-11-20, delegated to Claude):** mutual KO = draw; invulnerable = untargetable except skills
   that explicitly ignore invulnerability; dodge/counter/reflect apply per skill, not per effect.
 - **Tech stack (2026-11-20):** keep Flask + Flask-SocketIO + the Socket.IO protocol (no FastAPI); Pydantic for

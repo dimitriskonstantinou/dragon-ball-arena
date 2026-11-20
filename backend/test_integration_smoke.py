@@ -98,15 +98,73 @@ def all_image_urls(char):
         yield from walk(s.get('effects', []))
 
 
+with appmod.app.app_context():
+    user1 = appmod.User.query.filter_by(username=f'p1_{suffix}').first()
+    server_side = appmod.characters_for_user(user1, 'http://localhost/')
+
 # Regression: primed_image (e.g. Yamcha's Spirit Ball icon) used to be sent as a
 # bare filename, so the browser 404'd on it (found by the Playwright test).
-relative = [u for c in available for u in all_image_urls(c) if not u.startswith('http')]
-check("every image URL sent to clients is absolute, including primed skill images", relative == [], relative)
+# Checked on the server-side team data, which still carries the effects.
+urls = [u for c in server_side.values() for u in all_image_urls(c)]
+relative = [u for u in urls if not u.startswith('http')]
+check("every image URL in match teams is absolute, including primed skill images",
+      relative == [] and any('SpiritBall' in u for u in urls) == ('yamcha_saiyan_saga' in server_side), relative)
+
+# --- Step 12b: the roster comes from the in-memory content catalog ---
+catalog = appmod.CATALOG
+check("character-list offers exactly the active content catalog, in order",
+      [c['id'] for c in available] == list(catalog), ([c['id'] for c in available], list(catalog)))
+check("the lobby list carries display fields only (no skill effects / base_* backups)",
+      all(not any(k == 'effects' or k.startswith('base_') for k in s) for c in available for s in c['skills']))
+check("building teams never modifies the shared catalog (image paths stay relative)",
+      all(not c['image'].startswith('http') for c in catalog.values()))
 
 with appmod.app.app_context():
-    db_count = appmod.Character.query.count()
-check("character-list matches what's actually seeded in the DB", len(available) == db_count,
-      (len(available), db_count))
+    registry = {row.id: row for row in appmod.Character.query.all()}
+check("the characters table registers every active character automatically (no manual reseed)",
+      set(catalog) <= set(registry), set(catalog) - set(registry))
+check("the registry holds no stale skills copy", all(row.skills_json == '[]' for row in registry.values()))
+
+# Removing a character from content: it stays registered (accounts may reference
+# it) but is no longer offered. Simulated with a reduced catalog.
+removed_id = next(iter(catalog))
+reduced = {cid: c for cid, c in catalog.items() if cid != removed_id}
+real_catalog = appmod.CATALOG
+appmod.CATALOG = reduced
+try:
+    with appmod.app.app_context():
+        appmod.sync_character_registry(reduced)
+        still_registered = appmod.db.session.get(appmod.Character, removed_id) is not None
+        offered = appmod.characters_for_user(user1, 'http://localhost/')
+finally:
+    appmod.CATALOG = real_catalog
+check("a character removed from content stays in the registry (never deleted)", still_registered)
+check("...but is no longer offered to players", removed_id not in offered and len(offered) == len(reduced))
+
+# An account created before a character existed still gets it (TEMP all-unlocked policy).
+with appmod.app.app_context():
+    appmod.UserCharacter.query.filter_by(user_id=user1.id).filter(
+        appmod.UserCharacter.character_id != removed_id).delete()
+    appmod.db.session.commit()
+    check("an older account still gets characters added after it registered",
+          list(appmod.characters_for_user(user1, 'http://localhost/')) == list(catalog))
+
+# Connecting no longer reads the characters table (roster comes from memory).
+from sqlalchemy import event
+statements = []
+with appmod.app.app_context():
+    sql_engine = appmod.db.engine
+listener = lambda conn, cur, stmt, *a: statements.append(stmt.lower())
+event.listen(sql_engine, 'before_cursor_execute', listener)
+try:
+    extra = appmod.socketio.test_client(appmod.app, flask_test_client=flask_client1)
+    extra.get_received()
+    extra.disconnect()
+finally:
+    event.remove(sql_engine, 'before_cursor_execute', listener)
+reads_characters = [st for st in statements if ' characters' in st and 'user_characters' not in st]
+check("connecting doesn't query the characters table", reads_characters == [] and len(statements) <= 1,
+      statements)
 
 if len(available) < 3:
     print(f"\nSKIPPED: matchmaking/combat/persistence checks need >= 3 characters in the roster "

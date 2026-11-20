@@ -16,7 +16,7 @@ Companion to [MASTER_ROADMAP.md](MASTER_ROADMAP.md) (Phase 8) and [UI_PLAN.md](U
 | `db.create_all()` | ✔ dev | **Not enough.** It never alters existing tables, so the first schema change after launch breaks prod. | **Flask-Migrate** (Alembic) migrations. |
 | `python app.py` dev server | ✔ dev | **Not for production.** | **gunicorn + gevent**, 1 worker. |
 | Game state in a Python dict (`GAMES`) | ✔ | **OK for launch**, with two consequences: (1) one server process only; (2) a restart or deploy ends every live match. | Accept for v1 (deploy at quiet hours + warning). Move state to Redis when scaling out (Stage 10). |
-| `characters.py` as content source | ✔ | **Keep** while you're authoring. | Auto-sync to the DB on every deploy (release step), so there's no manual reseed in prod. |
+| Content files (`backend/content/*.json`) | ✔ | **Keep** as the source of truth (Steps 12a/12b). | Loaded + validated at startup into memory; the DB `characters` table is only an id registry, synced automatically on start. |
 | Python 3.14 locally | | Very new; some async libs (gevent) can lag behind on wheels. | Pin **Python 3.12** in production (Docker image). Run tests on both. |
 
 **Capacity (honest estimate, to be measured in Stage 5):** one small instance (1–2 vCPU, 1–2 GB) with gevent
@@ -160,8 +160,8 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
    `DATABASE_URL` at it.
 3. `flask db init` → `flask db migrate -m "initial"` → review the generated migration → `flask db upgrade`.
    From now on **every model change = a migration**; remove `db.create_all()` from app startup.
-4. Seeding becomes a **release step**: `flask db upgrade && python seed_db.py` runs on every deploy before the
-   new version takes traffic. `characters.py` stays where you author content.
+4. Release step: `flask db upgrade && python seed_db.py` (registers characters before the new version takes
+   traffic; the server also syncs on start). Content is authored in `backend/content/`.
 5. Case-insensitive unique usernames (functional index on `lower(username)`).
 6. Make the smoke test run against Postgres too (CI does this in Stage 4).
 - **Check:** fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op.

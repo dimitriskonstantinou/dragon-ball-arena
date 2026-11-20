@@ -98,9 +98,8 @@ def test_real_content_loads():
     check("runtime fields are filled in (currentCooldown, maxHealth, status)",
           all(s['currentCooldown'] == 0 for c in catalog.values() for s in c['skills'])
           and all(c['maxHealth'] == c['health'] and c['status'] == [] for c in catalog.values()))
-    import characters
-    check("characters.CHARACTERS is exactly the loaded catalog (single source of truth)",
-          characters.CHARACTERS == catalog)
+    check("catalog() loads once and is shared (same object every call)",
+          cl.catalog() is cl.catalog() and cl.catalog() == catalog)
 
 
 def test_schema_files_are_current():

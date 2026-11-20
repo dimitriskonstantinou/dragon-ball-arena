@@ -15,12 +15,12 @@ sides' moves resolve simultaneously.
 ```
 cd backend
 pip install -r requirements.txt
-python seed_db.py   # creates backend/game.db and loads the character roster into it
 ```
 
-`python app.py` also auto-creates and auto-seeds the database on a totally
-fresh checkout, so `seed_db.py` is mainly for re-running later after you
-edit character files in `backend/content/` (it upserts by character id).
+`python app.py` creates the database on first start and registers the
+characters from `backend/content/` on every start, so after editing a
+character file you just restart the server: there is nothing to reseed.
+(`python seed_db.py` does the same registration without starting the server.)
 Content is validated when the server starts: invalid files stop it with a
 list of every problem, instead of failing mid-match.
 
@@ -76,13 +76,12 @@ database.
 backend/
   app.py                Flask + Socket.IO server: auth routes, matchmaking, rooms, event handlers
   models.py              SQLAlchemy models: User, UserStats, Character, UserCharacter, Mission, UserMissionProgress, Match
-  seed_db.py              Loads/refreshes the characters table from the content files
+  seed_db.py              Manual character-registry sync (the server already does it on start)
   game_engine.py         Turn/effect resolution engine (damage, status effects, chakra, etc.)
   content/                 THE source of truth for characters: one JSON file per character + shared_abilities.json
   content_schema.py        Pydantic models for content; `python content_schema.py` regenerates the VS Code schema files
   content_loader.py        Loads + validates content/ at startup
-  characters.py           Compatibility layer: CHARACTERS = load_catalog() (don't edit)
-  game.db                  SQLite database (gitignored -- created by seed_db.py / app.py)
+  game.db                  SQLite database (gitignored -- created by app.py): accounts, stats, matches, character id registry
   photos/
     characters/               Character portraits (one per roster entry, e.g. Goku_(Saiyan-Saga).png)
     skills/                    Per-skill icons (optional; gracefully absent until added)
@@ -102,7 +101,8 @@ frontend/
   `POST /api/logout`, `GET /api/me` — plain JSON HTTP endpoints, not Socket.IO events.
   A successful register/login sets a Flask session cookie; Socket.IO connections
   read that same cookie to resolve which account owns the connection.
-- New accounts currently get **every existing character unlocked automatically**.
+- Every account currently has **every character in `backend/content/`** (including ones added
+  after it registered) -- a temporary rule until mission-based unlocks exist.
   The `Mission`/`UserMissionProgress` tables exist for the planned mission-based
   unlock system (like Naruto Arena's), but that's not wired up to gameplay yet —
   see the TODO comment on the unlock loop in `app.py`'s `/api/register` route.

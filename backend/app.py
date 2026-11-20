@@ -3,12 +3,11 @@ from flask_socketio import SocketIO, emit, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timezone
 import copy
-import json
 import logging
 import os
 import uuid
 
-import characters
+import content_loader
 import game_engine
 from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
@@ -45,22 +44,42 @@ def report_error(e, event):
         emit('error-msg', SERVER_ERROR_MSG, to=request.sid)
 
 
+# The roster, validated once at import: invalid content stops the server here.
+# Gameplay reads characters only from this in-memory catalog, never the DB.
+CATALOG = content_loader.catalog()
+
+
+def sync_character_registry(catalog=None):
+    """Keeps the `characters` table -- now only an id registry for foreign keys
+    (unlocks, missions) -- in step with the content files. Inserts/updates,
+    never deletes: a character removed from content stays registered (accounts
+    may reference it) and simply stops being offered to players. The legacy
+    skills_json column is emptied so no stale copy can be read; it goes away
+    with the first migration (DB-1). Returns (added, updated) counts."""
+    catalog = CATALOG if catalog is None else catalog
+    rows = {row.id: row for row in Character.query.all()}
+    added = updated = 0
+    for cid, char in catalog.items():
+        row = rows.get(cid)
+        if row is None:
+            db.session.add(Character(id=cid, name=char['name'], image=char['image'], health=char['health'],
+                                     skills_json='[]', is_starter=True))
+            added += 1
+        elif (row.name, row.image, row.health, row.skills_json) != (char['name'], char['image'], char['health'], '[]'):
+            row.name, row.image, row.health, row.skills_json = char['name'], char['image'], char['health'], '[]'
+            updated += 1
+    db.session.commit()
+    return added, updated
+
+
 def ensure_db_ready():
-    """Creates tables if missing, and seeds the characters table from the
-    legacy characters.py roster on a completely fresh database. For
-    re-seeding after editing characters.py, use seed_db.py instead (it
-    upserts rather than only running once)."""
+    """Creates missing tables and syncs the character registry. No manual
+    reseed is ever needed after editing content files."""
     with app.app_context():
         db.create_all()
-        if Character.query.count() == 0:
-            for char_id, char in characters.CHARACTERS.items():
-                db.session.add(Character(
-                    id=char_id, name=char['name'], image=char['image'],
-                    health=char['health'], skills_json=json.dumps(char['skills']),
-                    is_starter=True,
-                ))
-            db.session.commit()
-            print(f"Auto-seeded {len(characters.CHARACTERS)} characters into a fresh database.")
+        added, updated = sync_character_registry()
+        if added or updated:
+            log.info("Character registry synced: %d added, %d updated", added, updated)
 
 
 ensure_db_ready()
@@ -73,14 +92,19 @@ def current_user():
     return db.session.get(User, uid)
 
 
+def unlocked_character_ids(user):
+    """TEMP unlock policy until missions exist (see the Mission models):
+    every account has every active character -- including ones added after
+    it registered -- with no DB query. Replace this when unlocks are built."""
+    return list(CATALOG)
+
+
 def characters_for_user(user, base_url):
-    """Characters this account has unlocked, with 'image' rewritten to an
-    absolute URL based on however the client actually reached this server
-    (host/port/scheme), instead of a value hardcoded at authoring time."""
-    unlocked_ids = [uc.character_id for uc in user.unlocked_characters]
-    if not unlocked_ids:
-        return {}
+    """Fresh copies of this account's characters, ready for a match, with
+    image paths turned into absolute URLs for however the client reached this
+    server. Never modifies the shared catalog."""
     result = {}
+
     def skill_urls(effects):
         # Images swapped in later by prime_skill (e.g. Puar -> Spirit Ball) need
         # the same URL as regular skill images, or the browser 404s on them.
@@ -89,14 +113,15 @@ def characters_for_user(user, base_url):
                 effect['primed_image'] = base_url + 'photos/skills/' + effect['primed_image']
             skill_urls(effect.get('primed_effects', []))
 
-    for row in Character.query.filter(Character.id.in_(unlocked_ids)).all():
-        char_dict = row.to_game_dict()
+    for cid in unlocked_character_ids(user):
+        char_dict = copy.deepcopy(CATALOG[cid])
+        char_dict['defense'] = 0
         char_dict['image'] = base_url + 'photos/' + char_dict['image']
         for skill in char_dict['skills']:
             if skill.get('image'):
                 skill['image'] = base_url + 'photos/skills/' + skill['image']
             skill_urls(skill['effects'])
-        result[row.id] = char_dict
+        result[cid] = char_dict
     return result
 
 
@@ -197,12 +222,10 @@ def register():
 
     db.session.add(UserStats(user_id=user.id))
 
-    # TEMP: every new account gets every character that currently exists,
-    # because the mission-based unlock system isn't built yet -- see the
-    # Mission/UserMissionProgress models and the README for what's still
-    # undecided there. Revisit this loop once that's designed.
-    for char in Character.query.all():
-        db.session.add(UserCharacter(user_id=user.id, character_id=char.id))
+    # Unlock rows are recorded for the future mission system; today access is
+    # decided by unlocked_character_ids() (every active character).
+    for cid in CATALOG:
+        db.session.add(UserCharacter(user_id=user.id, character_id=cid))
 
     db.session.commit()
 
@@ -243,7 +266,8 @@ def handle_connect():
     if not user:
         emit('auth-required')
         return
-    char_list = list(characters_for_user(user, request.host_url).values())
+    # Display fields only: skill mechanics stay server-side (same rule as view_for).
+    char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user, request.host_url).values()]
     emit('character-list', char_list)
 
 @socketio.on('disconnect')

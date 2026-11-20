@@ -167,9 +167,9 @@ def section_assets():
 def section_content():
     out('## Roster / content integrity')
     sys.path.insert(0, BACKEND)
-    import characters
+    import content_loader
     import game_engine
-    chars = characters.CHARACTERS
+    chars = content_loader.catalog()
     skills = [(cid, s) for cid, c in chars.items() for s in c['skills']]
     out(f'{len(chars)} characters, {len(skills)} skills')
     content_dir = os.path.join(BACKEND, 'content', 'characters')
