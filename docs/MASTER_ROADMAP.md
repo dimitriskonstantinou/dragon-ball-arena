@@ -25,7 +25,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 
 | Task | Why | Done when |
 |---|---|---|
-| 0.1 Browser playtest of steps 1–9 (2 windows, full match) | TST-3: protocol/state changes unverified in a real UI | A full match plays to the end; findings logged |
+| ✅ 0.1 Browser playtest — automated with Playwright in *Step 12a* (`test_browser_e2e.py`) | TST-3 | Done: full matches play to the end in a real browser (3/3 runs); found FE-8/FE-9 |
 | 0.2 Merge steps 1–9 (+10 audit) into `dev` in order | `dev` is the integration branch | `dev` = step10 tip, tests green on `dev` |
 | 0.3 Reseed local DB | CON-6: Tien/Yamcha missing locally | `characters` table = 5 rows |
 | 0.4 Smoke test defaults to a temp DB | TST-1/DB-4: documented command writes to real DB | Running it leaves `game.db` unchanged (checked by mtime) |
@@ -46,17 +46,25 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 | 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) | — | Rule + text + UI cue + tests consistent |
 | 1.11 ENG-3: reactive defenses apply **per skill** (decided) | — | Knee Attack fully dodged by one dodge |
 | 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
-| **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | See below |
+| **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | **12a ✅ done**, 12b next; see below |
 
 **1.13 Content pipeline (decided architecture).** One authoritative source: version-controlled JSON files, one per
-character with its kit inside, validated by a JSON Schema (`backend/content/character.schema.json`, also gives VS Code
-autocomplete) plus semantic checks (references, images, costs, effect types). Shared skills (`afterimage_technique`)
+character with its kit inside, validated by Pydantic models (`content_schema.py`, which also generate the JSON Schema
+files for VS Code autocomplete) plus semantic checks (references, images, costs, effect types). Shared skills (`afterimage_technique`)
 are defined once and referenced. Loaded once at startup into an in-memory catalog; **gameplay never reads content from
 the DB**. The `characters` table becomes an id registry for unlock/match FKs, synced automatically (removed characters
 are marked inactive, never deleted). `characters.py` is converted automatically (equality test) and removed.
 Content tests: every file loads, every reference/image exists, **every skill can be cast once in a sandbox match**.
 Done when: one source of truth, server refuses to start on invalid content with a clear message, no manual reseed,
 no DB query for roster data on connect/find-match, all existing checks unchanged.
+
+- **12a ✅ (Step 12a):** content files + Pydantic models + generated schemas + loader with cross-reference checks;
+  5 characters converted (exact equality with the old dicts); `characters.py` is a shim over the loader (so the JSON is
+  already the only copy); `test_content.py` (53 checks incl. every skill castable); Playwright browser tests.
+- **12b (next):** app/engine read the in-memory catalog instead of the DB `skills_json`; `characters` table becomes an
+  id registry synced automatically at startup (inactive instead of deleted); remove the shim and `ensure_db_ready`
+  seeding duplication; lobby list uses display fields only (BE-10).
+- **12c (later, small):** Pydantic models for socket payloads, replacing `require()` with identical messages.
 
 **Measurable:** probe has 0 engine items; engine coverage ≥ 90%.
 
@@ -110,7 +118,11 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 ## Phase 5 — Frontend foundation (UI_PLAN UI-1 + UI-2)
 
 **Objective:** a maintainable frontend before redesigning screens.
+**Tech (decided 2026-11-20):** migrate to React + TypeScript + Vite + React Router with custom CSS design tokens
+(no Tailwind/shadcn/TanStack Query/Zustand unless a concrete need appears), keeping the Socket.IO protocol; the
+Playwright suite is the safety net for the migration.
 **Tasks:** auth `<form>`s, correct how-to-play, game-over → back to lobby / play again and **render the final state** (FE-2),
+player-facing labels for every status (FE-9), self-target without clicking a covered portrait (FE-10),
 toasts instead of log errors / `alert`, ES-module split, DOM helper (no `innerHTML` with data, SEC-7), event delegation,
 dead code removed (FE-6), **server-equivalent affordability math** (FE-3).
 **Done when:** 0 `innerHTML` with data, 0 inline handlers, game over → lobby without reload, client and server agree on affordability (shared test vectors).
@@ -152,6 +164,7 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.13: content pipeline** (Step 12). The user is actively adding characters, the two-copies problem (CON-6) bites on
-every edit, and every DB-free gameplay path helps scale. Then Phase 2 (room cleanup, timer, reconnect) before going online.
-Phase 0's 0.1–0.3 (browser playtest, merge, reseed) remain the user's.
+**1.13 / Step 12b: finish the content pipeline.** Removes the stale-DB problem (CON-6) for good and takes all roster
+reads off the database (scales better, nothing to reseed). Then Phase 2 (room cleanup, timer, reconnect) before going
+online. Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
+Phase 0's 0.2–0.3 (merge, reseed) remain the user's; 0.1 is now automated.

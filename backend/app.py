@@ -81,12 +81,21 @@ def characters_for_user(user, base_url):
     if not unlocked_ids:
         return {}
     result = {}
+    def skill_urls(effects):
+        # Images swapped in later by prime_skill (e.g. Puar -> Spirit Ball) need
+        # the same URL as regular skill images, or the browser 404s on them.
+        for effect in effects:
+            if effect.get('primed_image'):
+                effect['primed_image'] = base_url + 'photos/skills/' + effect['primed_image']
+            skill_urls(effect.get('primed_effects', []))
+
     for row in Character.query.filter(Character.id.in_(unlocked_ids)).all():
         char_dict = row.to_game_dict()
         char_dict['image'] = base_url + 'photos/' + char_dict['image']
         for skill in char_dict['skills']:
             if skill.get('image'):
                 skill['image'] = base_url + 'photos/skills/' + skill['image']
+            skill_urls(skill['effects'])
         result[row.id] = char_dict
     return result
 
@@ -410,5 +419,8 @@ def handle_commit(data):
         report_error(e, 'commit-turn')
 
 if __name__ == '__main__':
+    # Local development runner only -- production runs under gunicorn (see
+    # docs/DEPLOY_PLAN.md). allow_unsafe_werkzeug lets it also start without
+    # a terminal attached (e.g. from the browser tests).
     logging.basicConfig(level=logging.INFO)
-    socketio.run(app, host='0.0.0.0', port=5000)
+    socketio.run(app, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), allow_unsafe_werkzeug=True)

@@ -216,7 +216,7 @@ There's no per-skill usage or win-rate data. **Fix:** log per-match skill usage 
 
 **CON-5 — LOW — No character metadata** (role, short bio, saga label) for a roster/details screen.
 
-**CON-6 — MEDIUM (local only) — Local DB is stale (verified)** — *root cause addressed by the content pipeline (roadmap 1.13)*
+**CON-6 — MEDIUM (local only) — Local DB is stale (verified)** — *content now has one source (Step 12a); the stale DB copy itself goes away in Step 12b*
 `game.db` has 3 characters (Goku, Piccolo, Raditz); `characters.py` has 5. Tien and Yamcha can't be picked locally until `seed_db.py` runs.
 Root cause: two sources of truth (file + DB). **Fix:** reseed now; in production the deploy release step syncs automatically (DEPLOY_PLAN).
 
@@ -241,6 +241,18 @@ Full detail in [UI_PLAN.md](UI_PLAN.md). Re-verified on 2026-11-20:
 - `alert()` for a payment mismatch.
 **FE-7 — LOW — One 638-line file, string-built HTML**; see SEC-7.
 
+*Found by the Playwright browser tests (Step 12a, 2026-11-20):*
+**FE-8 — MEDIUM — Spirit Ball's icon never loaded (verified, ✅ FIXED in Step 12a).** `primed_image` was sent as a
+bare filename (`GET /Yamcha_SpiritBall.png` → 404); `characters_for_user` now converts it like other skill images.
+**FE-9 — LOW — Internal status names shown to players (verified):** "? EXPIRING_DEFENSE", "? PRIMED_MARK" (no
+`STATUS_META` entries for newer status types).
+**FE-10 — LOW — Self-targeting needs a precise click (verified):** your own card is mostly skill buttons and status
+badges cover the portrait's top-right, so "click self" only works on part of the portrait (UI_PLAN #8).
+**FE-11 — LOW — Normal "logged out" check shows as a browser console error:** `/api/me` answers 401 when logged out.
+**DEV-1 — LOW (dev only) — Werkzeug dev server logs "Invalid frame header" WebSocket errors on reload/logout**
+(teardown only; never observed during play). Production uses gunicorn + gevent.
+**DEV-2 — LOW — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8.
+
 ### 4.6 Database
 
 **DB-1 — HIGH (deploy blocker) — No migrations** (`db.create_all()` never alters tables). The first schema change after launch breaks production. Fix: Flask-Migrate.
@@ -254,6 +266,7 @@ Full detail in [UI_PLAN.md](UI_PLAN.md). Re-verified on 2026-11-20:
 **TST-1 — MEDIUM — The documented smoke command writes to the real `game.db`** unless `DATABASE_URL` is set (source of DB-4). Fix: default to a temp DB.
 **TST-2 — MEDIUM — No CI.** Tests only run when someone remembers.
 **TST-3 — MEDIUM — Frontend has no automated tests, and Steps 3/7/8 (state shape and protocol changes) have not been played in a real browser (unverified).** Checked only by reading `app.js`.
+— *✅ Addressed in Step 12a:* `test_browser_e2e.py` (Playwright) plays full matches, sessions and disconnects through the real UI.
 **TST-4 — LOW — `seed_db.py` 0% covered**; 2 lint warnings (empty f-strings in the smoke test).
 **IMPROVEMENT:** tests are custom scripts. That's fine, but you can't run a single test and there are no fixtures. Making them pytest-compatible is cheap.
 

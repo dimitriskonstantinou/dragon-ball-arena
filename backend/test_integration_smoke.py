@@ -83,6 +83,26 @@ char_list_event = next((e for e in initial1 if e['name'] == 'character-list'), N
 check("authenticated connect receives a character list", char_list_event is not None, char_list_event)
 available = char_list_event['args'][0] if char_list_event else []
 
+
+def all_image_urls(char):
+    """Every image URL in a character, including ones prime_skill swaps in later."""
+    def walk(effects):
+        for e in effects:
+            if e.get('primed_image'):
+                yield e['primed_image']
+            yield from walk(e.get('primed_effects', []))
+    yield char['image']
+    for s in char['skills']:
+        if s.get('image'):
+            yield s['image']
+        yield from walk(s.get('effects', []))
+
+
+# Regression: primed_image (e.g. Yamcha's Spirit Ball icon) used to be sent as a
+# bare filename, so the browser 404'd on it (found by the Playwright test).
+relative = [u for c in available for u in all_image_urls(c) if not u.startswith('http')]
+check("every image URL sent to clients is absolute, including primed skill images", relative == [], relative)
+
 with appmod.app.app_context():
     db_count = appmod.Character.query.count()
 check("character-list matches what's actually seeded in the DB", len(available) == db_count,

@@ -1,0 +1,78 @@
+{
+  "$schema": "../character.schema.json",
+  "id": "raditz_saiyan_saga",
+  "name": "Raditz (Saiyan Saga)",
+  "image": "characters/Raditz.png",
+  "health": 100,
+  "skills": [
+    {
+      "id": "double_sunday",
+      "name": "Double Sunday",
+      "description": "25 Dmg to 2 random enemies | 1 Eng, 1 Rand",
+      "cost": {
+        "energy": 1,
+        "random": 1
+      },
+      "target_type": "enemy",
+      "image": "Raditz_DoubleSunday.png",
+      "effects": [
+        {
+          "type": "random_multi_damage",
+          "value": 25,
+          "count": 2
+        }
+      ],
+      "cooldown": 1,
+      "notes": "Ignores whichever enemy was clicked to fire it -- the actual targets are randomly sampled from the opponent's living team."
+    },
+    {
+      "id": "shining_friday",
+      "name": "Shining Friday",
+      "description": "Destroys any destructible defense, then 40 Piercing Dmg | 2 Rage",
+      "cost": {
+        "rage": 2
+      },
+      "target_type": "enemy",
+      "image": "Raditz_ShiningFriday.png",
+      "effects": [
+        {
+          "type": "remove_defense"
+        },
+        {
+          "type": "piercing_damage",
+          "value": 40
+        }
+      ],
+      "cooldown": 2,
+      "notes": "remove_defense fires first, so there's nothing left for the piercing hit to absorb into -- the full 40 always lands on HP."
+    },
+    {
+      "id": "knee_attack",
+      "name": "Knee Attack",
+      "description": "25 Dmg + Stun 1 turn | 1 Mar, 1 Rand",
+      "cost": {
+        "martial": 1,
+        "random": 1
+      },
+      "target_type": "enemy",
+      "image": "Raditz_KneeAttack.png",
+      "effects": [
+        {
+          "type": "damage",
+          "value": 25
+        },
+        {
+          "type": "stun",
+          "duration": 1
+        }
+      ],
+      "cooldown": 2
+    },
+    {
+      "use": "afterimage_technique",
+      "name": "Block",
+      "image": "Raditz_Block.png",
+      "notes": "Universal defensive skill (see Goku's afterimage_technique) -- same id/mechanic roster-wide, flavored here to match Piccolo's \"Block\"."
+    }
+  ]
+}

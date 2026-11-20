@@ -20,7 +20,16 @@ python seed_db.py   # creates backend/game.db and loads the character roster int
 
 `python app.py` also auto-creates and auto-seeds the database on a totally
 fresh checkout, so `seed_db.py` is mainly for re-running later after you
-edit `characters.py` (it upserts by character id, so it picks up changes).
+edit character files in `backend/content/` (it upserts by character id).
+Content is validated when the server starts: invalid files stop it with a
+list of every problem, instead of failing mid-match.
+
+For tests and measurements also run:
+
+```
+pip install -r requirements-dev.txt
+python -m playwright install chromium   # headless browser for test_browser_e2e.py
+```
 
 ## Running
 
@@ -48,15 +57,18 @@ Win/loss record and streak show top-right once logged in.
 
 ```
 cd backend
-python test_game_engine.py        # effect engine unit tests (no DB, no server)
-python test_integration_smoke.py  # full stack: register -> login -> find-match -> queue-skill -> commit-turn -> stats persisted
+python test_game_engine.py        # engine unit + per-character kit tests (no DB, no server)
+python test_content.py            # content files: validation, broken-content cases, every skill castable
+DATABASE_URL=sqlite:///<temp>/smoke.db python test_integration_smoke.py   # full stack in-process
+python test_browser_e2e.py        # real browser (Playwright): two players play a full match through the UI
+python ../tools/measure.py        # all of the above + coverage, lint, sizes (from repo root: python tools/measure.py)
 ```
 
-Both are plain scripts (no pytest needed) — they print PASS/FAIL per case
-and exit non-zero on any failure. `test_integration_smoke.py` runs against
-the real `backend/game.db` and registers two throwaway accounts (unique
-per run, via a random suffix) — it doesn't need `python app.py` running
-separately, it drives the Flask/Socket.IO app in-process.
+All are plain scripts (no pytest needed) — they print PASS/FAIL per case
+and exit non-zero on any failure. **Set `DATABASE_URL` for the smoke test**:
+without it, it writes throwaway accounts into the real `backend/game.db`.
+`test_browser_e2e.py` starts its own server on a free port with a temporary
+database.
 
 ## Project layout
 
@@ -64,15 +76,20 @@ separately, it drives the Flask/Socket.IO app in-process.
 backend/
   app.py                Flask + Socket.IO server: auth routes, matchmaking, rooms, event handlers
   models.py              SQLAlchemy models: User, UserStats, Character, UserCharacter, Mission, UserMissionProgress, Match
-  seed_db.py              Loads/refreshes the characters table from characters.py
+  seed_db.py              Loads/refreshes the characters table from the content files
   game_engine.py         Turn/effect resolution engine (damage, status effects, chakra, etc.)
-  characters.py           Character roster and skill definitions (source of truth for seeding; the DB is what the app actually reads from once seeded)
+  content/                 THE source of truth for characters: one JSON file per character + shared_abilities.json
+  content_schema.py        Pydantic models for content; `python content_schema.py` regenerates the VS Code schema files
+  content_loader.py        Loads + validates content/ at startup
+  characters.py           Compatibility layer: CHARACTERS = load_catalog() (don't edit)
   game.db                  SQLite database (gitignored -- created by seed_db.py / app.py)
   photos/
     characters/               Character portraits (one per roster entry, e.g. Goku_(Saiyan-Saga).png)
     skills/                    Per-skill icons (optional; gracefully absent until added)
   test_game_engine.py       Direct engine unit tests
+  test_content.py           Content pipeline tests
   test_integration_smoke.py  End-to-end test: HTTP auth + Socket.IO + DB persistence
+  test_browser_e2e.py       Real-browser tests (Playwright)
 frontend/
   index.html              Page structure (auth screen, lobby, game board)
   style.css                Styling
@@ -103,23 +120,38 @@ frontend/
   Everything here goes through SQLAlchemy specifically so that's a connection
   string change, not a rewrite.
 
-## Authoring a new skill
+## Authoring characters and skills
 
-A skill lives on a character in `characters.py` and looks like:
+Each character is one file, `backend/content/characters/<character_id>.json`
+(the file name must equal the id). Open it in VS Code: the `"$schema"` line
+gives autocomplete and red underlines for mistakes while you type. A skill
+inside its `"skills"` list looks like:
 
-```python
+```json
 {
-    "id": "unique_skill_id", "name": "Display Name", "description": "shown in the UI",
-    "cost": {"energy": 1, "random": 1},   # chakra cost; keys: energy/martial/spirit/rage/random
-    "target_type": "enemy",                # enemy | ally | self | enemy_team | ally_team
-    "classes": ["physical"],               # optional; interacts with class-scoped invuln/silence
-    "image": "skill_file.png",             # optional; filename under backend/photos/skills/
-    "effects": [
-        {"type": "damage", "value": 20}
-    ],
-    "cooldown": 0, "currentCooldown": 0
+  "id": "unique_skill_id", "name": "Display Name", "description": "shown in the UI",
+  "cost": {"energy": 1, "random": 1},
+  "target_type": "enemy",
+  "classes": ["physical"],
+  "image": "skill_file.png",
+  "effects": [{"type": "damage", "value": 20}],
+  "cooldown": 0,
+  "notes": "optional design notes for authors -- never sent to players"
 }
 ```
+
+- `cost` keys: `energy`, `martial`, `spirit`, `rage`, `random` (any type).
+- `target_type`: `enemy`, `ally`, `self`, `enemy_team`, `ally_team`.
+- `classes` (optional): `physical`, `chakra`, `mental` — interacts with class-scoped invulnerability/silence.
+- `image` (optional): file name under `backend/photos/skills/`.
+- Don't write `currentCooldown`, `maxHealth` or `status`; the loader adds runtime fields.
+
+The universal 4th skill is defined once in `content/shared_abilities.json`
+and referenced, with only the name/icon changeable:
+`{"use": "afterimage_technique", "name": "Block", "image": "Piccolo_(Saiyan-Saga)_Block.png"}`.
+
+Then run `python test_content.py` (or just start the server); every problem is
+listed with its file and position.
 
 Any effect can add `"target": "self"` to hit the caster instead of the
 skill's normal target (e.g. damage an enemy while buffing yourself).
@@ -178,8 +210,9 @@ Supported effect types:
 | Cleanse | `cleanse` (`scope`: `"harmful"`, `"buff"`, or a specific status type) |
 | Chakra | `remove_chakra`, `steal_chakra`, `chakra_regen`, `chakra_restrict`, `chakra_drain_over_time` |
 
-After adding a skill, run `python test_game_engine.py` — `test_content_smoke`
-will catch a typo'd effect type immediately.
+After adding a skill, run `python test_content.py` and `python test_game_engine.py`.
+The content tests reject typo'd fields and effect types, broken references and
+missing images, and cast every skill once in a sandbox match.
 
 ## Known limitations
 

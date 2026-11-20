@@ -1,0 +1,106 @@
+{
+  "$schema": "../character.schema.json",
+  "id": "tien_saiyan_saga",
+  "name": "Tien (Saiyan Saga)",
+  "image": "characters/Tien_(Saiyan-Saga).png",
+  "health": 100,
+  "skills": [
+    {
+      "id": "arm_attack",
+      "name": "Arm Attack",
+      "description": "20 Piercing Dmg (ignores dmg reduction) | 1 Mar",
+      "cost": {
+        "martial": 1
+      },
+      "target_type": "enemy",
+      "classes": [
+        "physical"
+      ],
+      "image": "Tien_(Saiyan-Saga)_ArmAttack.png",
+      "effects": [
+        {
+          "type": "piercing_damage",
+          "value": 20
+        }
+      ],
+      "cooldown": 0
+    },
+    {
+      "id": "best_friend",
+      "name": "Best Friend",
+      "description": "Primes Tri-Beam for your next turn only: costs only 2 Random and deals 45 Affliction Dmg + Stun + 25 Self Dmg instead of its normal effect | 1 Spt, 1 Rand",
+      "cost": {
+        "spirit": 1,
+        "random": 1
+      },
+      "target_type": "self",
+      "image": "Tien_(Saiyan-Saga)_BestFriend.png",
+      "effects": [
+        {
+          "type": "prime_skill",
+          "skill_id": "tri_beam",
+          "mark": "tri_beam_primed",
+          "duration": 1,
+          "primed_cost": {
+            "random": 2
+          },
+          "primed_effects": [
+            {
+              "type": "affliction_damage",
+              "value": 45
+            },
+            {
+              "type": "stun",
+              "duration": 1
+            },
+            {
+              "type": "self_damage",
+              "value": 25
+            },
+            {
+              "type": "unprime_skill",
+              "target": "self",
+              "skill_id": "tri_beam",
+              "mark": "tri_beam_primed"
+            }
+          ],
+          "primed_description": "45 Affliction Dmg + Stun (primed by Best Friend), 25 Self Dmg | 2 Rand"
+        }
+      ],
+      "cooldown": 2,
+      "notes": "Pure setup move now (no direct effect on the enemy) -- primes Tri-Beam for exactly Tien's own next turn: costs only 2 Random and becomes a much stronger, unmitigated hit. See tri_beam's own effects for the \"un-primed\" version, and game_engine.py's prime_skill/unprime_skill for how the swap (and its automatic revert-on-expiry) actually works."
+    },
+    {
+      "id": "tri_beam",
+      "name": "Tri-Beam",
+      "description": "45 Piercing Dmg (ignores dmg reduction), 15 Self Dmg (life-force cost) | 1 Eng, 1 Spt",
+      "cost": {
+        "energy": 1,
+        "spirit": 1
+      },
+      "target_type": "enemy",
+      "classes": [
+        "chakra"
+      ],
+      "image": "Tien_(Saiyan-Saga)_TriBeam.png",
+      "effects": [
+        {
+          "type": "piercing_damage",
+          "value": 45
+        },
+        {
+          "type": "self_damage",
+          "value": 15
+        }
+      ],
+      "cooldown": 1,
+      "notes": "Kikoho/Tri-Beam -- canonically devastating but costs Tien his own life force, hence the flat self-damage (no percentage debuffs, per the no-percentage-upgrades rule). This is the BASE (un-primed) version; see best_friend for the primed swap."
+    },
+    {
+      "use": "afterimage_technique",
+      "name": "Block",
+      "image": "Tien_(Saiyan-Saga)_Block.png",
+      "notes": "Universal defensive skill (see Goku's afterimage_technique) -- same id/mechanic roster-wide, flavored here to match Piccolo's/Raditz's \"Block\"."
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "./shared_abilities.schema.json",
+  "abilities": {
+    "afterimage_technique": {
+      "id": "afterimage_technique",
+      "name": "Afterimage Technique",
+      "description": "Untargetable/immune to all damage & harmful effects for 1 turn | 1 Rand",
+      "cost": {
+        "random": 1
+      },
+      "target_type": "self",
+      "effects": [
+        {
+          "type": "invulnerable",
+          "duration": 1
+        }
+      ],
+      "cooldown": 4
+    }
+  }
+}

@@ -33,4 +33,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 10 | `feature/step10-audit` | Full audit, master roadmap, CLAUDE.md rewrite (docs only) | Baseline re-recorded; 0 code changes |
 | 11 | `feature/step11-winner-on-tick` | ENG-1: a team wiped by a turn-start tick loses immediately; decisions recorded | checks 162→167 / 43→44, bugs 5→4 |
 
-**Merged into `dev`:** none of steps 1–11 yet (user merges in order).
+| 12a | `feature/step12a-content-pipeline` | Content as JSON files (single source) + Pydantic validation + VS Code schemas; Playwright browser tests; Spirit Ball icon 404 fixed | checks 211→279 (+content 53, +browser 14, smoke +1); cov 86→88%; probe 4=4 |
+
+**Merged into `dev`:** none of steps 1–12a yet (user merges in order).

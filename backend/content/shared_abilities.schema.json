@@ -1,0 +1,1810 @@
+{
+  "$defs": {
+    "AddStack": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "stack_key": {
+          "minLength": 1,
+          "title": "Stack Key",
+          "type": "string"
+        },
+        "type": {
+          "const": "add_stack",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stack_key",
+        "type"
+      ],
+      "title": "AddStack",
+      "type": "object"
+    },
+    "AfflictionDamage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "affliction_damage",
+          "description": "Ignores reduction, defense, invulnerability and reactive defenses.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "AfflictionDamage",
+      "type": "object"
+    },
+    "AoeDamage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "aoe_damage",
+          "description": "Legacy: always hits the whole enemy team.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "AoeDamage",
+      "type": "object"
+    },
+    "BoostSkillOnStack": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "stack_key": {
+          "minLength": 1,
+          "title": "Stack Key",
+          "type": "string"
+        },
+        "skill_id": {
+          "description": "A skill in this same character's kit.",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "boost_skill_on_stack",
+          "title": "Type",
+          "type": "string"
+        },
+        "at_stack": {
+          "minimum": 1,
+          "title": "At Stack",
+          "type": "integer"
+        },
+        "bonus": {
+          "title": "Bonus",
+          "type": "integer"
+        },
+        "effect_index": {
+          "default": null,
+          "minimum": 0,
+          "title": "Effect Index",
+          "type": "integer"
+        },
+        "new_description": {
+          "default": null,
+          "minLength": 1,
+          "title": "New Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stack_key",
+        "skill_id",
+        "type",
+        "at_stack",
+        "bonus"
+      ],
+      "title": "BoostSkillOnStack",
+      "type": "object"
+    },
+    "ChakraDrainOverTime": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "chakra_drain_over_time",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ChakraDrainOverTime",
+      "type": "object"
+    },
+    "ChakraRegen": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "const": "chakra_regen",
+          "title": "Type",
+          "type": "string"
+        },
+        "amount": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Amount",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ChakraRegen",
+      "type": "object"
+    },
+    "ChakraRemoval": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "remove_chakra",
+            "steal_chakra"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "amount": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Amount",
+          "type": "integer"
+        },
+        "chakra_type": {
+          "default": null,
+          "enum": [
+            "energy",
+            "martial",
+            "spirit",
+            "rage"
+          ],
+          "title": "Chakra Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ChakraRemoval",
+      "type": "object"
+    },
+    "ChakraRestrict": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "chakra_restrict",
+          "title": "Type",
+          "type": "string"
+        },
+        "chakra_type": {
+          "default": null,
+          "enum": [
+            "energy",
+            "martial",
+            "spirit",
+            "rage"
+          ],
+          "title": "Chakra Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ChakraRestrict",
+      "type": "object"
+    },
+    "Cleanse": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "const": "cleanse",
+          "title": "Type",
+          "type": "string"
+        },
+        "scope": {
+          "default": null,
+          "description": "'harmful', 'buff', or a specific status type.",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Cleanse",
+      "type": "object"
+    },
+    "Cost": {
+      "additionalProperties": false,
+      "properties": {
+        "energy": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Energy",
+          "type": "integer"
+        },
+        "martial": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Martial",
+          "type": "integer"
+        },
+        "spirit": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Spirit",
+          "type": "integer"
+        },
+        "rage": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Rage",
+          "type": "integer"
+        },
+        "random": {
+          "default": null,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Random",
+          "type": "integer"
+        }
+      },
+      "title": "Cost",
+      "type": "object"
+    },
+    "Damage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "damage",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "Damage",
+      "type": "object"
+    },
+    "DamageIgnoreInvuln": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "damage_ignore_invuln",
+          "description": "Ignores invulnerability only.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "DamageIgnoreInvuln",
+      "type": "object"
+    },
+    "Defense": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "defense",
+          "description": "Permanent destructible defense.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "Defense",
+      "type": "object"
+    },
+    "DelayedDamage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "delayed_damage",
+          "description": "Visible charge; unmitigated hit when it expires.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "DelayedDamage",
+      "type": "object"
+    },
+    "Dot": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "dot",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "Dot",
+      "type": "object"
+    },
+    "ExpiringDefense": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "expiring_defense",
+          "description": "Shield whose unused part is removed when it expires.",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "ExpiringDefense",
+      "type": "object"
+    },
+    "Heal": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "heal",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "Heal",
+      "type": "object"
+    },
+    "HealBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "heal_block",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "HealBlock",
+      "type": "object"
+    },
+    "Hot": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "hot",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "Hot",
+      "type": "object"
+    },
+    "Invulnerability": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "invulnerable",
+            "physical_invulnerable",
+            "chakra_invulnerable",
+            "mental_invulnerable"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Invulnerability",
+      "type": "object"
+    },
+    "MarkForCounter": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "mark_for_counter",
+          "description": "Hidden trap: the target's next skill attempt is countered.",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "default": null,
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "MarkForCounter",
+      "type": "object"
+    },
+    "Modifier": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "damage_taken_mod",
+            "damage_dealt_mod",
+            "heal_received_mod",
+            "heal_dealt_mod"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 5,
+          "minimum": -1,
+          "title": "Value",
+          "type": "number"
+        },
+        "tag": {
+          "default": null,
+          "enum": [
+            "buff",
+            "harmful"
+          ],
+          "title": "Tag",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "Modifier",
+      "type": "object"
+    },
+    "PiercingDamage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "piercing_damage",
+          "description": "Ignores damage reduction (not destructible defense).",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "PiercingDamage",
+      "type": "object"
+    },
+    "PrimeSkill": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "const": "prime_skill",
+          "title": "Type",
+          "type": "string"
+        },
+        "skill_id": {
+          "description": "Skill in this kit to swap (may be this same skill).",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "mark": {
+          "minLength": 1,
+          "title": "Mark",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "primed_cost": {
+          "$ref": "#/$defs/Cost"
+        },
+        "primed_effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "add_stack": "#/$defs/AddStack",
+                "affliction_damage": "#/$defs/AfflictionDamage",
+                "aoe_damage": "#/$defs/AoeDamage",
+                "boost_skill_on_stack": "#/$defs/BoostSkillOnStack",
+                "chakra_drain_over_time": "#/$defs/ChakraDrainOverTime",
+                "chakra_invulnerable": "#/$defs/Invulnerability",
+                "chakra_regen": "#/$defs/ChakraRegen",
+                "chakra_restrict": "#/$defs/ChakraRestrict",
+                "cleanse": "#/$defs/Cleanse",
+                "counter": "#/$defs/ReactiveDefense",
+                "damage": "#/$defs/Damage",
+                "damage_dealt_mod": "#/$defs/Modifier",
+                "damage_ignore_invuln": "#/$defs/DamageIgnoreInvuln",
+                "damage_taken_mod": "#/$defs/Modifier",
+                "defense": "#/$defs/Defense",
+                "delayed_damage": "#/$defs/DelayedDamage",
+                "dodge": "#/$defs/ReactiveDefense",
+                "dot": "#/$defs/Dot",
+                "expiring_defense": "#/$defs/ExpiringDefense",
+                "heal": "#/$defs/Heal",
+                "heal_block": "#/$defs/HealBlock",
+                "heal_dealt_mod": "#/$defs/Modifier",
+                "heal_received_mod": "#/$defs/Modifier",
+                "hot": "#/$defs/Hot",
+                "invulnerable": "#/$defs/Invulnerability",
+                "mark_for_counter": "#/$defs/MarkForCounter",
+                "mental_invulnerable": "#/$defs/Invulnerability",
+                "physical_invulnerable": "#/$defs/Invulnerability",
+                "piercing_damage": "#/$defs/PiercingDamage",
+                "prime_skill": "#/$defs/PrimeSkill",
+                "protect": "#/$defs/Protect",
+                "random_multi_damage": "#/$defs/RandomMultiDamage",
+                "reflect": "#/$defs/ReactiveDefense",
+                "remove_chakra": "#/$defs/ChakraRemoval",
+                "remove_defense": "#/$defs/RemoveDefense",
+                "scale_skill_by_stack": "#/$defs/ScaleSkillByStack",
+                "self_damage": "#/$defs/SelfDamage",
+                "self_damage_by_stack": "#/$defs/SelfDamageByStack",
+                "set_skill_cost_on_stack": "#/$defs/SetSkillCostOnStack",
+                "silence": "#/$defs/Silence",
+                "steal_chakra": "#/$defs/ChakraRemoval",
+                "stun": "#/$defs/Stun",
+                "team_heal": "#/$defs/TeamHeal",
+                "unlock_skill_on_stack": "#/$defs/UnlockSkillOnStack",
+                "unprime_skill": "#/$defs/UnprimeSkill"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/Damage"
+              },
+              {
+                "$ref": "#/$defs/PiercingDamage"
+              },
+              {
+                "$ref": "#/$defs/AfflictionDamage"
+              },
+              {
+                "$ref": "#/$defs/DamageIgnoreInvuln"
+              },
+              {
+                "$ref": "#/$defs/SelfDamage"
+              },
+              {
+                "$ref": "#/$defs/AoeDamage"
+              },
+              {
+                "$ref": "#/$defs/RandomMultiDamage"
+              },
+              {
+                "$ref": "#/$defs/DelayedDamage"
+              },
+              {
+                "$ref": "#/$defs/Dot"
+              },
+              {
+                "$ref": "#/$defs/Heal"
+              },
+              {
+                "$ref": "#/$defs/Hot"
+              },
+              {
+                "$ref": "#/$defs/TeamHeal"
+              },
+              {
+                "$ref": "#/$defs/Protect"
+              },
+              {
+                "$ref": "#/$defs/MarkForCounter"
+              },
+              {
+                "$ref": "#/$defs/HealBlock"
+              },
+              {
+                "$ref": "#/$defs/Stun"
+              },
+              {
+                "$ref": "#/$defs/Silence"
+              },
+              {
+                "$ref": "#/$defs/Defense"
+              },
+              {
+                "$ref": "#/$defs/RemoveDefense"
+              },
+              {
+                "$ref": "#/$defs/ExpiringDefense"
+              },
+              {
+                "$ref": "#/$defs/Modifier"
+              },
+              {
+                "$ref": "#/$defs/Invulnerability"
+              },
+              {
+                "$ref": "#/$defs/ReactiveDefense"
+              },
+              {
+                "$ref": "#/$defs/Cleanse"
+              },
+              {
+                "$ref": "#/$defs/ChakraRemoval"
+              },
+              {
+                "$ref": "#/$defs/ChakraRegen"
+              },
+              {
+                "$ref": "#/$defs/ChakraRestrict"
+              },
+              {
+                "$ref": "#/$defs/ChakraDrainOverTime"
+              },
+              {
+                "$ref": "#/$defs/AddStack"
+              },
+              {
+                "$ref": "#/$defs/SelfDamageByStack"
+              },
+              {
+                "$ref": "#/$defs/BoostSkillOnStack"
+              },
+              {
+                "$ref": "#/$defs/UnlockSkillOnStack"
+              },
+              {
+                "$ref": "#/$defs/ScaleSkillByStack"
+              },
+              {
+                "$ref": "#/$defs/SetSkillCostOnStack"
+              },
+              {
+                "$ref": "#/$defs/PrimeSkill"
+              },
+              {
+                "$ref": "#/$defs/UnprimeSkill"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Primed Effects",
+          "type": "array"
+        },
+        "primed_description": {
+          "default": null,
+          "minLength": 1,
+          "title": "Primed Description",
+          "type": "string"
+        },
+        "primed_name": {
+          "default": null,
+          "minLength": 1,
+          "title": "Primed Name",
+          "type": "string"
+        },
+        "primed_image": {
+          "default": null,
+          "minLength": 1,
+          "title": "Primed Image",
+          "type": "string"
+        },
+        "primed_cooldown": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Primed Cooldown",
+          "type": "integer"
+        },
+        "primed_target_type": {
+          "default": null,
+          "enum": [
+            "enemy",
+            "ally",
+            "self",
+            "enemy_team",
+            "ally_team"
+          ],
+          "title": "Primed Target Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "skill_id",
+        "mark",
+        "primed_cost",
+        "primed_effects"
+      ],
+      "title": "PrimeSkill",
+      "type": "object"
+    },
+    "Protect": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "protect",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Protect",
+      "type": "object"
+    },
+    "RandomMultiDamage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "random_multi_damage",
+          "title": "Type",
+          "type": "string"
+        },
+        "count": {
+          "default": null,
+          "maximum": 6,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "RandomMultiDamage",
+      "type": "object"
+    },
+    "ReactiveDefense": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "enum": [
+            "dodge",
+            "counter",
+            "reflect"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ReactiveDefense",
+      "type": "object"
+    },
+    "RemoveDefense": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "const": "remove_defense",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "RemoveDefense",
+      "type": "object"
+    },
+    "ScaleSkillByStack": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "stack_key": {
+          "minLength": 1,
+          "title": "Stack Key",
+          "type": "string"
+        },
+        "skill_id": {
+          "description": "A skill in this same character's kit.",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "scale_skill_by_stack",
+          "title": "Type",
+          "type": "string"
+        },
+        "base": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Base",
+          "type": "integer"
+        },
+        "increment": {
+          "title": "Increment",
+          "type": "integer"
+        },
+        "effect_index": {
+          "default": null,
+          "minimum": 0,
+          "title": "Effect Index",
+          "type": "integer"
+        },
+        "description_template": {
+          "default": null,
+          "description": "Text with a {value} placeholder.",
+          "title": "Description Template",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stack_key",
+        "skill_id",
+        "type",
+        "base",
+        "increment"
+      ],
+      "title": "ScaleSkillByStack",
+      "type": "object"
+    },
+    "SelfDamage": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "self_damage",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "SelfDamage",
+      "type": "object"
+    },
+    "SelfDamageByStack": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "stack_key": {
+          "minLength": 1,
+          "title": "Stack Key",
+          "type": "string"
+        },
+        "type": {
+          "const": "self_damage_by_stack",
+          "title": "Type",
+          "type": "string"
+        },
+        "schedule": {
+          "description": "HP cost per use; the last value repeats.",
+          "items": {
+            "maximum": 999,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Schedule",
+          "type": "array"
+        }
+      },
+      "required": [
+        "stack_key",
+        "type",
+        "schedule"
+      ],
+      "title": "SelfDamageByStack",
+      "type": "object"
+    },
+    "SetSkillCostOnStack": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "stack_key": {
+          "minLength": 1,
+          "title": "Stack Key",
+          "type": "string"
+        },
+        "skill_id": {
+          "description": "A skill in this same character's kit.",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "set_skill_cost_on_stack",
+          "title": "Type",
+          "type": "string"
+        },
+        "at_stack": {
+          "minimum": 1,
+          "title": "At Stack",
+          "type": "integer"
+        },
+        "cost": {
+          "$ref": "#/$defs/Cost"
+        },
+        "new_description": {
+          "default": null,
+          "minLength": 1,
+          "title": "New Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stack_key",
+        "skill_id",
+        "type",
+        "at_stack",
+        "cost"
+      ],
+      "title": "SetSkillCostOnStack",
+      "type": "object"
+    },
+    "Silence": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "silence",
+          "title": "Type",
+          "type": "string"
+        },
+        "classes": {
+          "default": null,
+          "items": {
+            "enum": [
+              "physical",
+              "chakra",
+              "mental"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Classes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Silence",
+      "type": "object"
+    },
+    "Skill": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Unique within this character's kit.",
+          "pattern": "^[a-z0-9_]+$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 400,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "cost": {
+          "$ref": "#/$defs/Cost"
+        },
+        "target_type": {
+          "enum": [
+            "enemy",
+            "ally",
+            "self",
+            "enemy_team",
+            "ally_team"
+          ],
+          "title": "Target Type",
+          "type": "string"
+        },
+        "classes": {
+          "default": null,
+          "items": {
+            "enum": [
+              "physical",
+              "chakra",
+              "mental"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Classes",
+          "type": "array"
+        },
+        "image": {
+          "default": null,
+          "description": "File in backend/photos/skills/.",
+          "minLength": 1,
+          "title": "Image",
+          "type": "string"
+        },
+        "effects": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "add_stack": "#/$defs/AddStack",
+                "affliction_damage": "#/$defs/AfflictionDamage",
+                "aoe_damage": "#/$defs/AoeDamage",
+                "boost_skill_on_stack": "#/$defs/BoostSkillOnStack",
+                "chakra_drain_over_time": "#/$defs/ChakraDrainOverTime",
+                "chakra_invulnerable": "#/$defs/Invulnerability",
+                "chakra_regen": "#/$defs/ChakraRegen",
+                "chakra_restrict": "#/$defs/ChakraRestrict",
+                "cleanse": "#/$defs/Cleanse",
+                "counter": "#/$defs/ReactiveDefense",
+                "damage": "#/$defs/Damage",
+                "damage_dealt_mod": "#/$defs/Modifier",
+                "damage_ignore_invuln": "#/$defs/DamageIgnoreInvuln",
+                "damage_taken_mod": "#/$defs/Modifier",
+                "defense": "#/$defs/Defense",
+                "delayed_damage": "#/$defs/DelayedDamage",
+                "dodge": "#/$defs/ReactiveDefense",
+                "dot": "#/$defs/Dot",
+                "expiring_defense": "#/$defs/ExpiringDefense",
+                "heal": "#/$defs/Heal",
+                "heal_block": "#/$defs/HealBlock",
+                "heal_dealt_mod": "#/$defs/Modifier",
+                "heal_received_mod": "#/$defs/Modifier",
+                "hot": "#/$defs/Hot",
+                "invulnerable": "#/$defs/Invulnerability",
+                "mark_for_counter": "#/$defs/MarkForCounter",
+                "mental_invulnerable": "#/$defs/Invulnerability",
+                "physical_invulnerable": "#/$defs/Invulnerability",
+                "piercing_damage": "#/$defs/PiercingDamage",
+                "prime_skill": "#/$defs/PrimeSkill",
+                "protect": "#/$defs/Protect",
+                "random_multi_damage": "#/$defs/RandomMultiDamage",
+                "reflect": "#/$defs/ReactiveDefense",
+                "remove_chakra": "#/$defs/ChakraRemoval",
+                "remove_defense": "#/$defs/RemoveDefense",
+                "scale_skill_by_stack": "#/$defs/ScaleSkillByStack",
+                "self_damage": "#/$defs/SelfDamage",
+                "self_damage_by_stack": "#/$defs/SelfDamageByStack",
+                "set_skill_cost_on_stack": "#/$defs/SetSkillCostOnStack",
+                "silence": "#/$defs/Silence",
+                "steal_chakra": "#/$defs/ChakraRemoval",
+                "stun": "#/$defs/Stun",
+                "team_heal": "#/$defs/TeamHeal",
+                "unlock_skill_on_stack": "#/$defs/UnlockSkillOnStack",
+                "unprime_skill": "#/$defs/UnprimeSkill"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/Damage"
+              },
+              {
+                "$ref": "#/$defs/PiercingDamage"
+              },
+              {
+                "$ref": "#/$defs/AfflictionDamage"
+              },
+              {
+                "$ref": "#/$defs/DamageIgnoreInvuln"
+              },
+              {
+                "$ref": "#/$defs/SelfDamage"
+              },
+              {
+                "$ref": "#/$defs/AoeDamage"
+              },
+              {
+                "$ref": "#/$defs/RandomMultiDamage"
+              },
+              {
+                "$ref": "#/$defs/DelayedDamage"
+              },
+              {
+                "$ref": "#/$defs/Dot"
+              },
+              {
+                "$ref": "#/$defs/Heal"
+              },
+              {
+                "$ref": "#/$defs/Hot"
+              },
+              {
+                "$ref": "#/$defs/TeamHeal"
+              },
+              {
+                "$ref": "#/$defs/Protect"
+              },
+              {
+                "$ref": "#/$defs/MarkForCounter"
+              },
+              {
+                "$ref": "#/$defs/HealBlock"
+              },
+              {
+                "$ref": "#/$defs/Stun"
+              },
+              {
+                "$ref": "#/$defs/Silence"
+              },
+              {
+                "$ref": "#/$defs/Defense"
+              },
+              {
+                "$ref": "#/$defs/RemoveDefense"
+              },
+              {
+                "$ref": "#/$defs/ExpiringDefense"
+              },
+              {
+                "$ref": "#/$defs/Modifier"
+              },
+              {
+                "$ref": "#/$defs/Invulnerability"
+              },
+              {
+                "$ref": "#/$defs/ReactiveDefense"
+              },
+              {
+                "$ref": "#/$defs/Cleanse"
+              },
+              {
+                "$ref": "#/$defs/ChakraRemoval"
+              },
+              {
+                "$ref": "#/$defs/ChakraRegen"
+              },
+              {
+                "$ref": "#/$defs/ChakraRestrict"
+              },
+              {
+                "$ref": "#/$defs/ChakraDrainOverTime"
+              },
+              {
+                "$ref": "#/$defs/AddStack"
+              },
+              {
+                "$ref": "#/$defs/SelfDamageByStack"
+              },
+              {
+                "$ref": "#/$defs/BoostSkillOnStack"
+              },
+              {
+                "$ref": "#/$defs/UnlockSkillOnStack"
+              },
+              {
+                "$ref": "#/$defs/ScaleSkillByStack"
+              },
+              {
+                "$ref": "#/$defs/SetSkillCostOnStack"
+              },
+              {
+                "$ref": "#/$defs/PrimeSkill"
+              },
+              {
+                "$ref": "#/$defs/UnprimeSkill"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Effects",
+          "type": "array"
+        },
+        "cooldown": {
+          "maximum": 20,
+          "minimum": 0,
+          "title": "Cooldown",
+          "type": "integer"
+        },
+        "locked": {
+          "default": null,
+          "title": "Locked",
+          "type": "boolean"
+        },
+        "locked_reason": {
+          "default": null,
+          "minLength": 1,
+          "title": "Locked Reason",
+          "type": "string"
+        },
+        "notes": {
+          "default": null,
+          "description": "Design notes for authors; never sent to players.",
+          "title": "Notes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "cost",
+        "target_type",
+        "effects",
+        "cooldown"
+      ],
+      "title": "Skill",
+      "type": "object"
+    },
+    "Stun": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "duration": {
+          "default": null,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Duration",
+          "type": "integer"
+        },
+        "type": {
+          "const": "stun",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Stun",
+      "type": "object"
+    },
+    "TeamHeal": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "value": {
+          "maximum": 999,
+          "minimum": 0,
+          "title": "Value",
+          "type": "integer"
+        },
+        "type": {
+          "const": "team_heal",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "type"
+      ],
+      "title": "TeamHeal",
+      "type": "object"
+    },
+    "UnlockSkillOnStack": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "stack_key": {
+          "minLength": 1,
+          "title": "Stack Key",
+          "type": "string"
+        },
+        "skill_id": {
+          "description": "A skill in this same character's kit.",
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "unlock_skill_on_stack",
+          "title": "Type",
+          "type": "string"
+        },
+        "at_stack": {
+          "minimum": 1,
+          "title": "At Stack",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "stack_key",
+        "skill_id",
+        "type",
+        "at_stack"
+      ],
+      "title": "UnlockSkillOnStack",
+      "type": "object"
+    },
+    "UnprimeSkill": {
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "const": "self",
+          "default": null,
+          "description": "Apply to the caster instead of the skill's resolved target(s).",
+          "title": "Target",
+          "type": "string"
+        },
+        "type": {
+          "const": "unprime_skill",
+          "title": "Type",
+          "type": "string"
+        },
+        "skill_id": {
+          "title": "Skill Id",
+          "type": "string"
+        },
+        "mark": {
+          "default": null,
+          "title": "Mark",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "skill_id"
+      ],
+      "title": "UnprimeSkill",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "default": null,
+      "title": "$Schema",
+      "type": "string"
+    },
+    "abilities": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Skill"
+      },
+      "title": "Abilities",
+      "type": "object"
+    }
+  },
+  "required": [
+    "abilities"
+  ],
+  "title": "SharedAbilities",
+  "type": "object"
+}

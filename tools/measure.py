@@ -47,12 +47,25 @@ def has_module(name):
     return subprocess.run([sys.executable, '-c', f'import {name}'], capture_output=True).returncode == 0
 
 
-def section_tests(tmp_db_url):
+def browser_tests_available():
+    probe = "from playwright.sync_api import sync_playwright\nwith sync_playwright() as p: p.chromium.launch().close()"
+    return subprocess.run([sys.executable, '-c', probe], capture_output=True).returncode == 0
+
+
+def section_tests(tmp_db_url, browser):
     out('## Tests')
     out('| Suite | Result | PASS | FAIL | Time |')
     out('|---|---|---|---|---|')
-    for name, script, env in (('engine', 'test_game_engine.py', None),
-                              ('smoke', 'test_integration_smoke.py', {'DATABASE_URL': tmp_db_url})):
+    suites = [('engine', 'test_game_engine.py', None),
+              ('content', 'test_content.py', None),
+              ('smoke', 'test_integration_smoke.py', {'DATABASE_URL': tmp_db_url})]
+    if not browser:
+        out('| browser | skipped (--no-browser) | | | |')
+    elif not browser_tests_available():
+        out('| browser | skipped (pip install -r requirements-dev.txt; python -m playwright install chromium) | | | |')
+    else:
+        suites.append(('browser', 'test_browser_e2e.py', None))
+    for name, script, env in suites:
         proc, secs = run([sys.executable, script], env)
         text = proc.stdout + proc.stderr
         passes = len(re.findall(r'\bPASS\b', text))
@@ -78,6 +91,7 @@ def section_coverage(tmp_db_url):
     base = [sys.executable, '-m', 'coverage', 'run', f'--data-file={data_file}', '--source=.',
             '--omit=test_*']
     run(base + ['test_game_engine.py'])
+    run(base[:4] + ['-a'] + base[4:] + ['test_content.py'])
     run(base[:4] + ['-a'] + base[4:] + ['test_integration_smoke.py'], {'DATABASE_URL': tmp_db_url})
     proc, _ = run([sys.executable, '-m', 'coverage', 'report', f'--data-file={data_file}'])
     out('```')
@@ -158,6 +172,10 @@ def section_content():
     chars = characters.CHARACTERS
     skills = [(cid, s) for cid, c in chars.items() for s in c['skills']]
     out(f'{len(chars)} characters, {len(skills)} skills')
+    content_dir = os.path.join(BACKEND, 'content', 'characters')
+    if os.path.isdir(content_dir):
+        files = [f for f in os.listdir(content_dir) if f.endswith('.json')]
+        out(f'content files: {len(files)} characters in backend/content/ (loaded + validated: {len(chars)})')
 
     referenced = set()
     missing = []
@@ -198,6 +216,7 @@ def section_content():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--save', help='also write the report to this file')
+    ap.add_argument('--no-browser', action='store_true', help='skip the Playwright browser suite (~15 s)')
     args = ap.parse_args()
 
     tmp_db = os.path.join(tempfile.gettempdir(), 'dba_measure_smoke.db')
@@ -215,7 +234,7 @@ def main():
     except FileNotFoundError:
         out()
 
-    section_tests(tmp_db_url)
+    section_tests(tmp_db_url, browser=not args.no_browser)
     section_coverage(tmp_db_url)
     section_lint()
     section_size()
