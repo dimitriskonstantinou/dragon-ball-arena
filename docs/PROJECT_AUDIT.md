@@ -150,7 +150,7 @@ After the fix: 0 rooms left after 1,020 matches; memory growth flat (161 KB fixe
 Handlers mutate shared dicts. Two near-simultaneous `commit-turn` events could interleave. Not demonstrated.
 **Fix:** per-room `threading.Lock` around engine calls (cheap insurance), revisit with gevent in deployment.
 
-**BE-6 — MEDIUM — End-of-match persistence errors are unhandled (by reading)**
+**BE-6 — MEDIUM — End-of-match persistence errors are unhandled (by reading)** — ✅ FIXED in Step 14 (reproduced first: 0/2 players saw the end; now 2/2, error logged with room/winner/user ids)
 `end_game` → `persist_match_result` → `db.session.commit()` with no error handling; on failure the room is already marked ended but stats are lost, and the error escapes the disconnect handler.
 **Fix:** wrap and log; keep the game result regardless.
 

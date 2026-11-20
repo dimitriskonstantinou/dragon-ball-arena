@@ -78,7 +78,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | Task | Finding | Done when |
 |---|---|---|
 | ✅ 2.1 Remove finished rooms after the final broadcast; late events answered cleanly — *Step 13* | BE-3 | Done: probe item fixed; 0 rooms left and flat memory over 1,020 real matches |
-| 2.2 End-of-match persistence errors handled + logged | BE-6 | Simulated DB failure → game still ends, error logged |
+| ✅ 2.2 End-of-match persistence errors handled + logged — *Step 14* | BE-6 | Done: real failing COMMIT → both players get the end, error logged, nothing half-saved, next match saves |
 | 2.3 Per-room lock around engine calls | BE-5 | Concurrent-commit test can't double-resolve |
 | 2.4 Surrender | BE-4 | `surrender` → loss recorded, both clients notified |
 | 2.5 Turn timer + auto-pass (deadline sent in state) | BE-1 | Idle player's turn passes after N s; repeated AFK → forfeit (rule to confirm) |
@@ -165,9 +165,9 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**2.2 / Step 14: end-of-match persistence errors (BE-6).** If saving the result fails, `end_game` (which now removes
-the room first) raises before the final broadcast, so neither player sees the end. Small, and it hardens exactly the
-path Step 13 changed. Then 2.3 per-room lock (needed before the turn timer adds a background thread), 2.4 surrender,
-2.5 turn timer, 2.6 reconnect.
+**2.3 / Step 15: per-room lock (BE-5).** Two events for the same match (a double-click on "commit", or a disconnect
+arriving mid-commit) can currently run at the same time in different threads. Unverified so far: first reproduce it
+with a concurrency test, then add a lock per match around every engine call. The turn timer (2.5) adds a background
+thread that touches matches, so this must land before it. Then 2.4 surrender, 2.5 turn timer, 2.6 reconnect.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

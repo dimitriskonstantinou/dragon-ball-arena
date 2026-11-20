@@ -109,6 +109,8 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 - **Every finished match goes through `end_game`**, which pops the room from `GAMES` first (that pop is the
   "ended exactly once" guard), saves the result, sends the final state + message, then closes the Socket.IO room.
   Nothing about a finished match stays in memory; don't keep references to finished games elsewhere.
+  A failed save is logged ("Could not save match result: room=... winner=... p1_user=... p2_user=...") and
+  rolled back, and never stops the players from seeing the end.
 - One account, one seat: `find-match` rejects accounts already queued or in an unfinished match.
 - Use `log` (logging), not `print`, in new code.
 

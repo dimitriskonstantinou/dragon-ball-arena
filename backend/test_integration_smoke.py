@@ -428,6 +428,57 @@ else:
           appmod.GAMES == {} and not any(r in appmod.socketio.server.manager.rooms.get('/', {}) for r in finished),
           list(appmod.GAMES))
 
+    # --- Step 14 regression: if saving the result failed, end_game raised before
+    # the final broadcast, so neither player saw the match end. Simulated with a
+    # real failing COMMIT (not a patched function), so the rollback is tested too.
+    import logging
+    from sqlalchemy import event
+
+    def total_matches():
+        with appmod.app.app_context():
+            return tuple(appmod.db.session.get(appmod.UserStats, uid).total_matches for uid in (winner_uid, loser_uid))
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    def failing_commit(session):
+        raise RuntimeError('simulated database outage')
+
+    capture = Capture()
+    appmod.log.addHandler(capture)
+    before = total_matches()
+    event.listen(appmod.db.session, 'before_commit', failing_commit)
+    try:
+        p1_client.get_received(); p2_client.get_received()
+        p1_client.emit('find-match', team_ids)
+        p2_client.emit('find-match', team_ids)
+        start = next(e['args'][0] for e in p1_client.get_received() if e['name'] == 'game-start')
+        p2_client.get_received()
+        for ch in appmod.GAMES[start['roomId']]['players']['p2']['team']:
+            ch['health'] = 0
+        p1_client.emit('commit-turn', {'paymentList': []})
+        got1, got2 = p1_client.get_received(), p2_client.get_received()
+    finally:
+        event.remove(appmod.db.session, 'before_commit', failing_commit)
+        appmod.log.removeHandler(capture)
+
+    check("when saving the result fails, both players still get the final state and the game-over message",
+          all(any(e['name'] == 'update-state' and e['args'][0].get('winner') for e in got)
+              and any(e['name'] == 'message' for e in got) for got in (got1, got2)), (got1, got2))
+    check("...the player who made the move doesn't get a server error",
+          not any(e['name'] == 'error-msg' for e in got1), got1)
+    check("...the failure is logged with what's needed to restore the result",
+          any('Could not save match result' in m and start['roomId'] in m for m in capture.messages), capture.messages)
+    check("...nothing is half-saved (no stats changed)", total_matches() == before, (before, total_matches()))
+    check("...and the match is still removed from memory", start['roomId'] not in appmod.GAMES)
+    check("after the failure, the next match saves normally (the session was rolled back)",
+          play_quick_match() and total_matches() == tuple(n + 1 for n in before), (before, total_matches()))
+
     # --- Regression: find-match payloads weren't validated (a non-list
     # crashed the handler; 3 copies of one character were accepted). ---
     p1_client.get_received()

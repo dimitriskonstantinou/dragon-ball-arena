@@ -35,5 +35,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 12a | `feature/step12a-content-pipeline` | Content as JSON files (single source) + Pydantic validation + VS Code schemas; Playwright browser tests; Spirit Ball icon 404 fixed | checks 211→279 (+content 53, +browser 14, smoke +1); cov 86→88%; probe 4=4 |
 | 12b | `feature/step12b-catalog-runtime` | Gameplay reads the in-memory catalog; `characters` table = id registry synced at startup (never deleted); shim removed; lobby display-only; all-unlocked policy applied to old accounts | SQL per connect/find-match 3→1 (0 roster reads); lobby 10,343→7,437 B; smoke 45→53; cov 88→90% |
 | 13 | `feature/step13-prune-finished-matches` | `end_game` pops the room first (exactly-once guard), sends final state, closes the Socket.IO room; `ENDED_ROOMS` removed | 220/220 matches kept → 0; ~30 KB/match → flat; smoke 53→59; probe 4→3 |
+| 14 | `feature/step14-safe-match-end` | A failed result save is caught, rolled back and logged; both players still get the final state | final states on DB failure 0/2 → 2/2; smoke 59→65; probe 4→3 |
 
-**Merged into `dev`:** none of steps 1–13 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–14 yet (user merges in order).

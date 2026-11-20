@@ -170,7 +170,17 @@ def end_game(room_id, winner, reason=None):
     for p_key in ('p1', 'p2'):
         SID_ROOM_MAP.pop(game['players'][p_key]['id'], None)
 
-    persist_match_result(game, winner)
+    # Saved before the broadcast so the client's stats badge refresh sees it --
+    # but a database failure must never stop the players from seeing the end.
+    try:
+        persist_match_result(game, winner)
+    except Exception:
+        # Socket events get a fresh session anyway, but end_game will also run
+        # from background tasks (turn timer), where nothing else would clean up.
+        db.session.rollback()
+        log.exception("Could not save match result: room=%s winner=%s p1_user=%s p2_user=%s started_at=%s",
+                      room_id, winner, game['players']['p1'].get('user_id'),
+                      game['players']['p2'].get('user_id'), game.get('started_at'))
 
     broadcast_state(game)
     message = f"GAME OVER! {winner.upper()} WINS!" if not reason else reason
