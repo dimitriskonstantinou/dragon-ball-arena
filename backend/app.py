@@ -613,6 +613,18 @@ def handle_commit(data):
     except Exception as e:
         report_error(e, 'commit-turn')
 
+@socketio.on('surrender')
+def handle_surrender(data=None):
+    """Ends the match as a loss for whoever sends it (any time, any turn).
+    There's nothing in the payload to validate; it's ignored."""
+    try:
+        with locked_match() as (room_id, game, role):
+            game_engine.surrender(game, role)
+            end_game(room_id, game['winner'],
+                     reason=f"{role.upper()} SURRENDERED. {game['winner'].upper()} WINS!")
+    except Exception as e:
+        report_error(e, 'surrender')
+
 if __name__ == '__main__':
     # Local development runner only -- production runs under gunicorn (see
     # docs/DEPLOY_PLAN.md). allow_unsafe_werkzeug lets it also start without

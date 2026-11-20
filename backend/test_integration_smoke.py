@@ -802,6 +802,51 @@ else:
     for c in (intruder, seat1, seat2):
         c.disconnect()
 
+    # --- Step 18 regression: there was no way to give up a match; the only way
+    # out was leaving and waiting out the reconnect grace period. ---
+    _, quit1 = new_player('quit1')
+    _, quit2 = new_player('quit2')
+    room, quit_role, other_role = match_of(quit1, quit2)
+    g = appmod.GAMES[room]
+    clients = {quit_role: quit1, other_role: quit2}
+    if g['turn'] == quit_role:                      # surrender on the OPPONENT's turn
+        quit1.emit('commit-turn', {'paymentList': []})
+    quit_uid, other_uid = g['players'][quit_role]['user_id'], g['players'][other_role]['user_id']
+    with appmod.app.app_context():
+        before = {uid: (appmod.db.session.get(appmod.UserStats, uid).total_wins,
+                        appmod.db.session.get(appmod.UserStats, uid).total_losses) for uid in (quit_uid, other_uid)}
+    quit1.get_received(); quit2.get_received()
+    quit1.emit('surrender', {})
+    got1, got2 = quit1.get_received(), quit2.get_received()
+    check("surrendering (even on the opponent's turn) ends the match for the opponent",
+          g.get('winner') == other_role and room not in appmod.GAMES, (g.get('winner'), room in appmod.GAMES))
+    check("...both players get the final state and the reason",
+          all(any(e['name'] == 'update-state' and e['args'][0].get('winner') == other_role for e in got)
+              and any(e['name'] == 'message' and 'SURRENDERED' in text(e) for e in got) for got in (got1, got2)))
+    with appmod.app.app_context():
+        after = {uid: (appmod.db.session.get(appmod.UserStats, uid).total_wins,
+                       appmod.db.session.get(appmod.UserStats, uid).total_losses) for uid in (quit_uid, other_uid)}
+    check("...the loss goes to the player who surrendered and the win to the opponent",
+          after[quit_uid] == (before[quit_uid][0], before[quit_uid][1] + 1)
+          and after[other_uid] == (before[other_uid][0] + 1, before[other_uid][1]), (before, after))
+    quit1.emit('surrender', {})
+    errors = [text(e) for e in quit1.get_received() if e['name'] == 'error-msg']
+    check("surrendering again (no match any more) gets a clear answer", errors == ["You are not in a match."], errors)
+
+    # Surrendering while the opponent is disconnected (in their grace period) ends it at once.
+    http_gone, gone = new_player('gone1')
+    _, stay = new_player('stay1')
+    room, gone_role, stay_role = match_of(gone, stay)
+    g = appmod.GAMES[room]
+    gone.disconnect()
+    stay.get_received()
+    stay.emit('surrender', {})
+    check("surrendering while the opponent is reconnecting ends the match in their favour",
+          g.get('winner') == gone_role and room not in appmod.GAMES)
+    check("...and leaves no reconnect bookkeeping behind", appmod.DISCONNECTED_USERS == {}, appmod.DISCONNECTED_USERS)
+    for c in (quit1, quit2, stay):
+        c.disconnect()
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S): {FAILURES}")

@@ -1170,6 +1170,17 @@ def test_turn_timeout_rules():
           game['winner'])
 
 
+def test_surrender():
+    """BE-4: the player who surrenders loses, on any turn, and nothing else changes."""
+    for who, expected in (('p1', 'p2'), ('p2', 'p1')):
+        game = make_game()
+        before = copy.deepcopy(game['players'])
+        ge.surrender(game, who)
+        check(f"{who} surrendering makes {expected} the winner (even when it's p1's turn)", game['winner'] == expected,
+              game['winner'])
+        check(f"...without touching either team ({who})", game['players'] == before)
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

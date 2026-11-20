@@ -39,5 +39,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 15 | `feature/step15-room-lock` | Lock per match (`locked_match`) + matchmaking lock; reproduced 2 real races first (double commit skipped the opponent's turn; simultaneous tabs self-matched) | double commit 2 turns → 1; probe 5→3; smoke 65→71; app cov 83→85% |
 | 16 | `feature/step16-turn-timer` | Turn timer: 60 s, auto-pass, 3 timeouts in a row = forfeit; one background ticker under match locks; countdown in the UI | idle stall reproduced → fixed; engine 167→177, smoke 71→80, browser 14→21; probe 4→3 |
 | 17 | `feature/step17-reconnect` | Disconnect mid-match = 30 s grace instead of instant forfeit; same account rejoins from any tab (`rejoin_match`); opponent sees connected status | reload-forfeit reproduced → fixed in a real browser; smoke 80→96, browser 21→27; probe 4→3 |
+| 18 | `feature/step18-surrender` | `surrender` event (any turn) + button behind a confirm dialog; loss recorded for the surrendering player | "no way to surrender" reproduced → fixed; engine 177→181, smoke 96→102, browser 27→34; probe 4→3 |
 
-**Merged into `dev`:** none of steps 1–17 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–18 yet (user merges in order).

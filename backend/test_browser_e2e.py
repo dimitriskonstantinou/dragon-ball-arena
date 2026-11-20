@@ -27,6 +27,7 @@ BACKEND = os.path.dirname(os.path.abspath(__file__))
 MAX_TURNS = 80
 FAILURES = []
 OPEN_PAGES = []  # (label, page) -- dumped as screenshots + battle logs when a test crashes
+SURRENDER_ANSWERS = {}  # label -> True/False: how that player answers the "Surrender?" confirm
 
 # Browser console messages that are expected, with the reason. They are counted
 # and printed, never silently dropped. Anything else fails the test.
@@ -78,7 +79,7 @@ def new_player(browser, url, errors, label):
     page.on('pageerror', lambda e: errors.append(f'{label}: {e}'))
     page.on('console', lambda m: m.type == 'error' and errors.append(f'{label} console: {m.text}'))
     page.on('framenavigated', lambda f: f == page.main_frame and errors.append(f'{label} --- navigated ---'))
-    page.on('dialog', lambda d: (errors.append(f'{label} dialog: {d.message}'), d.dismiss()))
+    page.on('dialog', lambda d: answer_dialog(d, label, errors))
     OPEN_PAGES.append((label, page))
     page.goto(url)
     name = f'{label}_{uuid.uuid4().hex[:6]}'
@@ -92,6 +93,16 @@ def new_player(browser, url, errors, label):
     page.wait_for_selector('#lobby-screen', state='visible')
     page.wait_for_function("document.querySelectorAll('#char-grid .select-card').length >= 3")
     return context, page, name
+
+
+def answer_dialog(dialog, label, errors):
+    """The surrender confirm is expected and answered as the test says; any
+    other dialog (e.g. a stray alert) is unexpected and fails the test."""
+    if dialog.type == 'confirm' and dialog.message.startswith('Surrender') and label in SURRENDER_ANSWERS:
+        dialog.accept() if SURRENDER_ANSWERS[label] else dialog.dismiss()
+        return
+    errors.append(f'{label} dialog: {dialog.message}')
+    dialog.dismiss()
 
 
 def find_match(page, card_indexes):
@@ -329,7 +340,44 @@ def test_reload_mid_match_returns_to_the_match(browser, url):
     ctx2.close()
 
 
-TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_reload_mid_match_returns_to_the_match]
+def test_surrender_with_confirmation(browser, url):
+    """BE-4: a Surrender button, behind a confirm dialog, ends the match as a loss."""
+    errors = []
+    ctx1, p1, _ = new_player(browser, url, errors, 'kappa')
+    ctx2, p2, _ = new_player(browser, url, errors, 'lambda')
+    find_match(p1, [0, 1, 2])
+    find_match(p2, [2, 3, 4])
+    for p in (p1, p2):
+        p.wait_for_selector('#game-screen', state='visible')
+        p.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+    check("both players see a Surrender button during the match",
+          p1.locator('#surrender-btn').is_visible() and p2.locator('#surrender-btn').is_visible())
+
+    SURRENDER_ANSWERS['kappa'] = False             # changes their mind
+    p1.click('#surrender-btn')
+    p1.wait_for_timeout(500)
+    check("answering 'Cancel' keeps the match going", not game_over(p1) and not game_over(p2))
+
+    SURRENDER_ANSWERS['kappa'] = True
+    p1.click('#surrender-btn')
+    for p in (p1, p2):
+        p.wait_for_function("['YOU WIN!', 'YOU LOSE!'].includes(document.getElementById('status').innerText)")
+    check("confirming ends the match: the one who surrendered loses, the opponent wins",
+          (status(p1), status(p2)) == ('YOU LOSE!', 'YOU WIN!'), (status(p1), status(p2)))
+    check("...both are told it was a surrender",
+          'SURRENDERED' in p1.locator('#log').inner_text() and 'SURRENDERED' in p2.locator('#log').inner_text())
+    p1.wait_for_function("document.getElementById('user-badge-text').innerText.includes('L:1')")
+    p2.wait_for_function("document.getElementById('user-badge-text').innerText.includes('W:1')")
+    check("...the result is saved (L:1 / W:1 badges)", True)
+    check("...and the button disappears", p1.locator('#surrender-btn').is_hidden() and p2.locator('#surrender-btn').is_hidden())
+    unexpected = real_errors(errors)
+    check("no JavaScript errors or unexpected dialogs", unexpected == [], unexpected)
+    ctx1.close()
+    ctx2.close()
+
+
+TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_reload_mid_match_returns_to_the_match,
+         test_surrender_with_confirmation]
 # Run on a second server with short limits (TURN_SECONDS=2, RECONNECT_SECONDS=3) so they finish quickly.
 FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits, test_disconnect_forfeits_to_opponent]
 

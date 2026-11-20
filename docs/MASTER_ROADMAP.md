@@ -80,7 +80,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | ✅ 2.1 Remove finished rooms after the final broadcast; late events answered cleanly — *Step 13* | BE-3 | Done: probe item fixed; 0 rooms left and flat memory over 1,020 real matches |
 | ✅ 2.2 End-of-match persistence errors handled + logged — *Step 14* | BE-6 | Done: real failing COMMIT → both players get the end, error logged, nothing half-saved, next match saves |
 | ✅ 2.3 Per-room lock around engine calls — *Step 15* | BE-5 | Done: double commit resolves 1 turn (was 2); simultaneous tabs never self-match; 4-player x10 stress clean |
-| 2.4 Surrender | BE-4 | `surrender` → loss recorded, both clients notified |
+| ✅ 2.4 Surrender — *Step 18* | BE-4 | Done: any turn, behind a confirm dialog; loss/win recorded; both told |
 | ✅ 2.5 Turn timer + auto-pass (deadline sent in state) — *Step 16* | BE-1 | Done: 60 s (`TURN_SECONDS`), auto-pass, 3 timeouts in a row forfeit (rules confirmed by the user); countdown in the UI |
 | ✅ 2.6 Reconnect grace window (by `user_id`) — *Step 17* | BE-2 | Done: reload mid-match → same match, same role, current state (real browser); 30 s (`RECONNECT_SECONDS`) then forfeit |
 | 2.7 Structured battle events from the server (`actor, skill, targets, damage, statuses`) | FE-1 | Each resolved move produces an event in both clients' streams |
@@ -165,9 +165,12 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**2.4 / Step 18: surrender (BE-4).** Small and completes the "every match can end cleanly" set (wipe, timeout
-forfeit, disconnect forfeit, surrender): a `surrender` event (with a confirm dialog in the UI) ends the match as a loss
-for the player who surrenders. After that, Phase 3 (security & production config: SEC-1 secret key, SEC-2 CORS +
-cookies, rate limits, session revocation) -- the deploy blockers -- before the DEV site goes online.
+**3.1 / Step 19: production configuration + required secret key (SEC-1).** Every way a match can end now works
+(wipe, timeouts, disconnect grace, surrender), so the next priority is the deploy blockers. Today the server signs
+login cookies with a hardcoded fallback key: if it's ever deployed without `SECRET_KEY`, anyone can forge a login as
+any account. Plan: one `config.py` that reads every setting from the environment (`ENV`, `SECRET_KEY`, `DATABASE_URL`,
+`TURN_SECONDS`, `RECONNECT_SECONDS`, ...), refuses to start in production without a real secret key, and keeps today's
+zero-setup local development. Then 3.2 (allowed origins + cookie flags, SEC-2), 3.3 rate limits, 3.4 session revocation.
+Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

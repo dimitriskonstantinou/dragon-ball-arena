@@ -144,7 +144,7 @@ connected). Re-measured with 200 real matches through the handlers: ~30 KB/match
 After the fix: 0 rooms left after 1,020 matches; memory growth flat (161 KB fixed cache warm-up, not per match).
 **Fix:** remove the room after the final broadcast; handle late events cleanly. Safe now: yes.
 
-**BE-4 — MEDIUM — No surrender (by reading).** Fix: `surrender` event → `end_game`.
+**BE-4 — MEDIUM — No surrender (by reading).** Fix: `surrender` event → `end_game`. — ✅ FIXED in Step 18 (any turn, confirm dialog in the UI, verified in a real browser)
 
 **BE-5 — MEDIUM (unverified) — No per-room locking under `async_mode=threading`** — ✅ FIXED in Step 15; **was HIGH (verified exploit)**
 Handlers mutate shared dicts. Two near-simultaneous `commit-turn` events could interleave. Not demonstrated.

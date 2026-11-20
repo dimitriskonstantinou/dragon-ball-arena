@@ -167,6 +167,7 @@ socket.on('update-state', game => {
     if(game.winner) {
         document.getElementById('status').innerText = game.winner === myRole ? "YOU WIN!" : "YOU LOSE!";
         document.getElementById('end-turn').style.display = 'none';
+        document.getElementById('surrender-btn').style.display = 'none';
         showTurnTimer(null);
         refreshUserBadge();
         return;
@@ -176,6 +177,7 @@ socket.on('update-state', game => {
     document.getElementById('status').innerText = isMyTurn ? "PLAN YOUR MOVES" : "OPPONENT THINKING...";
     showTurnTimer(game.turn_seconds_left, isMyTurn);
     document.getElementById('end-turn').style.display = isMyTurn ? 'inline-block' : 'none';
+    document.getElementById('surrender-btn').style.display = 'inline-block';
 
     const myData = game.players[myRole];
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
@@ -544,6 +546,10 @@ function resetTargeting() {
     document.getElementById('enemy-team').classList.remove('targeting-mode');
     document.getElementById('my-team').classList.remove('targeting-mode');
     updateInstruction("");
+}
+
+function surrender() {
+    if (confirm('Surrender this match? It counts as a loss.')) socket.emit('surrender', {});
 }
 
 function cancelMove(charId) {

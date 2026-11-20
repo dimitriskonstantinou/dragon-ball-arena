@@ -829,6 +829,13 @@ def cancel_move(game_state, player_id, char_id):
     return game_state
 
 
+def surrender(game_state, player_id):
+    """`player_id` gives up: the opponent wins. Allowed at any time during
+    the match, including the opponent's turn."""
+    game_state['winner'] = 'p2' if player_id == 'p1' else 'p1'
+    return game_state
+
+
 def timeout_turn(game_state):
     """The active player ran out of time: their queued moves are dropped, no
     Ki is spent, and the turn passes as if they had committed nothing. The

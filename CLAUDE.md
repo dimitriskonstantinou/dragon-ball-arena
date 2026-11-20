@@ -140,6 +140,7 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `queue-skill` | `{charId, skillId, targetPlayerKey, targetIndex}` | `self`/team skills: server picks the target |
 | `cancel-skill` | `{charId}` | own move, own turn only |
 | `commit-turn` | `{paymentList: [ki, ...]}` | must pay queued costs exactly |
+| `surrender` | (none; ignored) | any time during the match; the sender loses (UI asks for confirmation first) |
 
 | Server → client | Payload |
 |---|---|
