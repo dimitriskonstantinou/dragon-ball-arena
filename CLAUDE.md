@@ -92,7 +92,9 @@ Safe way to run the smoke test without touching the real DB:
 ## Known sharp edges (see PLAN.md §3 for the full list)
 
 - **Never emit the raw game state to clients.** Always `broadcast_state(game)` (per-player `game_engine.view_for`),
-  which strips socket/account ids, the opponent's queue and invisible statuses.
+  which strips socket/account ids, the opponent's queue, invisible statuses, and every skill's `effects` /
+  `base_*` backups. The client only gets display fields (name, description, cost, cooldowns, locked, classes,
+  target_type, image). If the frontend ever needs effect data, send a derived display field, not the raw `effects`.
 - **Rule violations raise `game_engine.GameError`** (shown to the player). Any other exception is treated as a bug:
   `app.report_error` logs the traceback and the player gets `SERVER_ERROR_MSG`. Don't raise bare `Exception`
   for game rules. Game *events* (like a counter-trap firing) are return values, not exceptions.

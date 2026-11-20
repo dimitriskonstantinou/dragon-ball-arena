@@ -160,9 +160,10 @@ Each phase goes on its own feature branch off `main` and merges only when green.
 - [x] Atomic `resolve_turn`: validate first, apply against a snapshot, roll back in place on any crash — *Step 5* (`feature/step5-atomic-resolve`)
 - [x] Fix `set_skill_cost_on_stack` NameError; apply `scale_skill_by_stack` description template — *Step 6* (`feature/step6-skill-text`)
 - **Done when:** probe script reports 0 of items 1–12 reproduced; new regression tests pass; payload bytes ≤ baseline.
-- **Status after Step 6 (2026-11-20):** items 1–12 ✅ all fixed; tests ✅; payload ❌ 11,622 B vs 11,340 B baseline
-  (+2.5%). Cause: every skill's full `effects` list is sent to clients, and the frontend never reads it, so new
-  authored text inside effects (Kaioken's `new_description`) rides along. Fix proposed: strip `effects` in `view_for`.
+- [x] `view_for` strips skill `effects` and prime_skill `base_*` backups (server-only, never read by the client) — *Step 7* (`feature/step7-lean-view`)
+- **✅ Phase 1 complete (2026-11-20, Step 7):** probe items 1–12 all fixed; all regression tests pass; payload per
+  player 8,414 B vs 11,340 B baseline (−26%). (After Step 6 it was briefly 11,622 B: Kaioken's new text rode
+  along inside skill `effects`, which Step 7 stopped sending.)
 
 ### Phase 2 — Match lifecycle (P1 #11–17)
 - [ ] Derive role from `request.sid`; validate all socket payloads

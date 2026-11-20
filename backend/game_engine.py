@@ -582,6 +582,13 @@ def view_for(game_state, role):
         view['pending_moves'] = []
     for char in view['players'][role]['team']:
         char['status'] = [s for s in char.get('status', []) if not s.get('invisible')]
+    # Skill mechanics are server-only: the client renders name/description/
+    # cost/cooldown and never reads 'effects' or prime_skill's 'base_*' backups.
+    for player in view['players'].values():
+        for char in player['team']:
+            for skill in char.get('skills', []):
+                for key in [k for k in skill if k == 'effects' or k.startswith('base_')]:
+                    del skill[key]
     return view
 
 

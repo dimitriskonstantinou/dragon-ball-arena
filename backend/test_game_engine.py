@@ -1044,6 +1044,32 @@ def test_set_skill_cost_on_stack_updates_text():
           a['skills'][0]['description'])
 
 
+def test_view_for_strips_skill_mechanics():
+    """Skill effects (and prime_skill's base_* backups) are server-only; they
+    were most of the payload and the client never reads them."""
+    import characters
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = copy.deepcopy(characters.CHARACTERS['tien_saiyan_saga']['skills'])
+    game['players']['p2']['team'][0]['skills'] = copy.deepcopy(characters.CHARACTERS['goku_saiyan_saga']['skills'])
+    play(game, 'p1', 'A', 'best_friend', 'p1', 0)  # primes Tri-Beam -> creates base_* backups
+    check("(setup) priming created base_* backups on the live skill",
+          any(k.startswith('base_') for s in a['skills'] for k in s))
+
+    frontend_fields = {'id', 'name', 'description', 'image', 'cost', 'currentCooldown', 'locked', 'locked_reason',
+                       'classes', 'target_type', 'cooldown'}
+    for role in ('p1', 'p2'):
+        view = ge.view_for(game, role)
+        skills = [s for p in view['players'].values() for c in p['team'] for s in c['skills']]
+        check(f"{role}'s view has no skill effects or base_* backups (either team)",
+              not any(k == 'effects' or k.startswith('base_') for s in skills for k in s))
+        live = [s for p in game['players'].values() for c in p['team'] for s in c['skills']]
+        check(f"{role}'s view keeps every field the frontend reads",
+              all({k: v for k, v in l.items() if k in frontend_fields} == v for l, v in zip(live, skills)))
+    check("the live game state still has every skill's effects",
+          all('effects' in s for p in game['players'].values() for c in p['team'] for s in c['skills']))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

@@ -148,6 +148,9 @@ else:
           p2_update is not None and p2_update['pending_moves'] == [], p2_update and p2_update['pending_moves'])
     check("no socket ids or account ids are sent to clients",
           all(f not in p for u in (p1_update, p2_update) if u for p in u['players'].values() for f in ('id', 'user_id')))
+    sent_skills = [s for u in (p1_update, p2_update) if u for p in u['players'].values() for c in p['team'] for s in c['skills']]
+    check("skill effects are not sent to clients, but name/cost/description are",
+          sent_skills and all('effects' not in s and {'name', 'cost', 'description'} <= set(s) for s in sent_skills))
 
     # Regression: an empty payment used to cast costed skills for free.
     if skill['cost']:
