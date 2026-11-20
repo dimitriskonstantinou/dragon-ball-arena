@@ -106,6 +106,8 @@ Safe way to run the smoke test without touching the real DB:
 - **Socket handlers never trust identity from the payload.** Get room + role with `current_match()` (from
   `request.sid`), validate the payload first with `require(data, field=type, ...)`, and wrap the body in
   `try: ... except Exception as e: report_error(e, '<event>')`. Follow this pattern for every new event.
-- Still open (PLAN.md §3): no turn timer/reconnect/surrender, `GAMES` is never pruned, the same account can
-  queue twice, no per-room lock.
+- **One account, one seat**: `find-match` rejects an account that is already queued (any tab) or in an unfinished
+  match (`user_in_active_match`). Module-level state (`GAMES`, `MATCHMAKING_QUEUE`, `SID_ROOM_MAP`) is mutated in
+  place, never rebound, because tests and other code hold references to these objects.
+- Still open (PLAN.md §3): no turn timer/reconnect/surrender, `GAMES` is never pruned, no per-room lock.
 - Windows dev machine (Python 3.14): use the `;` separator in `PYTHONPATH`, and avoid Unix-only shell tricks in tooling.

@@ -323,6 +323,38 @@ else:
           errors == ["Pick 3 different characters!"] and not any(e['name'] == 'match-status' for e in got), got)
     check("...and nobody was put in the matchmaking queue", appmod.MATCHMAKING_QUEUE == [], appmod.MATCHMAKING_QUEUE)
 
+    # --- Regression: one account in two tabs could be matched against itself. ---
+    queue_obj = appmod.MATCHMAKING_QUEUE
+    client1.get_received()
+    client1.emit('find-match', team_ids)
+    check("(setup) account 1 is searching", len(appmod.MATCHMAKING_QUEUE) == 1, appmod.MATCHMAKING_QUEUE)
+    second_tab = appmod.socketio.test_client(appmod.app, flask_test_client=flask_client1)
+    second_tab.get_received()
+    second_tab.emit('find-match', team_ids)
+    got = second_tab.get_received()
+    errors = [e['args'][0] for e in got if e['name'] == 'error-msg']
+    check("the same account can't search again from a second tab",
+          errors == ["This account is already searching for a match in another tab!"]
+          and not any(e['name'] == 'game-start' for e in got), got)
+    check("...so it is never matched against itself", len(appmod.MATCHMAKING_QUEUE) == 1, appmod.MATCHMAKING_QUEUE)
+    second_tab.disconnect()
+    client1.disconnect()
+    check("closing the searching tab removes it from the queue (same list object, in place)",
+          appmod.MATCHMAKING_QUEUE == [] and appmod.MATCHMAKING_QUEUE is queue_obj, appmod.MATCHMAKING_QUEUE)
+
+    # An account still playing an unfinished match (e.g. in another tab) can't start a second one.
+    user2_id = r2.get_json()['id']
+    appmod.GAMES['fake-active'] = {'winner': None, 'players': {'p1': {'user_id': user2_id}, 'p2': {'user_id': -1}}}
+    try:
+        client2.get_received()
+        client2.emit('find-match', team_ids)
+        errors = [e['args'][0] for e in client2.get_received() if e['name'] == 'error-msg']
+    finally:
+        del appmod.GAMES['fake-active']
+    check("an account already in an unfinished match can't search for another",
+          errors == ["This account is already in a match in another tab!"], errors)
+    check("...and wasn't queued", appmod.MATCHMAKING_QUEUE == [], appmod.MATCHMAKING_QUEUE)
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S): {FAILURES}")

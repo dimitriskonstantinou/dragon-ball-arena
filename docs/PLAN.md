@@ -170,7 +170,7 @@ Each phase goes on its own feature branch off `main` and merges only when green.
   client no longer sends `roomId`/`myPlayerKey`; out-of-turn commit answered — *Step 8* (`feature/step8-socket-validation`)
 - [x] *(found in Step 8)* `cancel_move` let the opponent cancel your queued move (same character id on both teams) — *Step 8*
 - [x] *(found in Step 8)* `find-match` accepted 3 copies of the same character (duplicate ids break charId lookups) — *Step 8*
-- [ ] Queue dedupe by `user_id`
+- [x] Queue dedupe by `user_id` + no second match while one is unfinished (no self-matching); queue pruned in place on disconnect — *Step 9* (`feature/step9-one-account-one-seat`)
 - [ ] Turn timer + auto-pass; surrender; reconnect grace window
 - [ ] Prune finished rooms; per-room lock
 - **Done when:** smoke test covers surrender, timeout and reconnect; `app.py` coverage ≥ 85%.

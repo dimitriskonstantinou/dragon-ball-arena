@@ -241,8 +241,7 @@ def handle_connect():
 def handle_disconnect():
     sid = request.sid
 
-    global MATCHMAKING_QUEUE
-    MATCHMAKING_QUEUE = [p for p in MATCHMAKING_QUEUE if p['id'] != sid]
+    MATCHMAKING_QUEUE[:] = [p for p in MATCHMAKING_QUEUE if p['id'] != sid]  # in place: keep the same list object
 
     room_id = SID_ROOM_MAP.pop(sid, None)
     if not room_id:
@@ -285,6 +284,11 @@ def current_match():
     return room_id, game, role
 
 
+def user_in_active_match(user_id):
+    return any(not g.get('winner') and user_id in (g['players']['p1']['user_id'], g['players']['p2']['user_id'])
+               for g in GAMES.values())
+
+
 @socketio.on('find-match')
 def handle_find_match(selected_char_ids):
     try:
@@ -296,6 +300,12 @@ def handle_find_match(selected_char_ids):
             raise GameError("You are already in a match!")
         if any(p['id'] == sid for p in MATCHMAKING_QUEUE):
             raise GameError("You are already searching for a match!")
+        # Checked per ACCOUNT, not per connection: otherwise one account in two
+        # tabs could be matched against itself (and record its own win + loss).
+        if any(p['user_id'] == user.id for p in MATCHMAKING_QUEUE):
+            raise GameError("This account is already searching for a match in another tab!")
+        if user_in_active_match(user.id):
+            raise GameError("This account is already in a match in another tab!")
         if (not isinstance(selected_char_ids, list) or len(selected_char_ids) != 3
                 or not all(isinstance(c, str) for c in selected_char_ids)):
             raise GameError("You must select exactly 3 characters!")
