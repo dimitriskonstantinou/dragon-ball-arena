@@ -158,8 +158,11 @@ Each phase goes on its own feature branch off `main` and merges only when green.
 - [x] `GameError`; engine raises only that for player errors; other errors logged, generic message to player — *Step 4* (`feature/step4-game-errors`)
 - [x] Counter-mark returns a result instead of raising; state broadcast to both; lethal counter ends the match — *Step 4*
 - [x] Atomic `resolve_turn`: validate first, apply against a snapshot, roll back in place on any crash — *Step 5* (`feature/step5-atomic-resolve`)
-- [ ] Fix `set_skill_cost_on_stack` NameError; apply `scale_skill_by_stack` description template
+- [x] Fix `set_skill_cost_on_stack` NameError; apply `scale_skill_by_stack` description template — *Step 6* (`feature/step6-skill-text`)
 - **Done when:** probe script reports 0 of items 1–12 reproduced; new regression tests pass; payload bytes ≤ baseline.
+- **Status after Step 6 (2026-11-20):** items 1–12 ✅ all fixed; tests ✅; payload ❌ 11,622 B vs 11,340 B baseline
+  (+2.5%). Cause: every skill's full `effects` list is sent to clients, and the frontend never reads it, so new
+  authored text inside effects (Kaioken's `new_description`) rides along. Fix proposed: strip `effects` in `view_for`.
 
 ### Phase 2 — Match lifecycle (P1 #11–17)
 - [ ] Derive role from `request.sid`; validate all socket payloads

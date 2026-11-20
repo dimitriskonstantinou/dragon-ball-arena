@@ -457,6 +457,14 @@ def test_content_smoke():
                     bad.append((cid, skill['id'], effect['type']))
     check("every skill effect type in characters.py is recognized by the engine", bad == [], bad)
 
+    # description_template needs a computed {value}; only scale_skill_by_stack
+    # has one (it once sat on set_skill_cost_on_stack and raised NameError).
+    misplaced = [(cid, skill['id'], effect['type'])
+                 for cid, char in characters.CHARACTERS.items() for skill in char['skills']
+                 for effect in skill.get('effects', [])
+                 if 'description_template' in effect and effect['type'] != 'scale_skill_by_stack']
+    check("description_template is only used on scale_skill_by_stack", misplaced == [], misplaced)
+
 
 def test_goku_saiyan_saga_kit():
     """Exercises Goku's real kit straight from characters.py (not synthetic
@@ -515,6 +523,13 @@ def test_goku_saiyan_saga_kit():
     check("Kaioken Attack is unlocked after the 1st Kaioken use", kaioken_attack_live.get('locked') is False)
     check("Kaioken Attack's damage is set to its base (40) on the 1st Kaioken use",
           kaioken_attack_live['effects'][0]['value'] == 40, kaioken_attack_live['effects'][0]['value'])
+    # Regression: the texts used to go stale (Kaioken Attack still said "Locked
+    # until Kaioken is used", Kaioken still said "1 Rand" after costing 2).
+    check("Kaioken Attack's text shows its current damage (40) and no longer says it's locked",
+          kaioken_attack_live['description'].startswith('40 ') and 'Locked' not in kaioken_attack_live['description'],
+          kaioken_attack_live['description'])
+    check("Kaioken's text shows its new 2 Random cost after the 1st use",
+          kaioken_live['description'].endswith('2 Rand'), kaioken_live['description'])
 
     # Kamehameha now actually hits harder in combat
     game['turn'] = 'p1'
@@ -535,6 +550,8 @@ def test_goku_saiyan_saga_kit():
           kamehameha_live['effects'][0]['value'] == 45, kamehameha_live['effects'][0]['value'])
     check("Kaioken Attack scales to 50 on the 2nd Kaioken use",
           kaioken_attack_live['effects'][0]['value'] == 50, kaioken_attack_live['effects'][0]['value'])
+    check("Kaioken Attack's text follows its damage to 50",
+          kaioken_attack_live['description'].startswith('50 '), kaioken_attack_live['description'])
 
     # --- 3rd Kaioken use: cost jumps to 40 HP, Kaioken Attack scales to 60 ---
     game['turn'] = 'p1'
@@ -1009,6 +1026,22 @@ def test_resolve_turn_is_all_or_nothing():
         except Exception as e:
             err = e
         check(f"a malformed payment ({bad!r}) is a GameError", isinstance(err, ge.GameError), repr(err))
+
+
+def test_set_skill_cost_on_stack_updates_text():
+    """Regression: this effect read an undefined variable (NameError) when
+    given text to update. It now takes a plain new_description."""
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [{'id': 'x', 'name': 'x', 'description': 'old | 1 Rand', 'cost': {'random': 1},
+                    'effects': [], 'cooldown': 0, 'currentCooldown': 0}]
+    a['stacks'] = {'k': 1}
+    ge.apply_effect({'type': 'set_skill_cost_on_stack', 'stack_key': 'k', 'at_stack': 1, 'skill_id': 'x',
+                     'cost': {'random': 2}, 'new_description': 'new | 2 Rand'},
+                    a, [a], game['players']['p1'], game['players']['p2'], [])
+    check("set_skill_cost_on_stack changes the cost", a['skills'][0]['cost'] == {'random': 2})
+    check("set_skill_cost_on_stack updates the text", a['skills'][0]['description'] == 'new | 2 Rand',
+          a['skills'][0]['description'])
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

@@ -48,7 +48,9 @@ CHARACTERS = {
                      "skill_id": "kaioken_attack", "effect_index": 0, "base": 40, "increment": 10,
                      "description_template": "{value} Piercing Dmg (ignores dmg reduction) | 1 Rage, 1 Mar"},
                     {"type": "set_skill_cost_on_stack", "stack_key": "kaioken", "at_stack": 1,
-                     "skill_id": "kaioken", "cost": {"random": 2}}
+                     "skill_id": "kaioken", "cost": {"random": 2},
+                     "new_description": ("Permanent transform (active). Each further use costs 20 HP (2nd use) / "
+                                         "40 HP (3rd+ use) and increases Kaioken Attack damage. | 2 Rand")}
                 ],
                 "cooldown": 1, "currentCooldown": 0
             },

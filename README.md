@@ -140,11 +140,14 @@ match:
 | `boost_skill_on_stack` | One-shot: at the exact stack count `at_stack`, permanently adds `bonus` to another skill's `effects[effect_index].value` |
 | `unlock_skill_on_stack` | One-shot: at stack count `at_stack`, sets another skill's `locked` to `false` |
 | `scale_skill_by_stack` | Every use: sets another skill's `effects[effect_index].value` to `base + increment * (stacks - 1)` |
+| `set_skill_cost_on_stack` | One-shot: at stack count `at_stack`, permanently replaces another (or the same) skill's `cost` |
 
-`boost_skill_on_stack`/`scale_skill_by_stack` can also carry `"new_description"` /
-`"description_template"` (with a `{value}` placeholder) so the UI text stays
-in sync with the numbers they just changed — otherwise the description
-string goes stale since it's just authored text, not derived from `effects`.
+Descriptions are just authored text, not derived from `effects`, so these
+effects can update the text when they change the numbers:
+
+- `boost_skill_on_stack`, `set_skill_cost_on_stack`: `"new_description"` (fixed text).
+- `scale_skill_by_stack`: `"description_template"` with a `{value}` placeholder, filled with the
+  newly computed value every time. `test_content_smoke` rejects `description_template` anywhere else.
 
 Skill icons are optional — if `"image"` is omitted or the file doesn't exist
 yet under `backend/photos/skills/`, the frontend just doesn't render an icon
