@@ -154,7 +154,7 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `auth-required` | not logged in |
 | `match-status` | text while searching |
 | `game-start` | `{roomId, role}` -- also sent on reconnect (a reloaded page lands back in its match) |
-| `update-state` | per-player view (`view_for`; `winner`: `p1`/`p2`/`draw` once over) + `turn_seconds_left` (countdown; `null` once the match is over) + `players[r].connected` |
+| `update-state` | per-player view (`view_for`; `winner`: `p1`/`p2` once over -- never a draw) + `turn_seconds_left` (countdown; `null` once the match is over) + `players[r].connected` |
 | `message` | game event text (counter fired, game over) |
 | `error-msg` | `GameError` text or generic server error |
 
@@ -177,13 +177,18 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - Cooldown: after use `currentCooldown = cooldown + 1`, decremented at the start of the owner's turn.
 - Statuses: `{type, value?, duration, classes?, tag: 'harmful'|'buff', invisible?}`; player-level ones on `player['status']`.
 - `start_turn` checks the winner right after ticking statuses; anything that can kill must be followed by `check_winner`.
-- `game['winner']` is `'p1'`, `'p2'` or `game_engine.DRAW` (both teams down at the same moment, Step 27). A draw is
-  saved as `matches.is_draw` with `winner_id` NULL; `UserStats.record_result('win'|'loss'|'draw')`.
+- **No draws -- resolution order decides (Step 29, user 2026-11-21).** `game['winner']` is `'p1'` or `'p2'`. Every HP
+  loss goes through `lose_health()` (stamps `ko_seq` when a character drops to 0); every status goes through
+  `add_status()` (stamps `cast_seq`). Moves resolve in queue order, effects in listed order, and `_apply_turn` stops
+  the moment `any_team_wiped()` -- nothing after the deciding effect applies. Start-of-turn HP payloads (DoT, HoT,
+  delayed detonations) run in `cast_seq` order across both teams and stop once a team is wiped. `check_winner`: if both
+  teams are somehow down, the one whose last character fell first loses. Both numbers are stripped in `view_for`.
+  **Never set `char['health']` lower directly -- use `lose_health`.**
 - **Invulnerable = untargetable (Step 28):** `resolve_target` refuses an enemy that `is_invulnerable` to the skill's
   classes unless `skill_ignores_invulnerability(skill)` (an effect in `IGNORES_INVULNERABILITY`, read from the skill's
   *current* effects -- priming changes them). The client gets `ignores_invulnerable: true` (only when true) from
   `strip_skill_internals` and greys out untargetable portraits; the server stays the authority.
-- Known engine gaps (audit): ENG-2 draws must go (Step 29), ENG-3 dodge per effect, ENG-7 unseeded RNG
+- Known engine gaps (audit): ENG-3 dodge/counter/reflect per effect (Step 30), ENG-7 unseeded RNG
   (rules decided, see below).
 
 ### Adding an effect type
@@ -279,8 +284,9 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
 
 ### Performance requirements
-Measure first (`measure.py`, ad-hoc timing). Current: 0.5 ms/turn, 0.23 ms per player view, 8.4 KB per
-`update-state`. Payload bytes must not grow without reason; skill icons must be sized for display (AST-1).
+Measure first (`measure.py`, ad-hoc timing; for engine timing compare old/new interleaved and take the minimum of
+several rounds -- single runs on this machine vary by 3x). Current (Step 29): ~0.3 ms per turn incl. 18 ticking
+statuses, ~0.29 ms per player view, 8.6 KB per `update-state`. Payload bytes must not grow without reason; skill icons must be sized for display (AST-1).
 
 ### Assets
 User supplies all art (don't auto-source anime stills). Portraits → `photos/characters/`, icons → `photos/skills/`.
@@ -300,7 +306,7 @@ migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end
 - **Rules decided (2026-11-20, delegated to Claude):** invulnerable = untargetable except skills that explicitly
   ignore invulnerability (done, Step 28); dodge/counter/reflect apply per skill, not per effect.
 - **No draws (user, 2026-11-21; replaces "mutual KO = draw"):** the team wiped out **first** in resolution order loses
-  (moves in queue order, effects in listed order, ticks in cast order) and the match ends at that moment (Step 29).
+  (moves in queue order, effects in listed order, ticks in cast order) and the match ends at that moment (done, Step 29).
   Players will order their queued skills on a "timeline" in the Ki selector before committing (Phase 6, ENG-9).
 - **Tech stack (2026-11-20):** keep Flask + Flask-SocketIO + the Socket.IO protocol (no FastAPI); Pydantic for
   content (later also socket payload) validation; SQLite dev / PostgreSQL prod + Flask-Migrate; live match state

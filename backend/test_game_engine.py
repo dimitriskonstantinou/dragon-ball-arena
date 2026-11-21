@@ -1192,44 +1192,101 @@ def test_surrender():
         check(f"...without touching either team ({who})", game['players'] == before)
 
 
-def test_mutual_ko_is_a_draw():
-    """ENG-2 (decided 2026-11-20): both teams down at the same moment = draw,
-    whichever side the engine happens to look at first."""
-    game = make_game()
-    for side in ('p1', 'p2'):
-        game['players'][side]['team'][0]['health'] = 0
-    check("check_winner: both teams down -> draw", ge.check_winner(game) == ge.DRAW, game['winner'])
-    for dead, winner in (('p1', 'p2'), ('p2', 'p1')):
-        game = make_game()
-        game['players'][dead]['team'][0]['health'] = 0
-        check(f"check_winner: only {dead} down -> {winner} wins (unchanged)", ge.check_winner(game) == winner)
-    game = make_game()
-    check("check_winner: both alive -> no result", ge.check_winner(game) is None and game['winner'] is None)
+def test_first_team_wiped_out_loses():
+    """ENG-2 (user, 2026-11-21): no draws. Everything resolves in order -- moves in
+    queue order, a skill's effects in their listed order, start-of-turn ticks in
+    the order they were cast -- and the team wiped out FIRST loses. The match ends
+    at that moment: nothing after it applies."""
+    check("there is no draw result any more", not hasattr(ge, 'DRAW'))
 
-    # Path 1: damage-over-time on both last characters ticks at the start of the next turn.
-    game = make_game()
-    for side in ('p1', 'p2'):
-        fighter = game['players'][side]['team'][0]
-        fighter['health'] = 10
-        ge.add_status(fighter, {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
-    ge.resolve_turn(game, [])
-    check("lethal ticks on both teams at the start of a turn -> draw",
-          game['winner'] == ge.DRAW and [game['players'][s]['team'][0]['health'] for s in ('p1', 'p2')] == [0, 0],
-          game['winner'])
-    check("...and nobody gets Ki for a turn that never happens", game['players']['p2']['resources'] == [],
-          game['players']['p2']['resources'])
+    def last_stand(game, hp=10):
+        a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+        a['health'] = b['health'] = hp
+        return a, b
 
-    # Path 2: one move kills both (first hit reflected onto the attacker, second hit lands).
-    # Relies on reflect applying per effect -- revisit with 1.11 (reactive defenses per skill).
+    # A skill's effects in their listed order: damage that kills the last enemy, THEN recoil.
     game = make_game()
-    a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
-    a['health'] = b['health'] = 10
+    a, b = last_stand(game)
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}, {"type": "self_damage", "value": 20}]})
+    check("damage first, recoil second: the enemy team falls first -> the attacker wins",
+          game['winner'] == 'p1', game['winner'])
+    check("...and the recoil never lands (the match ended at the kill)", a['health'] == 10, a['health'])
+
+    game = make_game()
+    a, b = last_stand(game)
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "self_damage", "value": 20}, {"type": "damage", "value": 20}]})
+    check("recoil first, damage second: the attacker falls first -> the attacker loses",
+          game['winner'] == 'p2' and b['health'] == 10, (game['winner'], b['health']))
+
+    # A reflected first hit kills the attacker before the second hit lands.
+    game = make_game()
+    a, b = last_stand(game)
     ge.add_status(b, {'type': 'reflect', 'duration': 10, 'tag': 'buff'})
     run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
                                "effects": [{"type": "damage", "value": 20}, {"type": "damage", "value": 20}]})
-    check("a move that knocks out both last characters -> draw", game['winner'] == ge.DRAW, game['winner'])
+    check("a reflected first hit that kills the attacker -> the attacker loses; the second hit never lands",
+          (game['winner'], a['health'], b['health']) == ('p2', 0, 10), (game['winner'], a['health'], b['health']))
 
-    # The real roster: Tien's Tri-Beam (damage + self-damage) finishing the last enemy at low HP (audit ENG-2).
+    # A whole-team attack where the first target reflects the hit onto the attacker's last character.
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    a = game['players']['p1']['team'][0]
+    b, c = game['players']['p2']['team']
+    a['health'], c['health'] = 10, 10
+    ge.add_status(b, {'type': 'reflect', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "aoe", "name": "aoe", "cost": {}, "target_type": "enemy_team", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}]})
+    check("whole-team attack whose reflected hit kills the attacker's last character -> the attacker loses",
+          game['winner'] == 'p2' and a['health'] == 0 and b['health'] == 100, (game['winner'], a['health'], b['health']))
+
+    # Several moves: the first kills the last enemy, the second (recoil) never happens.
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    a, a2 = game['players']['p1']['team']
+    b = game['players']['p2']['team'][0]
+    b['health'], a2['health'] = 10, 5
+    a['skills'] = [{"id": "hit", "name": "hit", "cost": {}, "target_type": "enemy", "cooldown": 0, "currentCooldown": 0,
+                    "effects": [{"type": "damage", "value": 20}]}]
+    a2['skills'] = [{"id": "boom", "name": "boom", "cost": {}, "target_type": "self", "cooldown": 0,
+                     "currentCooldown": 0, "effects": [{"type": "self_damage", "value": 50}]}]
+    ge.queue_move(game, 'p1', 'A', 'hit', 'p2', 0)
+    ge.queue_move(game, 'p1', 'A2', 'boom', 'p1', 1)
+    ge.resolve_turn(game, [])
+    check("moves resolve in queue order and stop once the match is decided (the later move never runs)",
+          game['winner'] == 'p1' and a2['health'] == 5, (game['winner'], a2['health']))
+
+    # Start-of-turn ticks land in the order they were cast, across both teams.
+    for first, winner in (('p2', 'p1'), ('p1', 'p2')):
+        game = make_game()
+        last_stand(game)
+        second = 'p1' if first == 'p2' else 'p2'
+        for side in (first, second):    # cast order
+            ge.add_status(game['players'][side]['team'][0], {'type': 'dot', 'value': 50, 'duration': 4,
+                                                              'tag': 'harmful'})
+        ge.resolve_turn(game, [])
+        survivor = game['players'][winner]['team'][0]['health']
+        check(f"two lethal poisons tick in cast order: the one on {first} was cast first -> {winner} wins",
+              game['winner'] == winner, game['winner'])
+        check(f"...and the later poison never lands ({winner}'s fighter keeps 10 HP)", survivor == 10, survivor)
+
+    game = make_game()
+    last_stand(game)
+    ge.add_status(game['players']['p2']['team'][0], {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
+    ge.add_status(game['players']['p1']['team'][0], {'type': 'delayed_damage', 'value': 50, 'duration': 1,
+                                                     'tag': 'harmful'})
+    ge.resolve_turn(game, [])
+    check("a delayed-damage detonation also waits for its turn in cast order", game['winner'] == 'p1', game['winner'])
+
+    game = make_game()
+    last_stand(game)
+    for side in ('p2', 'p1'):
+        ge.add_status(game['players'][side]['team'][0], {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
+    ge.timeout_turn(game)
+    check("the same rule after a timeout passes the turn", game['winner'] == 'p1', game['winner'])
+
+    # The real roster: Tien's Tri-Beam (piercing damage, then recoil) finishing the last enemy at low HP.
     import content_loader
     tien = content_loader.catalog().get('tien_saiyan_saga')
     if tien is None:
@@ -1244,25 +1301,22 @@ def test_mutual_ko_is_a_draw():
         tri_beam['currentCooldown'] = 0
         a['skills'] = [tri_beam]
         play(game, 'p1', 'A', 'tri_beam', 'p2', 0)
-        check(f"Tien's real Tri-Beam killing the last enemy with the recoil killing Tien ({recoil} HP) -> draw",
-              (a['health'], b['health'], game['winner']) == (0, 0, ge.DRAW), (a['health'], b['health'], game['winner']))
+        check(f"Tien's real Tri-Beam kills the last enemy before its recoil -> Tien's player wins, Tien keeps {recoil} HP",
+              (game['winner'], a['health'], b['health']) == ('p1', recoil, 0), (game['winner'], a['health'], b['health']))
 
-    # Path 3: a timeout auto-passes and the next turn's ticks finish both teams.
     game = make_game()
     for side in ('p1', 'p2'):
-        fighter = game['players'][side]['team'][0]
-        fighter['health'] = 10
-        ge.add_status(fighter, {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
-    ge.timeout_turn(game)
-    check("a timed-out turn whose next turn's ticks finish both teams -> draw", game['winner'] == ge.DRAW,
-          game['winner'])
+        game['players'][side]['team'][0]['health'] = 0
+    check("a hand-built state with both teams down and no KO times still names a winner (never a draw)",
+          ge.check_winner(game) in ('p1', 'p2'), game['winner'])
 
     game = make_game()
-    ge.surrender(game, 'p1')
-    check("surrender is never a draw (the surrendering side loses)", game['winner'] == 'p2', game['winner'])
-    view = ge.view_for(_draw_game(), 'p1')
-    check("both players' views carry the draw result", view['winner'] == ge.DRAW
-          and ge.view_for(_draw_game(), 'p2')['winner'] == ge.DRAW)
+    ge.add_status(game['players']['p2']['team'][0], {'type': 'dot', 'value': 1, 'duration': 4, 'tag': 'harmful'})
+    game['players']['p1']['team'][0]['ko_seq'] = 7
+    view = ge.view_for(game, 'p1')
+    sent = [(c.get('ko_seq'), [s.get('cast_seq') for s in c['status']]) for p in view['players'].values()
+            for c in p['team']]
+    check("the ordering numbers (cast/KO times) stay on the server", sent == [(None, []), (None, [None])], sent)
 
 
 def test_invulnerable_is_untargetable():
@@ -1343,14 +1397,6 @@ def test_invulnerable_is_untargetable():
           shown == {"id": "x", "ignores_invulnerable": True}, shown)
     plain = ge.strip_skill_internals({'skills': [{"id": "y", "effects": [{"type": "damage", "value": 1}]}]})
     check("...and no flag at all for ordinary skills (no payload growth)", plain['skills'][0] == {"id": "y"}, plain)
-
-
-def _draw_game():
-    game = make_game()
-    for side in ('p1', 'p2'):
-        game['players'][side]['team'][0]['health'] = 0
-    ge.check_winner(game)
-    return game
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

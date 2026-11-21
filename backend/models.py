@@ -55,32 +55,23 @@ class UserStats(db.Model):
     total_matches = db.Column(db.Integer, default=0, nullable=False)
     total_wins = db.Column(db.Integer, default=0, nullable=False)
     total_losses = db.Column(db.Integer, default=0, nullable=False)
-    total_draws = db.Column(db.Integer, default=0, nullable=False, server_default='0')
     current_win_streak = db.Column(db.Integer, default=0, nullable=False)
     longest_win_streak = db.Column(db.Integer, default=0, nullable=False)
     current_loss_streak = db.Column(db.Integer, default=0, nullable=False)
     last_match_at = db.Column(db.DateTime, nullable=True)
 
-    def record_result(self, outcome):
-        """outcome: 'win', 'loss' or 'draw'. A draw counts as a played match
-        and ends both streaks (a streak is consecutive wins / losses)."""
+    def record_result(self, won):
         self.total_matches += 1
-        if outcome == 'win':
+        if won:
             self.total_wins += 1
             self.current_win_streak += 1
             self.current_loss_streak = 0
             if self.current_win_streak > self.longest_win_streak:
                 self.longest_win_streak = self.current_win_streak
-        elif outcome == 'loss':
+        else:
             self.total_losses += 1
             self.current_loss_streak += 1
             self.current_win_streak = 0
-        elif outcome == 'draw':
-            self.total_draws += 1
-            self.current_win_streak = 0
-            self.current_loss_streak = 0
-        else:
-            raise ValueError(f"unknown match outcome {outcome!r}")
         self.last_match_at = utcnow()
 
     def to_dict(self):
@@ -88,7 +79,6 @@ class UserStats(db.Model):
             'total_matches': self.total_matches,
             'total_wins': self.total_wins,
             'total_losses': self.total_losses,
-            'total_draws': self.total_draws,
             'current_win_streak': self.current_win_streak,
             'longest_win_streak': self.longest_win_streak,
             'current_loss_streak': self.current_loss_streak,
@@ -158,7 +148,8 @@ class Match(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     player1_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     player2_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    winner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # null = draw (see is_draw)
-    is_draw = db.Column(db.Boolean, default=False, nullable=False, server_default=db.false())
+    # Always set for matches played since Step 29 (no draws). NULL only in rows from before
+    # result saving was reliable -- kept nullable so those old rows stay valid.
+    winner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     started_at = db.Column(db.DateTime, nullable=False)
     ended_at = db.Column(db.DateTime, nullable=False)

@@ -112,8 +112,9 @@ con = sqlite3.connect(DB)
 print("session_version", con.execute("select session_version from users where id = 1").fetchone() == (0,))
 print("keys", con.execute("select username, username_key from users order by id").fetchall()
       == [("old_player", "old_player"), ("Old_Vegeta", "old_vegeta")])
-print("draws", con.execute("select total_draws from user_stats where user_id = 1").fetchone() == (0,),
-      con.execute("select winner_id, is_draw from matches where id = 1").fetchone() == (1, 0))
+print("matches", con.execute("select winner_id from matches where id = 1").fetchone() == (1,),
+      "no_draw_columns", not {"is_draw", "total_draws"} & {r[1] for t in ("matches", "user_stats")
+                                                           for r in con.execute(f"pragma table_info({t})")})
 con.close()
 print("diff", schema_diff(appmod) == [])
 ''')
@@ -123,7 +124,8 @@ print("diff", schema_diff(appmod) == [])
     check("...and later migrations apply to it (existing accounts get session_version 0)",
           'session_version True' in out, out)
     check("...and every existing account gets its lower-cased username key", 'keys True' in out, out)
-    check("...and old stats/matches get 0 draws / not a draw (winners kept)", 'draws True True' in out, out)
+    check("...and old matches keep their winner, with no draw columns left (no draws since Step 29)",
+          'matches True no_draw_columns True' in out, out)
     check("...and ends up with exactly the models' schema", 'diff True' in out, out)
 
 
@@ -168,6 +170,41 @@ con.close()
           'refused' in out and "differ only in capitalization: 'OLD_PLAYER', 'old_player'" in err, (out, err[-400:]))
     check("...without changing the accounts or adding the column", 'rows 3' in out and 'no_key_column True' in out,
           out)
+
+
+def test_database_that_ran_the_draws_migration_upgrades_cleanly():
+    """Step 27 added draw columns, Step 29 dropped them (no draws). A local database
+    that already ran Step 27's migration must upgrade and keep its data."""
+    rc, out, err = run('''
+import os
+from flask import Flask
+from flask_migrate import Migrate, upgrade
+from models import db
+step27 = Flask("step27")
+step27.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + DB
+db.init_app(step27)
+Migrate(step27, db, directory=os.path.join(".", "migrations"), render_as_batch=True)
+with step27.app_context():
+    upgrade(directory=os.path.join(".", "migrations"), revision="399b42c2815d")
+con = sqlite3.connect(DB)
+con.execute("insert into users (id, username, username_key, email, password_hash, created_at, session_version) "
+            "values (1, 'Gohan', 'gohan', 'g@x.io', 'h', '2026-11-21 10:00:00', 0), "
+            "(2, 'Krillin', 'krillin', 'k@x.io', 'h', '2026-11-21 10:00:00', 0)")
+con.execute("insert into user_stats (user_id, total_matches, total_wins, total_losses, current_win_streak, "
+            "longest_win_streak, current_loss_streak, total_draws) values (1, 3, 2, 1, 1, 2, 0, 0)")
+con.execute("insert into matches (id, player1_id, player2_id, winner_id, started_at, ended_at, is_draw) "
+            "values (1, 1, 2, 1, '2026-11-21 10:00:00', '2026-11-21 10:09:00', 0)")
+con.commit(); con.close()
+import app as appmod
+con = sqlite3.connect(DB)
+print("data", con.execute("select total_matches, total_wins, total_losses from user_stats").fetchall() == [(3, 2, 1)],
+      con.execute("select winner_id from matches").fetchall() == [(1,)])
+con.close()
+print("diff", schema_diff(appmod) == [])
+''')
+    check("a database already at Step 27's revision (draw columns) upgrades cleanly",
+          rc == 0 and 'diff True' in out, (rc, out, err[-400:]))
+    check("...keeping its stats and match results", 'data True True' in out, out)
 
 
 def test_downgrade_and_upgrade_round_trip():

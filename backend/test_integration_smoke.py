@@ -622,48 +622,52 @@ else:
               match_row is not None and {match_row.player1_id, match_row.player2_id} == {winner_uid, loser_uid},
               match_row)
 
-    # --- Step 27 regression (ENG-2): when both teams fell at the same moment, the
-    # engine named p2 the winner (it looked at p1's team first). Now: a draw. ---
-    draw_http = [appmod.app.test_client(), appmod.app.test_client()]
-    for i, http in enumerate(draw_http, 1):
-        register(http, f'draw{i}_{suffix}', f'draw{i}_{suffix}@test.local')
-    d1, d2 = (appmod.socketio.test_client(appmod.app, flask_test_client=h) for h in draw_http)
-    d1.emit('find-match', team_ids)
-    d2.emit('find-match', team_ids)
-    draw_start = next(e['args'][0] for e in d1.get_received() if e['name'] == 'game-start')
-    draw_room = draw_start['roomId']
-    dg = appmod.GAMES[draw_room]
-    for side in ('p1', 'p2'):
-        team = dg['players'][side]['team']
+    # --- Step 29 regression (ENG-2, user 2026-11-21: no draws): when both last characters
+    # were poisoned lethally, the engine named p2 the winner (it looked at p1's team first);
+    # Step 27 made it a draw. Now the team wiped out FIRST loses -- poisons tick in the
+    # order they were cast -- and the result is saved as a normal win/loss. ---
+    ko_http = [appmod.app.test_client(), appmod.app.test_client()]
+    for i, http in enumerate(ko_http, 1):
+        register(http, f'ko{i}_{suffix}', f'ko{i}_{suffix}@test.local')
+    k1, k2 = (appmod.socketio.test_client(appmod.app, flask_test_client=h) for h in ko_http)
+    k1.emit('find-match', team_ids)
+    k2.emit('find-match', team_ids)
+    ko_start = next(e['args'][0] for e in k1.get_received() if e['name'] == 'game-start')
+    ko_room = ko_start['roomId']
+    kg = appmod.GAMES[ko_room]
+    for side in ('p2', 'p1'):     # cast order: the poison on p2's last fighter first -> p2 falls first
+        team = kg['players'][side]['team']
         for ch in team[1:]:
             ch['health'] = 0
         team[0]['health'] = 10
-        team[0]['status'] = [{'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'}]
-    d2.get_received()
-    (d1 if dg['turn'] == draw_start['role'] else d2).emit('commit-turn', {'paymentList': []})
-    seen = [d1.get_received(), d2.get_received()]
-    check("a mutual KO ends the match as a draw for both players",
-          all(any(e['name'] == 'update-state' and e['args'][0].get('winner') == 'draw' for e in got) for got in seen),
+        team[0]['status'] = []
+        appmod.game_engine.add_status(team[0], {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
+    k2.get_received()
+    (k1 if kg['turn'] == ko_start['role'] else k2).emit('commit-turn', {'paymentList': []})
+    seen = [k1.get_received(), k2.get_received()]
+    check("both last fighters poisoned: the one poisoned first falls first, so p1 wins (both players see it)",
+          all(any(e['name'] == 'update-state' and e['args'][0].get('winner') == 'p1' for e in got) for got in seen),
           [[e['args'][0].get('winner') for e in got if e['name'] == 'update-state'] for got in seen])
-    check("...with a draw message (not 'DRAW WINS')",
-          all(any(e['name'] == 'message' and (e['args'] if isinstance(e['args'], str) else e['args'][0]) == "GAME OVER! DRAW -- both teams fell at the same time."
-                  for e in got) for got in seen), [[e['args'] for e in got if e['name'] == 'message'] for got in seen])
-    check("...and the finished match is gone from memory", draw_room not in appmod.GAMES)
-    draw_uids = [dg['players'][s]['user_id'] for s in ('p1', 'p2')]
+    check("...p1's fighter is still standing (p1's own poison never ticked)",
+          next(e['args'][0] for e in reversed(seen[0]) if e['name'] == 'update-state')['players']['p1']['team'][0]
+          ['health'] == 10)
+    check("...with the normal game-over message",
+          all(any(e['name'] == 'message' and (e['args'] if isinstance(e['args'], str) else e['args'][0])
+                  == "GAME OVER! P1 WINS!" for e in got) for got in seen),
+          [[e['args'] for e in got if e['name'] == 'message'] for got in seen])
+    check("...and no KO/cast ordering numbers reach the clients",
+          not any('ko_seq' in str(e['args']) or 'cast_seq' in str(e['args']) for got in seen for e in got))
+    ko_uids = [kg['players'][s]['user_id'] for s in ('p1', 'p2')]
     with appmod.app.app_context():
-        rows = [appmod.db.session.get(appmod.UserStats, uid) for uid in draw_uids]
-        check("both players' stats: 1 match, 1 draw, no win/loss, no streaks",
-              all((s.total_matches, s.total_draws, s.total_wins, s.total_losses, s.current_win_streak,
-                   s.current_loss_streak) == (1, 1, 0, 0, 0, 0) for s in rows),
-              [(s.total_matches, s.total_draws, s.total_wins, s.total_losses) for s in rows])
-        draw_row = appmod.Match.query.filter(appmod.Match.player1_id.in_(draw_uids)).one()
-        check("the match is saved as a draw with no winner",
-              draw_row.is_draw is True and draw_row.winner_id is None, (draw_row.is_draw, draw_row.winner_id))
-        won_row = appmod.Match.query.filter_by(winner_id=winner_uid).order_by(appmod.Match.id.desc()).first()
-        check("...while a normal match is saved as not a draw", won_row.is_draw is False)
-    me = draw_http[0].get('/api/me').get_json()
-    check("the player's own stats (badge) include the draw", me['stats']['total_draws'] == 1, me['stats'])
-    d1.disconnect(); d2.disconnect()
+        rows = [appmod.db.session.get(appmod.UserStats, uid) for uid in ko_uids]
+        check("stats: p1 gets a win, p2 a loss (no draws)",
+              [(s.total_matches, s.total_wins, s.total_losses) for s in rows] == [(1, 1, 0), (1, 0, 1)],
+              [(s.total_matches, s.total_wins, s.total_losses) for s in rows])
+        ko_row = appmod.Match.query.filter(appmod.Match.player1_id.in_(ko_uids)).one()
+        check("the match is saved with p1 as the winner", ko_row.winner_id == ko_uids[0], ko_row.winner_id)
+    me = ko_http[0].get('/api/me').get_json()
+    check("the player's own stats have no draw field", 'total_draws' not in me['stats'], me['stats'])
+    k1.disconnect(); k2.disconnect()
 
     # --- Step 13 regression: finished matches used to stay in memory forever
     # (GAMES, ENDED_ROOMS and the Socket.IO room; ~30 KB each). ---

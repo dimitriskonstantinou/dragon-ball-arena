@@ -51,8 +51,10 @@ server's startup log).
 
 Register or log in, then in each window: pick exactly 3 characters, click
 **FIND MATCH**. Once both windows have queued, they're paired automatically.
-Win/loss/draw record and streak show top-right once logged in. If both teams fall at the same
-moment (e.g. a recoil or reflected hit), the match is a draw.
+Win/loss record and streak show top-right once logged in. There are no draws: everything resolves in
+order (skills in the order you queue them, a skill's effects in their listed order, start-of-turn damage
+in the order it was cast), and the team wiped out first loses -- the match ends at that moment. E.g. a
+skill that kills the last enemy and then hurts its user wins before the recoil ever lands.
 
 ## Running the tests
 
@@ -115,7 +117,7 @@ frontend/
   progress auto-track from gameplay events (e.g. "win 5 matches") or be
   manually granted at first, and (2) should skills stay as one JSON blob per
   character (current design) or become fully normalized rows.
-- `UserStats` (total matches/wins/losses/draws, current win streak, longest win
+- `UserStats` (total matches/wins/losses, current win streak, longest win
   streak, current loss streak) updates automatically at the end of every
   match, including disconnects (counted as a loss for whoever left).
 - **Local dev only, do not deploy this way:** the database is a single SQLite

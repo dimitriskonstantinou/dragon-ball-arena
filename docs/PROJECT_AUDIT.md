@@ -95,10 +95,10 @@ If the wiped team's owner has the turn, they can simply never commit; with no tu
 leave, and leaving counts as a loss.
 **Fix:** call `check_winner` after `tick_statuses` in `start_turn`; app ends the game when `start_turn` produces a winner. Safe now: yes. Depends on: —.
 
-**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw; **changed by the user 2026-11-21: no draws -- the team wiped out first (in resolution order) loses** (Step 29 replaces the draw)* — Step 27 (`check_winner` returns `game_engine.DRAW`; "DRAW!" for both players; saved as `matches.is_draw` with no winner, counted in `user_stats.total_draws`, ends both streaks; third real migration). Tested via start-of-turn ticks, a reflected hit, a timeout, and Tien's real Tri-Beam.
+**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw (Step 27); **changed by the user 2026-11-21: no draws -- the team wiped out first loses*** — ✅ FIXED in Step 29 (every HP loss goes through `lose_health`, which stamps the KO moment; moves stop the moment a team is wiped (nothing after it applies, e.g. Tri-Beam's recoil after the killing blow); start-of-turn ticks run in cast order across both teams (`cast_seq` on every status); `check_winner` never returns a draw. Step 27's draw columns are dropped by a new migration).
 *Where:* `check_winner` checks p1's team first. Tien (10 HP) killing Raditz with Tri-Beam (15 self-damage) → winner `p2`
 although p1 acted. Also reachable with Kaioken self-damage and reflect.
-**Fix:** needs a rule decision: draw, or "the acting player wins". Then encode it in `check_winner`. Safe now: after the decision.
+**Fix:** ~~needs a rule decision~~ decided by the user: resolution order decides (see above).
 
 **ENG-3 — MEDIUM (latent) — Dodge/counter/reflect protect against one *effect*, not one *skill* (verified)** — *decided: per skill*
 *Where:* `apply_damage` / `is_harmful_blocked`. Knee Attack (damage + stun) vs Dodge: the damage was dodged, the stun still landed.

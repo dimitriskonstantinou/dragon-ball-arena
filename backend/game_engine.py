@@ -1,4 +1,5 @@
 import copy
+import itertools
 import random
 
 # ---------------------------------------------------------------------------
@@ -112,8 +113,26 @@ def payment_matches_costs(payment_list, costs):
 
 # --- status helpers ---------------------------------------------------------
 
+# One increasing counter for "when" things happen inside a match: every status gets
+# the number it was cast with (start-of-turn ticks run in cast order) and a
+# character that drops to 0 HP gets the number of that moment (the team whose
+# last character fell first loses -- no draws, decided by the user 2026-11-21).
+# Only the order matters, so one counter for the whole process is enough.
+_SEQUENCE = itertools.count(1)
+
+
 def add_status(char, status):
+    status.setdefault('cast_seq', next(_SEQUENCE))
     char.setdefault('status', []).append(status)
+
+
+def lose_health(char, amount):
+    """Every HP loss goes through here, so the moment of each KO is recorded."""
+    if char['health'] <= 0:
+        return
+    char['health'] = max(0, char['health'] - amount)
+    if char['health'] == 0:
+        char['ko_seq'] = next(_SEQUENCE)
 
 
 def consume_status(char, status_type):
@@ -235,7 +254,7 @@ def apply_damage(target, amount, actor=None, ignore_defense=False,
             return
         if consume_status(target, 'reflect'):
             if actor:
-                actor['health'] = max(0, actor['health'] - amount)
+                lose_health(actor, amount)
             return
 
     dealt_mult = get_mod_multiplier(actor.get('status', []), 'damage_dealt_mod') if actor else 1
@@ -247,7 +266,7 @@ def apply_damage(target, amount, actor=None, ignore_defense=False,
         target['defense'] -= absorbed
         final -= absorbed
 
-    target['health'] = max(0, target['health'] - final)
+    lose_health(target, final)
 
 
 def apply_heal(target, amount, actor=None):
@@ -298,7 +317,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
                          ignore_invuln=True, ignore_reactive=False, skill_classes=skill_classes)
 
     elif etype == 'self_damage':
-        actor['health'] = max(0, actor['health'] - effect['value'])
+        lose_health(actor, effect['value'])
 
     elif etype == 'random_multi_damage':
         # Ignores the resolved target entirely (like aoe_damage) -- the UI
@@ -467,7 +486,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         count = actor.get('stacks', {}).get(effect['stack_key'], 1)
         schedule = effect['schedule']
         dmg = schedule[min(count - 1, len(schedule) - 1)] if schedule else 0
-        actor['health'] = max(0, actor['health'] - dmg)
+        lose_health(actor, dmg)
 
     elif etype == 'boost_skill_on_stack':
         # One-time permanent bump to another skill's value, applied only the
@@ -607,6 +626,9 @@ def view_for(game_state, role):
     for player in view['players'].values():
         for char in player['team']:
             strip_skill_internals(char)
+            char.pop('ko_seq', None)                 # ordering numbers are server-only
+            for s in char.get('status', []):
+                s.pop('cast_seq', None)
     return view
 
 
@@ -632,7 +654,30 @@ def strip_skill_internals(character):
 def tick_statuses(game_state):
     """Ticks down every status by one, applies DoT/HoT/chakra-drain payloads,
     and prunes anything that's expired. Runs at the start of every turn (for
-    both players), matching the original stun-duration convention."""
+    both players), matching the original stun-duration convention.
+
+    HP payloads (DoT, HoT, delayed-damage detonations) land in the order their
+    effects were cast, across both teams; once a team is wiped out nothing
+    more lands (the match is decided). Then every status counts down."""
+    payloads = []
+    for p_key in ['p1', 'p2']:
+        player = game_state['players'].get(p_key)
+        for char in (player['team'] if player else []):
+            for s in char.get('status', []):
+                if s['type'] in ('dot', 'hot') or (s['type'] == 'delayed_damage' and s['duration'] <= 1):
+                    payloads.append((s.get('cast_seq', 0), len(payloads), char, s))
+    for _, _, char, s in sorted(payloads, key=lambda p: p[:2]):
+        if any_team_wiped(game_state):
+            break
+        if char['health'] <= 0:
+            continue
+        if s['type'] == 'hot':
+            char['health'] = min(char['maxHealth'], char['health'] + s.get('value', 0))
+        else:
+            # DoT, or a delayed-damage marker detonating on its last tick:
+            # unmitigated (ignores invulnerability/defense/reduction).
+            lose_health(char, s.get('value', 0))
+
     for p_key in ['p1', 'p2']:
         player = game_state['players'].get(p_key)
         if not player:
@@ -642,16 +687,7 @@ def tick_statuses(game_state):
             active = []
             for s in char.get('status', []):
                 if char['health'] > 0:
-                    if s['type'] == 'dot':
-                        char['health'] = max(0, char['health'] - s.get('value', 0))
-                    elif s['type'] == 'hot':
-                        char['health'] = min(char['maxHealth'], char['health'] + s.get('value', 0))
-                    elif s['type'] == 'delayed_damage' and s['duration'] <= 1:
-                        # Last tick before expiry -- detonate now, unmitigated
-                        # (ignores invulnerability/defense/reduction), then let
-                        # the duration check below prune the marker as usual.
-                        char['health'] = max(0, char['health'] - s.get('value', 0))
-                    elif s['type'] == 'expiring_defense' and s['duration'] <= 1:
+                    if s['type'] == 'expiring_defense' and s['duration'] <= 1:
                         # Time's up -- pull back whatever of this shield is
                         # still unused (can't go negative, can't remove more
                         # than this specific grant contributed).
@@ -759,20 +795,24 @@ def resolve_target(game_state, player_id, actor_char, skill, target_pid, target_
     return expected_pid, target_index
 
 
-DRAW = 'draw'   # game_state['winner'] is 'p1', 'p2' or DRAW once the match is over
+def any_team_wiped(game_state):
+    return any(all(c['health'] <= 0 for c in game_state['players'][p]['team']) for p in ('p1', 'p2'))
 
 
 def check_winner(game_state):
-    """Sets and returns game_state['winner'] once a whole team is down. Both
-    teams down at the same moment (e.g. damage-over-time ticking on both, or a
-    reflected hit) is a draw (ENG-2, decided 2026-11-20)."""
-    p1_alive = any(c['health'] > 0 for c in game_state['players']['p1']['team'])
-    p2_alive = any(c['health'] > 0 for c in game_state['players']['p2']['team'])
-    if not p1_alive and not p2_alive:
-        game_state['winner'] = DRAW
-    elif not p1_alive:
+    """Sets and returns game_state['winner'] ('p1'/'p2') once a whole team is
+    down. There are no draws (user, 2026-11-21): if both teams are down, the
+    one whose last character fell FIRST loses -- e.g. a whole-team attack where
+    the first target reflects the hit onto the attacker's last character.
+    (Moves and ticks also stop the moment a team is wiped, so usually only one
+    team is down.) Hand-built states without KO times count p1 as first."""
+    down = {p: all(c['health'] <= 0 for c in game_state['players'][p]['team']) for p in ('p1', 'p2')}
+    if down['p1'] and down['p2']:
+        wiped_at = {p: max(c.get('ko_seq', 0) for c in game_state['players'][p]['team']) for p in ('p1', 'p2')}
+        game_state['winner'] = 'p2' if wiped_at['p1'] <= wiped_at['p2'] else 'p1'
+    elif down['p1']:
         game_state['winner'] = 'p2'
-    elif not p2_alive:
+    elif down['p2']:
         game_state['winner'] = 'p1'
     return game_state.get('winner')
 
@@ -956,10 +996,16 @@ def _apply_turn(game_state, player_id, player, opponent, payment_list, resolved_
         effects = skill.get('effects', [])
         if not effects and 'effect' in skill: effects = [skill['effect']]
 
+        decided = False
         for effect in effects:
             apply_effect(effect, actor_char, targets, player, opponent, skill_classes)
+            if any_team_wiped(game_state):
+                decided = True   # the match ends at this moment: nothing after it applies
+                break
 
         skill['currentCooldown'] = skill['cooldown'] + 1
+        if decided:
+            break
 
     if not check_winner(game_state):
         next_player = 'p2' if player_id == 'p1' else 'p1'
