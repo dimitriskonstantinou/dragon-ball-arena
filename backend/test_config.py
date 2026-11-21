@@ -96,9 +96,11 @@ def test_number_settings_are_validated():
     check("rate-limit defaults: 5 failed logins / 5 min, 5 accounts / hour per IP, no proxy",
           (s.login_failure_limit, s.login_window_seconds, s.register_limit, s.register_window_seconds,
            s.trusted_proxies) == (5, 300, 5, 3600, 0))
+    check("logins expire after 30 days without a visit by default", s.session_days == 30, s.session_days)
     for name, bad in (('TURN_SECONDS', 'abc'), ('TURN_SECONDS', '0'), ('TURN_SECONDS', '601'),
                       ('RECONNECT_SECONDS', '-1'), ('PORT', '70000'), ('PORT', '5.5'),
-                      ('LOGIN_FAILURE_LIMIT', '0'), ('REGISTER_WINDOW_SECONDS', 'hour'), ('TRUSTED_PROXIES', '9')):
+                      ('LOGIN_FAILURE_LIMIT', '0'), ('REGISTER_WINDOW_SECONDS', 'hour'), ('TRUSTED_PROXIES', '9'),
+                      ('SESSION_DAYS', '0'), ('SESSION_DAYS', '400')):
         _, err = load({name: bad})
         check(f"{name}={bad!r} is rejected with a clear message", err and name in err, err)
     s, err = load({'TURN_SECONDS': '2', 'RECONNECT_SECONDS': '0', 'PORT': '8080', 'TURN_TIMER_THREAD': '0'})

@@ -4,7 +4,7 @@ from flask_socketio import SocketIO, emit, join_room
 import sqlalchemy as sa
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import copy
 import logging
 import os
@@ -44,6 +44,9 @@ app.config['SQLALCHEMY_DATABASE_URI'] = settings.database_url
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = settings.is_production_like
+# Logins expire after SESSION_DAYS without a visit: Flask checks the cookie's signed
+# timestamp server-side, and each request renews it (active players stay logged in).
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=settings.session_days)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
@@ -55,6 +58,8 @@ socketio = SocketIO(app, cors_allowed_origins=list(settings.allowed_origins) or 
 GAMES = {}
 MATCHMAKING_QUEUE = []
 SID_ROOM_MAP = {}  # sid -> roomId, for O(1) disconnect/forfeit lookup
+USER_SIDS = {}     # user_id -> set of that account's open socket ids (logout closes them)
+USER_SIDS_LOCK = threading.Lock()
 
 # The server runs every Socket.IO event in its own thread, so shared state needs
 # locks. Lock order is always MATCHMAKING_LOCK -> a room lock, never the reverse.
@@ -121,8 +126,17 @@ def sync_character_registry(catalog=None):
 
 # The first migration: exactly the tables db.create_all() made before Step 23.
 BASELINE_REVISION = 'def555b6f5cf'
-BASELINE_TABLES = {'users', 'user_stats', 'characters', 'user_characters', 'missions',
-                   'user_mission_progress', 'matches'}
+# Exact columns of that baseline (it never changes). Adoption requires a perfect match.
+BASELINE_COLUMNS = {
+    'characters': {'id', 'name', 'image', 'health', 'skills_json', 'is_starter'},
+    'users': {'id', 'username', 'email', 'password_hash', 'created_at'},
+    'matches': {'id', 'player1_id', 'player2_id', 'winner_id', 'started_at', 'ended_at'},
+    'missions': {'id', 'name', 'description', 'requirement', 'reward_character_id'},
+    'user_characters': {'id', 'user_id', 'character_id', 'unlocked_at'},
+    'user_stats': {'user_id', 'total_matches', 'total_wins', 'total_losses', 'current_win_streak',
+                   'longest_win_streak', 'current_loss_streak', 'last_match_at'},
+    'user_mission_progress': {'id', 'user_id', 'mission_id', 'progress', 'completed_at'},
+}
 
 
 def upgrade_database():
@@ -131,12 +145,18 @@ def upgrade_database():
     is adopted first: if it has every baseline table it's stamped at the
     baseline -- its tables are exactly what that migration creates -- and then
     upgraded like any other. Nothing in it is changed or deleted by adoption."""
-    tables = set(sa.inspect(db.engine).get_table_names())
+    inspector = sa.inspect(db.engine)
+    tables = set(inspector.get_table_names())
     if tables and 'alembic_version' not in tables:
-        missing = BASELINE_TABLES - tables
-        if missing:
-            raise RuntimeError(f"Database has tables but no migration history, and is missing {sorted(missing)}; "
-                               f"refusing to guess its schema. Inspect it by hand.")
+        problems = [f"missing table {t}" for t in sorted(set(BASELINE_COLUMNS) - tables)]
+        for table in sorted(set(BASELINE_COLUMNS) & tables):
+            columns = {c['name'] for c in inspector.get_columns(table)}
+            if columns != BASELINE_COLUMNS[table]:
+                problems.append(f"{table} columns differ (extra {sorted(columns - BASELINE_COLUMNS[table])}, "
+                                f"missing {sorted(BASELINE_COLUMNS[table] - columns)})")
+        if problems:
+            raise RuntimeError("Database has tables but no migration history, and doesn't match the baseline "
+                               f"schema ({'; '.join(problems)}); refusing to guess its schema. Inspect it by hand.")
         log.info("Adopting a pre-migration database at the baseline revision %s", BASELINE_REVISION)
         stamp(directory=MIGRATIONS_DIR, revision=BASELINE_REVISION)
     upgrade(directory=MIGRATIONS_DIR)
@@ -156,10 +176,24 @@ ensure_db_ready()
 
 
 def current_user():
+    """The logged-in account, or None. A cookie issued before the account's
+    last logout (older session_version) no longer counts (SEC-4)."""
     uid = session.get('user_id')
     if not uid:
         return None
-    return db.session.get(User, uid)
+    user = db.session.get(User, uid)
+    if user is None or session.get('sv') != user.session_version:
+        return None
+    return user
+
+
+def start_session(user):
+    """Fresh session for `user` (cleared first: no session fixation), tied to
+    the account's current session_version and expiring after SESSION_DAYS."""
+    session.clear()
+    session.permanent = True
+    session['user_id'] = user.id
+    session['sv'] = user.session_version
 
 
 def unlocked_character_ids(user):
@@ -413,7 +447,7 @@ def register():
     db.session.commit()
     register_limiter.hit(request.remote_addr)
 
-    session['user_id'] = user.id
+    start_session(user)
     return jsonify(user.to_dict()), 201
 
 @app.route('/api/login', methods=['POST'])
@@ -430,12 +464,24 @@ def login():
         login_limiter.hit(request.remote_addr)
         return jsonify({'error': 'invalid username or password'}), 401
 
-    session['user_id'] = user.id
+    start_session(user)
     return jsonify(user.to_dict())
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
-    session.pop('user_id', None)
+    """Logs the account out everywhere: bumping session_version invalidates
+    every copy of its login cookie on every device (incl. a stolen one), and
+    its open game connections are closed (a match in progress then gets the
+    usual reconnect grace period)."""
+    user = current_user()
+    if user:
+        user.session_version += 1
+        db.session.commit()
+        with USER_SIDS_LOCK:
+            sids = list(USER_SIDS.get(user.id, ()))
+        for sid in sids:
+            socketio.server.disconnect(sid)
+    session.clear()
     return jsonify({'ok': True})
 
 @app.route('/api/me')
@@ -454,6 +500,8 @@ def handle_connect():
     if not user:
         emit('auth-required')
         return
+    with USER_SIDS_LOCK:
+        USER_SIDS.setdefault(user.id, set()).add(request.sid)
     # Display fields only: skill mechanics stay server-side (same rule as view_for).
     char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user, request.host_url).values()]
     emit('character-list', char_list)
@@ -487,6 +535,12 @@ def rejoin_match(user):
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
+    with USER_SIDS_LOCK:
+        for user_id, sids in list(USER_SIDS.items()):
+            if sid in sids:
+                sids.discard(sid)
+                if not sids:
+                    del USER_SIDS[user_id]
 
     with MATCHMAKING_LOCK:
         MATCHMAKING_QUEUE[:] = [p for p in MATCHMAKING_QUEUE if p['id'] != sid]  # in place: keep the same list object

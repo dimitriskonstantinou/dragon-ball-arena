@@ -33,17 +33,26 @@ def version(path):
 '''
 
 LEGACY_DB = '''
-# A database made the pre-Step-23 way: db.create_all() with models only, plus data.
+# A database exactly as the pre-Step-23 code made it: the baseline schema (applied
+# from the baseline migration), no migration history, plus data written with plain SQL.
+# (db.create_all() with today's models would NOT be faithful: they have newer columns.)
+import os
 from flask import Flask
-from models import db, User, UserStats
+from flask_migrate import Migrate, upgrade
+from models import db
 legacy = Flask("legacy")
 legacy.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + DB
 db.init_app(legacy)
+Migrate(legacy, db, directory=os.path.join(".", "migrations"), render_as_batch=True)
 with legacy.app_context():
-    db.create_all()
-    db.session.add(User(id=1, username="old_player", email="old@x.io", password_hash="hash-kept"))
-    db.session.add(UserStats(user_id=1, total_matches=7, total_wins=4, total_losses=3))
-    db.session.commit()
+    upgrade(directory=os.path.join(".", "migrations"), revision="def555b6f5cf")
+con = sqlite3.connect(DB)
+con.execute("drop table alembic_version")
+con.execute("insert into users (id, username, email, password_hash, created_at) "
+            "values (1, 'old_player', 'old@x.io', 'hash-kept', '2026-08-16 20:00:00')")
+con.execute("insert into user_stats (user_id, total_matches, total_wins, total_losses, current_win_streak, "
+            "longest_win_streak, current_loss_streak) values (1, 7, 4, 3, 0, 2, 1)")
+con.commit(); con.close()
 '''
 
 
@@ -95,11 +104,16 @@ stats = con.execute("select total_matches, total_wins, total_losses from user_st
 con.close()
 print("adopted", version(DB) == [head])
 print("user", user == ("old_player", "old@x.io", "hash-kept"), "stats", stats == (7, 4, 3))
+con = sqlite3.connect(DB)
+print("session_version", con.execute("select session_version from users where id = 1").fetchone() == (0,))
+con.close()
 print("diff", schema_diff(appmod) == [])
 ''')
     check("a database made before migrations existed is adopted and brought to the latest revision",
           rc == 0 and 'adopted True' in out, (rc, out, err[-400:]))
     check("...keeping its accounts and stats untouched", 'user True stats True' in out, out)
+    check("...and later migrations apply to it (existing accounts get session_version 0)",
+          'session_version True' in out, out)
     check("...and ends up with exactly the models' schema", 'diff True' in out, out)
 
 
@@ -112,6 +126,17 @@ import app
 ''')
     check("a database with some tables but no migration history and missing tables is refused, not guessed at",
           rc != 0 and 'refusing to guess its schema' in err, (rc, err[-300:]))
+
+
+def test_database_with_unexpected_columns_is_refused():
+    rc, out, err = run(LEGACY_DB + '''
+con = sqlite3.connect(DB)
+con.execute("alter table users add column nickname varchar(20)")
+con.commit(); con.close()
+import app
+''')
+    check("a database whose columns don't exactly match the baseline is refused (no crash half-way through)",
+          rc != 0 and 'users columns differ' in err and "extra ['nickname']" in err, (rc, err[-300:]))
 
 
 def test_downgrade_and_upgrade_round_trip():

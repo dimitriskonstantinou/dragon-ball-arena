@@ -157,6 +157,46 @@ try:
 finally:
     appmod.login_limiter, appmod.register_limiter = real_login_limiter, real_register_limiter
 
+# --- Step 24 regression: a login cookie never expired and couldn't be revoked -- a
+# copied ("stolen") cookie kept working after its owner logged out. ---
+owner, thief = appmod.app.test_client(), appmod.app.test_client()
+account = f'sess_{suffix}'
+reg = register(owner, account, f'{account}@test.local')
+set_cookie = reg.headers.get('Set-Cookie', '')
+thief.set_cookie('session', set_cookie.split(';', 1)[0].split('=', 1)[1])
+check("(setup) a copied login cookie works while the owner is logged in", thief.get('/api/me').status_code == 200)
+check("the login cookie has an expiry (Expires=...)", 'Expires=' in set_cookie, set_cookie)
+other_tab = appmod.socketio.test_client(appmod.app, flask_test_client=owner)
+check("(setup) the owner has an open game connection", other_tab.is_connected())
+owner.post('/api/logout')
+check("after the owner logs out, the copied cookie no longer works", thief.get('/api/me').status_code == 401)
+check("...and the account's open game connections are closed", not other_tab.is_connected())
+check("...but logging in again works normally",
+      owner.post('/api/login', json={'username': account, 'password': 'testpass123'}).status_code == 200
+      and owner.get('/api/me').status_code == 200)
+
+days = appmod.settings.session_days
+real_time = _time.time
+try:
+    _time.time = lambda: real_time() + (days - 1) * 86400
+    still = owner.get('/api/me').status_code
+    _time.time = lambda: real_time() + (days + 1) * 86400
+    fresh = appmod.app.test_client()
+    fresh.post('/api/login', json={'username': account, 'password': 'testpass123'})
+    _time.time = lambda: real_time() + (2 * days + 2) * 86400
+    stale = fresh.get('/api/me').status_code
+finally:
+    _time.time = real_time
+check(f"a login is still valid {days - 1} days later", still == 200, still)
+check(f"...and expires after {days} days without a visit (the server checks the signed timestamp)",
+      stale == 401, stale)
+
+legacy = appmod.app.test_client()
+with legacy.session_transaction() as sess:   # a cookie made before Step 24: user_id but no session version
+    sess['user_id'] = r1.get_json()['id']
+check("an old-format cookie without a session version is not accepted", legacy.get('/api/me').status_code == 401)
+other_tab.disconnect() if other_tab.is_connected() else None
+
 # --- Step 21 regression: the page loaded socket.io from a third-party CDN (the game
 # couldn't load while it was slow/down; foreign code with full page access). ---
 import hashlib

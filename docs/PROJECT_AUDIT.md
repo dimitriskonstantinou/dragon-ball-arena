@@ -184,7 +184,7 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 
 **SEC-3 — MEDIUM — No rate limiting on login/register (by reading).** Enables password guessing and account spam. Fix: per-IP limits (Flask-Limiter or a small in-process counter). — ✅ FIXED in Step 22 (in-process sliding window, no new dependency: 5 failed logins / 5 min and 5 accounts / hour per IP → 429 + Retry-After; `TRUSTED_PROXIES` for real client IPs behind a proxy). Not covered yet: many IPs guessing one account (per-account limits / CAPTCHA, later if needed).
 
-**SEC-4 — MEDIUM — Sessions can't be revoked or expire (by reading)**
+**SEC-4 — MEDIUM — Sessions can't be revoked or expire (by reading)** — ✅ FIXED in Step 24 (users.session_version via the first real migration; logout invalidates every copy of the account's cookie and closes its sockets; logins expire after `SESSION_DAYS` without a visit). Not yet: per-device logout, password change (doesn't exist yet -- must bump the version when added).
 Signed client-side cookie with only `user_id`; logout just clears that browser. A stolen cookie works forever.
 **Fix:** session version/nonce stored per user (bump on logout/password change) + lifetime.
 

@@ -97,7 +97,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | ✅ 3.1 `config.py`: env-driven settings; refuse to start without `SECRET_KEY` in prod — *Step 19* | SEC-1 | Done: probe item fixed; a real production start without a key exits with a clear message |
 | ✅ 3.2 Allowed origins from env; cookie `SameSite=Lax`, `Secure`, `HttpOnly` — *Step 20* | SEC-2 | Done: probe item fixed; foreign/look-alike origins refused (smoke); production cookie flags verified in a real start |
 | ✅ 3.3 Login/register rate limits — *Step 22* | SEC-3 | Done: 6th failed login / 6th account per IP → 429; proxy-aware via `TRUSTED_PROXIES` |
-| 3.4 Session versioning + lifetime | SEC-4 | Logout invalidates old cookies (test) |
+| ✅ 3.4 Session versioning + lifetime — *Step 24* | SEC-4 | Done: a copied cookie dies at logout; open sockets closed; 30-day expiry; first real migration |
 | 3.5 Case-insensitive usernames, email check, IntegrityError handled | SEC-5 | Tests for each |
 | 3.6 Relative image URLs, `/healthz`, logging config, ~~self-hosted socket.io~~ (✅ *Step 21*) | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
 
@@ -165,13 +165,12 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.4 / Step 24: sessions that can be revoked and expire (SEC-4).** A login cookie is valid forever and can't be
-taken back: "log out" only clears it in that one browser, so a stolen cookie keeps working, and there is no way to
-"log out everywhere" (or after a password change). Plan: a per-account session version stored in the DB and inside
-the cookie (bumped on logout-everywhere / password change, so old cookies stop working), plus a session lifetime
-(e.g. 30 days) in `config.py`. The new column goes in as the **first real migration** (Step 23 set them up), tested
-for upgrade + downgrade and on an adopted copy of the real database. Then the rest of 3.5 and 3.6.
-*(Step 23 done: Flask-Migrate migrations, DB-1.)*
+**3.5 / Step 25: usernames that can't impersonate each other + basic account checks (SEC-5).** "Goku" and "goku"
+can both be registered today (impersonation), emails aren't checked at all, and two simultaneous registrations of the
+same name crash with a 500 (unique-index error) instead of a clear message. Plan: case-insensitive uniqueness (login
+by any capitalization), a basic email format check, and a clean "already taken" for the race -- likely the second
+real migration (a unique index on the lower-cased name), with a check for existing look-alike duplicates first.
+Then 3.6 (relative image URLs, `/healthz`, logging config), which finishes Phase 3 and unblocks the DEV site.
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

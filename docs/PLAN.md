@@ -45,5 +45,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 21 | `feature/step21-self-host-socketio` | socket.io client served from our own server (npm build, integrity-verified, sha256 pinned); browser tests fail on any third-party request | third-party requests per page load 1 → 0; smoke 107→111; Step 20's extra load timeout removed |
 | 22 | `feature/step22-rate-limits` | Per-IP limits: 5 failed logins / 5 min, 5 accounts / hour → 429; in-memory sliding window (no new dependency); `TRUSTED_PROXIES` (ProxyFix) | unlimited guessing/spam reproduced → 429 after 5; probe 2→1; new rate_limit suite (10), config 39→45, smoke 111→117 |
 | 23 | `feature/step23-migrations` | Flask-Migrate/Alembic: baseline migration, server upgrades on start, pre-migration DBs adopted (rehearsed on a copy of the real game.db), `create_all` removed | adoption: every row identical, 0 schema diff; new migrations suite (9); startup +~0.5 s one-time (library load; no-op upgrade 5 ms) |
+| 24 | `feature/step24-session-revocation` | `users.session_version` (first real migration): logout invalidates every copy of the cookie + closes the account's sockets; 30-day expiry; fresh session per login; stricter adoption (exact baseline columns) | stolen cookie after logout 200 → 401; probe 2→1; migrations 9→11, config 45→48, smoke 117→126; rehearsed on a copy of game.db |
 
-**Merged into `dev`:** none of steps 1–23 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–24 yet (user merges in order).

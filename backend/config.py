@@ -17,6 +17,7 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   TURN_TIMER_THREAD  0 disables the background ticker (tests drive it by hand)
   LOGIN_FAILURE_LIMIT / LOGIN_WINDOW_SECONDS   failed logins allowed per client IP per window (default 5 / 300)
   REGISTER_LIMIT / REGISTER_WINDOW_SECONDS     new accounts allowed per client IP per window (default 5 / 3600)
+  SESSION_DAYS       a login expires after this many days without any visit (default 30, 1..365)
   TRUSTED_PROXIES    how many reverse proxies sit in front of the app (default 0). Set it (e.g. 1 on Render)
                      so the real client IP is read from X-Forwarded-For -- otherwise every player shares the
                      proxy's IP and one attacker could rate-limit everybody.
@@ -55,6 +56,7 @@ class Settings:
     register_limit: int
     register_window_seconds: int
     trusted_proxies: int
+    session_days: int
 
     @property
     def is_production_like(self):
@@ -144,4 +146,5 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
         register_limit=_int(environ, 'REGISTER_LIMIT', 5, 1, 100_000),
         register_window_seconds=_int(environ, 'REGISTER_WINDOW_SECONDS', 3600, 1, 86_400),
         trusted_proxies=_int(environ, 'TRUSTED_PROXIES', 0, 0, 5),
+        session_days=_int(environ, 'SESSION_DAYS', 30, 1, 365),
     )

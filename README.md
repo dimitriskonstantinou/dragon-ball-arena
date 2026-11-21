@@ -101,7 +101,8 @@ frontend/
 - `POST /api/register` `{username, email, password}`, `POST /api/login` `{username, password}`,
   `POST /api/logout`, `GET /api/me` — plain JSON HTTP endpoints, not Socket.IO events.
   A successful register/login sets a Flask session cookie; Socket.IO connections
-  read that same cookie to resolve which account owns the connection.
+  read that same cookie to resolve which account owns the connection. Logins expire
+  after 30 days without a visit, and logging out signs the account out on every device.
 - Every account currently has **every character in `backend/content/`** (including ones added
   after it registered) -- a temporary rule until mission-based unlocks exist.
   The `Mission`/`UserMissionProgress` tables exist for the planned mission-based

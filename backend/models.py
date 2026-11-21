@@ -25,6 +25,9 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    # Login cookies carry the version they were issued with; bumping it (logout)
+    # invalidates every existing cookie of this account on every device (SEC-4).
+    session_version = db.Column(db.Integer, nullable=False, default=0, server_default='0')
 
     stats = db.relationship('UserStats', backref='user', uselist=False, cascade='all, delete-orphan')
     unlocked_characters = db.relationship('UserCharacter', backref='user', cascade='all, delete-orphan')

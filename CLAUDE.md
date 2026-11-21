@@ -157,7 +157,8 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `message` | game event text (counter fired, game over) |
 | `error-msg` | `GameError` text or generic server error |
 
-HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /api/logout`, `GET /api/me`.
+HTTP: `POST /api/register {username,email,password}`, `POST /api/login` (both: 429 when rate-limited),
+`POST /api/logout` (logs the account out on every device), `GET /api/me` (401 when not logged in).
 
 ### Game engine (`game_engine.py`)
 - **Pure functions over plain dicts.** No Flask/DB imports; that's what makes it fast (~0.5 ms/turn) and testable.
@@ -254,7 +255,12 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
   set `TRUSTED_PROXIES` (ProxyFix), or every player shares the proxy's IP. Tests that create many accounts from
   127.0.0.1 raise `REGISTER_LIMIT` for their own process; the smoke test checks the real defaults with swapped-in
   limiters.
-- Still a deploy blocker: session revocation / lifetime (SEC-4).
+- **Sessions (Step 24):** `start_session(user)` (clears the session first, `permanent`, stores `user_id` + `sv` =
+  `users.session_version`); `current_user()` returns None when the cookie's `sv` doesn't match the account's (or is
+  missing). `/api/logout` logs out **everywhere**: bumps `session_version` (every copy of the cookie dies) and
+  disconnects the account's open sockets (`USER_SIDS`). Logins expire after `SESSION_DAYS` (default 30) without a
+  visit -- Flask verifies the signed timestamp; each request renews it. Anything that changes credentials later (a
+  password change) must bump `session_version` too.
 - New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
 
 ### Performance requirements
