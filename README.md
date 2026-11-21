@@ -137,7 +137,10 @@ frontend/
   wipe local disk on every redeploy, so production needs `DATABASE_URL` set
   to a real hosted Postgres instance — see the deployment discussion for why.
   Everything here goes through SQLAlchemy specifically so that's a connection
-  string change, not a rewrite.
+  string change, not a rewrite. It is tested: with Docker running, `python tests.py` also runs
+  the migrations and the whole smoke suite against PostgreSQL 16. To play locally on
+  Postgres: `DATABASE_URL=postgresql+psycopg://dba:dbatest@127.0.0.1:55432/dba_test python app.py`
+  (after one `python tests.py` has started that throwaway container).
 
 ## Authoring characters and skills
 

@@ -85,6 +85,8 @@ def test_harmless_changes_only_warn():
         ("a fixed exploit", lambda r: r.update(probe_confirmed=[]), 'no longer confirmed'),
         ("a smaller payload", lambda r: r.update(payload_bytes=8500), 'smaller'),
         ("a slower engine (timing is noisy)", lambda r: r.update(turn_ms=0.6), 'speed'),
+        ("PostgreSQL suites not run (no Docker)", lambda r: r.update(postgres_skipped='Docker is not running'),
+         'PostgreSQL suites not run'),
     ]:
         problems, warnings = problems_for(change)
         check(f"{name}: a warning, not a failure", problems == [] and any(expected in w for w in warnings),

@@ -147,7 +147,7 @@ responsive breakpoints, accessibility pass. **Measurable:** Lighthouse accessibi
 ## Phase 8 — Deployment (DEPLOY_PLAN Stages 1–9)
 
 DEV (staging) online first, PROD after Phases 1–3 are done and DEV has been played on.
-Key items: Postgres (DB-2; Flask-Migrate/DB-1 ✅ Step 23), gunicorn + gevent, Docker, CI (TST-2), load test (capacity is currently
+Key items: Postgres (DB-2 ✅ ready, Step 33; Flask-Migrate/DB-1 ✅ Step 23), gunicorn + gevent, Docker, CI (TST-2), load test (capacity is currently
 unmeasured), domain/HTTPS, Sentry + uptime, backups, restart warnings.
 **Measurable:** load test p95 < 200 ms at 2× expected peak; restore test passed; alerts fire.
 
@@ -169,14 +169,18 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**Phases 1–3 are complete** (2.7/2.8 are UX and move with the frontend phase), so DEPLOY_PLAN Stage 0 -- everything
-that must hold before anyone else plays -- is met; the probe's one remaining item is the reflect design question
-(ENG-5), not a hole. **Next is a priority choice for the user** (asked in the Step 32 report):
-- **Recommended: DEPLOY_PLAN Stage 2 -- PostgreSQL** (`psycopg`, run the migration + smoke suites against a real
-  Postgres, then Stage 3 gunicorn/Docker and Stage 4 CI running `python tests.py`) -- the path to the DEV site.
-- Phase 4 -- content cleanup (effect registry ENG-6, cost text CON-1, image sizes AST-1).
-- Phase 5 -- frontend foundation (React + TS + Vite), then the battle UI incl. the timeline.
-*(Step 32 done: per-match seeded randomness -- ENG-7. **Phase 1 complete.**)*
+**Going online (user's choice after Step 32): DEPLOY_PLAN Stages 2 → 3 → 4, then the DEV site.**
+
+**Stage 3 / Step 34: production server + container.** `python app.py` is the development server (Werkzeug,
+`allow_unsafe_werkzeug`); online it must run under gunicorn with the gevent worker -- **exactly 1 worker**, since
+matches live in memory -- in a Docker image (`python:3.12-slim`, the production Python version; non-root user;
+`.dockerignore` keeps `game.db`, secrets and `.git` out). Plan: pin gunicorn + gevent (pip-audit), a `wsgi`
+entry point, `Dockerfile` + `.dockerignore`, then prove it: build the image, run it against the Postgres container
+with production settings, and play a full match through it in the browser test (real websockets, `101 Switching
+Protocols`), plus `/healthz` and the turn timer under gevent. Image optimisation (AST-1) and cache headers stay
+separate steps. Then Stage 4: GitHub Actions running `python tests.py`.
+*(Step 33 done: PostgreSQL verified -- migrations, release step and the whole smoke suite pass on Postgres 16.
+Step 32: Phase 1 complete.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

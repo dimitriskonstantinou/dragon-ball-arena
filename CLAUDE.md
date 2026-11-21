@@ -4,7 +4,7 @@ Dragon Ball Arena is a browser-based, turn-based 3v3 tactics game whose gameplay
 Naruto-Arena, with an original Dragon Ball identity (we don't copy its visuals or assets). Target: a public
 online game, **1v1 PvP only** (no bots), many concurrent matches.
 
-Stack: Python (Flask + Flask-SocketIO + SQLAlchemy; SQLite in dev, Postgres planned), vanilla JS frontend with no
+Stack: Python (Flask + Flask-SocketIO + SQLAlchemy; SQLite in dev, PostgreSQL 16 in production -- verified Step 33), vanilla JS frontend with no
 build step.
 
 ## Read first
@@ -35,6 +35,7 @@ backend/
   seed_db.py                Manual migrate + registry sync (the server already does both at startup; rarely needed)
   migrations/               Flask-Migrate/Alembic: env.py, versions/<rev>_*.py (schema history; never edit applied ones)
   test_migrations.py        Fresh/adopted/partial DBs, downgrade/upgrade round trip, models == migrations guard
+  test_postgres.py          The same on PostgreSQL (needs TEST_POSTGRES_URL; tests.py provides a Docker container)
   test_game_engine.py       Engine unit + per-character kit tests (no DB)
   test_content.py           Content: real roster loads, schema current, invalid cases, every skill castable
   test_integration_smoke.py Full stack in-process: HTTP + Socket.IO + DB
@@ -55,7 +56,8 @@ docs/      plans, audit, roadmap, step log, measurements/
 
 ```
 python tests.py --quick                # ~12 s: engine, content, rate limit, smoke (+ runner gates) -- the edit loop
-python tests.py                        # ~70 s: ALL suites incl. browser, probe, coverage, lint, payload, speed
+python tests.py                        # ~90 s: ALL suites incl. browser + PostgreSQL, probe, coverage, lint, payload, speed
+python tests.py --no-postgres          # same without the PostgreSQL suites (they WARN-skip anyway if Docker is off)
 python tests.py --update-baseline      # only after an INTENDED change (new tests, fixed exploit, accepted payload
                                        # growth): writes tools/tests_baseline.json -- commit it, explain it in the report
 ```
@@ -63,7 +65,10 @@ python tests.py --update-baseline      # only after an INTENDED change (new test
 `tests.py` is green only if every suite passes **and** nothing regressed against the baseline: no suite runs fewer
 checks (a test silently lost), no newly SKIPPED test, no new CONFIRMED probe item, no payload growth (fixed sample),
 coverage not down by more than 1 point, no new pyflakes issue, and the real `backend/game.db` untouched (size, mtime,
-sha256). Engine speed only warns (noisy machine). Exit code 1 + a PROBLEM list otherwise. Every step's report
+sha256). Engine speed only warns (noisy machine). **PostgreSQL:** whenever Docker is running, a full run also runs
+`test_postgres.py` + the whole smoke suite on PostgreSQL 16 in a throwaway container `dba-test-postgres` (port 55432,
+user/password `dba`/`dbatest`, started on demand and left running; `docker rm -f dba-test-postgres` removes it), each
+suite on a brand-new database. Never point it at a real database. Exit code 1 + a PROBLEM list otherwise. Every step's report
 includes its verdict; a step is not done unless the full run is ALL GREEN.
 
 Individual tools, from `backend/` unless noted (settings: see `config.py`; the defaults need nothing set):
@@ -323,7 +328,7 @@ User supplies all art (don't auto-source anime stills). Portraits → `photos/ch
 Planned: real extensions + resize via a tool (AST-1).
 
 ### Deployment
-Not deployed yet. Follow DEPLOY_PLAN: DEV site from `dev`, PROD from `main`, separate DBs/secrets, Postgres +
+Not deployed yet (Stage 2 PostgreSQL verified in Step 33; next Stage 3). Follow DEPLOY_PLAN: DEV site from `dev`, PROD from `main`, separate DBs/secrets, Postgres +
 migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end live matches until state moves to Redis.
 
 ## Important decisions (and why)

@@ -207,9 +207,9 @@ for bad_email in ('not-an-email', 'a@b', '@x.io', 'a b@x.io', 'a@x.', 'x' * 251 
     resp = register(web, f'm{uuid.uuid4().hex[:8]}', bad_email)
     check(f"email {bad_email[:20]!r} is refused", resp.status_code == 400
           and resp.get_json() == {'error': 'please enter a valid email address'}, resp.get_json())
-ok_email = register(appmod.app.test_client(), f'Mail-{suffix}', 'First.Last+db@Mail.Example.org')
+ok_email = register(appmod.app.test_client(), f'Mail-{suffix}', f'First.Last+{suffix}@Mail.Example.org')
 check("a normal email (dots, plus, capitals) and a name with - and capitals are accepted",
-      ok_email.status_code == 201 and ok_email.get_json()['email'] == 'first.last+db@mail.example.org',
+      ok_email.status_code == 201 and ok_email.get_json()['email'] == f'first.last+{suffix}@mail.example.org',
       ok_email.get_json())
 
 import threading as _threading

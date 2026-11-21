@@ -1,6 +1,6 @@
 {
-  "updated": "2026-11-21 19:01",
-  "git": "628fb96",
+  "updated": "2026-11-21 19:15",
+  "git": "45698e9",
   "suites": {
     "engine": {
       "pass": 229,
@@ -31,7 +31,15 @@
       "skipped": 0
     },
     "runner_gates": {
-      "pass": 18,
+      "pass": 19,
+      "skipped": 0
+    },
+    "postgres": {
+      "pass": 17,
+      "skipped": 0
+    },
+    "smoke_postgres": {
+      "pass": 158,
       "skipped": 0
     }
   },
@@ -39,7 +47,7 @@
     "reflect ignores attacker's invulnerability/defense"
   ],
   "payload_bytes": 8606,
-  "turn_ms": 0.286,
+  "turn_ms": 0.269,
   "coverage": 92.0,
   "lint_issues": 3
 }

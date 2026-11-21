@@ -8,3 +8,5 @@ pydantic==2.14.4
 Flask-Migrate==4.1.0
 alembic==1.20.1
 Mako==1.4.3
+# PostgreSQL driver (production database; DEPLOY_PLAN Stage 2). Not needed for SQLite dev.
+psycopg[binary]==3.3.9

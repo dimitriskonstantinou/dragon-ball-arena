@@ -162,18 +162,18 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 8. `.env.example` documenting every variable (never commit a real `.env`; add it to `.gitignore`).
 - **Check:** app starts with `ENV=production` + env vars set, fails clearly without `SECRET_KEY`; tests green.
 
-### Stage 2 — PostgreSQL + migrations
-1. Add `psycopg[binary]` to `requirements.txt` (pinned). (✅ Flask-Migrate/Alembic: Step 23.)
-2. Run Postgres locally (Docker: `docker run -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16`) and point
-   `DATABASE_URL` at it.
-3. ✅ *(Step 23)* Migrations exist (`backend/migrations/`, baseline `def555b6f5cf`); the server upgrades the schema on
-   start and `create_all` is gone. Still to do here: run `test_migrations.py` against Postgres too (it uses SQLite
-   today; the migrations are written in batch mode so they also work on SQLite).
+### Stage 2 — PostgreSQL + migrations — ✅ *done in Step 33*
+1. ✅ `psycopg[binary]==3.3.9` in `requirements.txt` (pip-audit clean). (Flask-Migrate/Alembic: Step 23.)
+2. ✅ Local Postgres: `python tests.py` starts a throwaway `postgres:16` container (`dba-test-postgres`, port 55432)
+   whenever Docker is running. To run the game itself on it: `DATABASE_URL=postgresql+psycopg://dba:dbatest@127.0.0.1:55432/dba_test python app.py`.
+3. ✅ Migrations exist (Step 23) and are tested on PostgreSQL (`backend/test_postgres.py`): fresh build == models,
+   full downgrade/upgrade, existing data through every later migration, refusal rolls back completely, Step 27's
+   revision upgrades cleanly, VARCHAR limits enforced.
 4. Release step: `flask db upgrade && python seed_db.py` (registers characters before the new version takes
    traffic; the server also syncs on start). Content is authored in `backend/content/`.
 5. ✅ *(Step 25)* Case-insensitive unique usernames (`users.username_key`, unique index -- portable, no functional index).
-6. Make the smoke test run against Postgres too (CI does this in Stage 4).
-- **Check:** fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op.
+6. ✅ The whole smoke suite runs against Postgres too (`smoke_postgres` in `tests.py`; CI will do the same).
+- **Check:** ✅ fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op (all automated).
 
 ### Stage 3 — Production server & container
 1. Add `gunicorn` + `gevent` (pinned). Start command:

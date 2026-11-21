@@ -4,6 +4,7 @@ One command that checks the whole project, before and after every change.
     python tests.py                     # everything (~80 s): all suites + probe + coverage + lint + guards
     python tests.py --quick             # fast loop (~12 s): engine, content, rate limit, smoke, runner gates
     python tests.py --no-browser        # everything except the Playwright browser run
+    python tests.py --no-postgres       # everything except the PostgreSQL suites
     python tests.py --update-baseline   # after an INTENDED change: accept the new numbers (explain why in the report)
     python tests.py --save report.md    # also write the report to a file
 
@@ -16,6 +17,12 @@ Green means more than "no test failed". Every run is compared with the baseline
   - coverage drops by more than 1 point, or pyflakes reports more issues
   - the real backend/game.db was touched (size/mtime/content) -- tests must use temp databases
 Engine speed is compared too, but only warns (timing on a dev machine is noisy).
+
+PostgreSQL (the production database): a full run also runs test_postgres.py and the
+whole smoke suite against PostgreSQL 16 whenever Docker is running -- in a throwaway
+container `dba-test-postgres` (port 55432, started on demand, left running for the
+next run; remove it with `docker rm -f dba-test-postgres`), every suite on a brand-new
+database. Without Docker this is a WARN, not a failure.
 
 Exit code 0 = all green, 1 = problems (listed at the end). Never touches backend/game.db.
 """
@@ -45,7 +52,13 @@ SUITES = [
     ('migrations', 'test_migrations.py', False, False),
     ('smoke', 'test_integration_smoke.py', True, True),
     ('browser', 'test_browser_e2e.py', False, False),
+    ('postgres', 'test_postgres.py', False, False),
+    ('smoke_postgres', 'test_integration_smoke.py', False, False),
 ]
+POSTGRES_SUITES = ('postgres', 'smoke_postgres')
+PG_CONTAINER = 'dba-test-postgres'
+PG_IMAGE = 'postgres:16'
+PG_URL = 'postgresql+psycopg://dba:dbatest@127.0.0.1:55432/dba_test'
 
 PAYLOAD_TOLERANCE_BYTES = 0      # any growth must be accepted on purpose (--update-baseline)
 COVERAGE_TOLERANCE_POINTS = 1.0
@@ -119,6 +132,8 @@ def compare(results, baseline):
         if results['turn_ms'] > baseline['turn_ms'] * SPEED_WARN_FACTOR:
             warnings.append(f"speed: a turn takes {results['turn_ms']:.3f} ms, baseline {baseline['turn_ms']:.3f} ms "
                             f"(re-run to rule out noise)")
+    if results.get('postgres_skipped'):
+        warnings.append(f"PostgreSQL suites not run: {results['postgres_skipped']}")
     if results.get('real_db_changed'):
         problems.append("backend/game.db was modified during the run -- a test is using the real database!")
     return problems, warnings
@@ -150,7 +165,46 @@ def db_fingerprint():
         return st.st_size, st.st_mtime_ns, hashlib.sha256(fh.read()).hexdigest()
 
 
-def run_suites(names, tmp, use_coverage):
+def ensure_postgres():
+    """Starts (or reuses) the throwaway PostgreSQL container. Returns (url, None) or (None, why not)."""
+    if not has_module('psycopg'):
+        return None, 'psycopg is not installed (pip install -r backend/requirements.txt)'
+    try:
+        if subprocess.run(['docker', 'info'], capture_output=True, timeout=30).returncode != 0:
+            return None, 'Docker is not running (start Docker Desktop)'
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None, 'Docker is not installed'
+    state = subprocess.run(['docker', 'inspect', '-f', '{{.State.Running}}', PG_CONTAINER],
+                           capture_output=True, text=True)
+    if state.returncode != 0:
+        subprocess.run(['docker', 'run', '-d', '--name', PG_CONTAINER, '-e', 'POSTGRES_USER=dba',
+                        '-e', 'POSTGRES_PASSWORD=dbatest', '-e', 'POSTGRES_DB=dba_test', '-p', '55432:5432',
+                        PG_IMAGE], capture_output=True)
+    elif state.stdout.strip() != 'true':
+        subprocess.run(['docker', 'start', PG_CONTAINER], capture_output=True)
+    for _ in range(60):
+        if subprocess.run(['docker', 'exec', PG_CONTAINER, 'pg_isready', '-U', 'dba', '-d', 'dba_test'],
+                          capture_output=True).returncode == 0:
+            return PG_URL, None
+        time.sleep(1)
+    return None, f'the {PG_CONTAINER} container did not become ready'
+
+
+def pg_database(pg_url, create=True, name=None):
+    """Creates a brand-new database (returns its URL, name) or drops `name`."""
+    import psycopg
+    from sqlalchemy.engine import make_url
+    admin_url = make_url(pg_url).set(drivername='postgresql').render_as_string(hide_password=False)
+    with psycopg.connect(admin_url, autocommit=True) as con:
+        if not create:
+            con.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            return None
+        name = f"dba_t_{os.urandom(5).hex()}"
+        con.execute(f'CREATE DATABASE "{name}"')
+    return make_url(pg_url).set(database=name).render_as_string(hide_password=False), name
+
+
+def run_suites(names, tmp, use_coverage, pg_url=None):
     results, details = {}, []
     cov_file = os.path.join(tmp, 'cov', '.coverage')
     os.makedirs(os.path.dirname(cov_file), exist_ok=True)
@@ -158,6 +212,12 @@ def run_suites(names, tmp, use_coverage):
     out('|---|---|---|---|---|---|')
     for name, script, _, covered in [s for s in SUITES if s[0] in names]:
         env = {'DATABASE_URL': 'sqlite:///' + os.path.join(tmp, f'{name}.db').replace('\\', '/')}
+        pg_db = None
+        if name == 'postgres':
+            env = {'TEST_POSTGRES_URL': pg_url}
+        elif name == 'smoke_postgres':
+            pg_db_url, pg_db = pg_database(pg_url)
+            env = {'DATABASE_URL': pg_db_url}
         if name == 'browser' and not browser_available():
             results[name] = {'not_run': 'pip install -r requirements-dev.txt; python -m playwright install chromium'}
             out(f'| {name} | NOT RUN | | | | |')
@@ -166,7 +226,11 @@ def run_suites(names, tmp, use_coverage):
         if use_coverage and covered:
             cmd = [sys.executable, '-m', 'coverage', 'run', '-p', f'--data-file={cov_file}', '--source=.',
                    '--omit=test_*,migrations/*', script]
-        proc, secs = run(cmd, env)
+        try:
+            proc, secs = run(cmd, env)
+        finally:
+            if pg_db:
+                pg_database(pg_url, create=False, name=pg_db)
         text = proc.stdout + proc.stderr
         passed, failed, skipped = count_checks(text)
         results[name] = {'pass': passed, 'fail': failed, 'skipped': skipped, 'exit': proc.returncode}
@@ -239,6 +303,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--quick', action='store_true', help='fast loop: engine, content, rate limit, smoke, gates')
     ap.add_argument('--no-browser', action='store_true', help='skip the Playwright browser run')
+    ap.add_argument('--no-postgres', action='store_true', help='skip the PostgreSQL suites')
     ap.add_argument('--update-baseline', action='store_true', help='accept the current numbers as the new baseline')
     ap.add_argument('--save', help='also write the report to this file')
     args = ap.parse_args()
@@ -256,10 +321,17 @@ def main():
     names = [s[0] for s in SUITES if s[2]] if args.quick else [s[0] for s in SUITES]
     if args.no_browser and 'browser' in names:
         names.remove('browser')
+    results = {}
+    pg_url = None
+    if not args.quick and not args.no_postgres:
+        pg_url, why_not = ensure_postgres()
+        if not pg_url:
+            results['postgres_skipped'] = why_not
+    if not pg_url:
+        names = [n for n in names if n not in POSTGRES_SUITES]
     use_coverage = not args.quick and has_module('coverage')
     out('## Suites')
-    results = {}
-    suite_results, coverage = run_suites(names, tmp, use_coverage)
+    suite_results, coverage = run_suites(names, tmp, use_coverage, pg_url)
     results['suites'] = suite_results
 
     gates, _ = run([sys.executable, os.path.join('tools', 'test_tests_runner.py')], cwd=ROOT)
@@ -296,12 +368,15 @@ def main():
     if args.update_baseline:
         if args.quick or args.no_browser:
             problems.append("--update-baseline needs a full run (no --quick / --no-browser)")
+        elif results.get('postgres_skipped') and any(s in baseline.get('suites', {}) for s in POSTGRES_SUITES):
+            problems.append(f"baseline NOT updated: the PostgreSQL suites didn't run ({results['postgres_skipped']})")
         elif any(p for p in problems if 'FAILED' in p or 'exited' in p or "couldn't run" in p or 'game.db' in p):
             problems.append("baseline NOT updated: fix the failures first")
         else:
             new_base = {
                 'updated': time.strftime('%Y-%m-%d %H:%M'), 'git': head,
-                'suites': {n: {k: r[k] for k in ('pass', 'skipped')} for n, r in results['suites'].items()},
+                'suites': {**baseline.get('suites', {}),   # suites not run this time keep their entry
+                           **{n: {k: r[k] for k in ('pass', 'skipped')} for n, r in results['suites'].items()}},
                 'probe_confirmed': results.get('probe_confirmed', []), 'payload_bytes': payload,
                 'turn_ms': turn_ms, 'coverage': results.get('coverage'), 'lint_issues': results.get('lint_issues'),
             }
