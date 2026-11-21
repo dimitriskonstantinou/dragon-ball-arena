@@ -1,8 +1,15 @@
 # Dragon Ball Arena — UI / Frontend Plan
 
-Companion to [PLAN.md](PLAN.md). Frontend today: one `index.html`, one 644-line `app.js`,
-one 129-line `style.css`, vanilla JS, no build step. **Keep it vanilla.** At this size a framework
-adds more weight than it removes. Split the code into ES modules instead.
+Companion to [MASTER_ROADMAP.md](MASTER_ROADMAP.md) (Phases 5–7) and [PROJECT_AUDIT.md](PROJECT_AUDIT.md) §4.5 (FE-1…FE-7).
+Frontend today: one `index.html`, one 638-line `app.js`,
+one 129-line `style.css`, vanilla JS, no build step.
+
+**Decision (2026-11-20, supersedes "keep it vanilla"):** given the target scope (large roster, many screens, a
+polished game UI), the frontend phase migrates to **React + TypeScript + Vite + React Router**, styled with **custom
+CSS + design tokens**. Not by default: Tailwind, shadcn/ui (app/admin look), TanStack Query (data is pushed over the
+socket), Zustand (the server sends full state) — only if a concrete need appears. The Socket.IO client and protocol
+stay. TypeScript types mirror `view_for`'s output. The Playwright suite (`backend/test_browser_e2e.py`) is the
+safety net: it must pass before and after the migration (selectors will be updated, behavior must not change).
 
 ---
 
@@ -22,10 +29,12 @@ adds more weight than it removes. Split the code into ES modules instead.
 6. **Ki is color-only**, and red/green are two of the four types, which is a colorblind problem. Dice have no
    symbol or letter.
 7. **No feedback on hits.** HP bar is always red regardless of HP; no damage numbers, no flash on the struck card.
-8. **Status badges cover the portrait** (absolute top-right, stacked) and say "Ends after this turn" /
+8. **Status badges cover the portrait** (confirmed by the browser tests: they block clicking yourself; FE-10).
+   Two statuses even show internal names, "? EXPIRING_DEFENSE" / "? PRIMED_MARK" (FE-9). Badges are absolute top-right, stacked, and say "Ends after this turn" /
    "N Turn(s)" in tiny text.
 9. **Turn header** shows only your first character's picture; no usernames, no timer.
-10. **Game over is a dead end.** Text changes to "YOU WIN!"; no return to lobby; Find Match stays disabled;
+10. **Game over is a dead end, and hides the final hit.** `update-state` returns before redrawing when there's a winner,
+    so the board keeps the pre-finish HP (FE-2). Text changes to "YOU WIN!"; no return to lobby; Find Match stays disabled;
     you have to reload.
 11. Errors go to the bottom of the log where nobody looks.
 
@@ -41,7 +50,7 @@ adds more weight than it removes. Split the code into ES modules instead.
 18. HTML is built with `innerHTML` strings and inline `onclick="...'${id}'..."`, which is fragile and becomes XSS
     the moment any text is user-provided.
 19. Leftover tab title "Earth (P1)" / "Saiyan (P2)".
-20. Each match downloads ~1.8 MB of skill icons rendered at 32px (see PLAN §5, image assets).
+20. Each match downloads ~1.8 MB of skill icons rendered at 32px (audit AST-1).
 
 ---
 
@@ -86,7 +95,7 @@ adds more weight than it removes. Split the code into ES modules instead.
 - Keyboard: `1–4` pick a skill of the focused character, `Tab` cycles characters, `Enter` ends turn, `Esc` cancels.
 
 ### Feedback
-- Server battle events (PLAN §6) feed a readable log + **floating damage/heal numbers** + a short flash on the struck card.
+- Server battle events (roadmap 2.7) feed a readable log + **floating damage/heal numbers** + a short flash on the struck card.
 - "YOUR TURN" banner on turn change; timer bar turns red under 10s.
 - Errors appear as a toast near the action, not at the bottom of the log.
 - End screen: result, W/L and streak change, **[Play again]** (same team) and **[Back to lobby]**.
@@ -112,27 +121,24 @@ adds more weight than it removes. Split the code into ES modules instead.
 
 ---
 
-## 3. Code structure
+## 3. Code structure (React + TypeScript + Vite)
 
 ```
 frontend/
-  index.html
-  css/  base.css  lobby.css  battle.css
-  js/
-    main.js        boot, screen switching
-    net.js         socket + fetch wrappers (one place for every event name)
-    state.js       current game view, selection, derived values (remainingKi, canAfford, validTargets)
-    dom.js         tiny el('div', {class, onclick}, children) helper, so no innerHTML for data
-    auth.js
-    lobby.js
-    battle.js      board rendering
-    payment.js     auto-pay + adjust modal
-    log.js         battle log + toasts + floating numbers
+  index.html  vite.config.ts  package.json  tsconfig.json
+  src/
+    main.tsx  App.tsx  router.tsx
+    styles/        tokens.css (colors, spacing, type scale), base.css
+    net/           socket.ts (one place for every event name + typed payloads), api.ts (auth fetch)
+    types/         game.ts (mirrors game_engine.view_for), content.ts
+    state/         game state from the socket, selection, derived values (remainingKi, canAfford, validTargets)
+    features/      auth/  lobby/  battle/  payment/  log/
+    components/    CharacterCard, SkillIcon, KiDie, StatusChip, Toast, ...
 ```
 
-- `<script type="module">` (no bundler). Flask already serves `frontend/`.
-- Event delegation on containers instead of inline `onclick` strings.
-- Render from one `state` object (`render(state)`) instead of ad-hoc DOM edits.
+- Flask serves the Vite build output (`dist/`) in production; Vite dev server proxies `/api` + `/socket.io` in dev.
+- One source of state per screen, rendered declaratively; no `innerHTML` with data (SEC-7).
+- Migrate screen by screen (auth → lobby → battle), keeping the Playwright suite green throughout.
 - `canAfford` / `remainingKi` must use the **same algorithm as the server** (specific costs first, then random),
   so the UI never greys out a skill the server would accept, or the reverse.
 
@@ -145,9 +151,9 @@ Each phase: measure before/after (`tools/measure.py` + the manual UI metrics bel
 | Phase | Scope | Depends on |
 |---|---|---|
 | **UI-1 Quick wins** | `<form>` for auth (Enter submits), fix How-to-play text, define/replace the pulse, game-over → Back to lobby / Play again, toasts for errors, remove dead code, fix tab title, HP color ramp, Ki symbols | nothing |
-| **UI-2 Structure** | Split into modules, `dom.js` helper, event delegation, no `innerHTML` with data | UI-1 |
-| **UI-3 Battle layout** | Icon skills + detail panel, status chips, valid-target highlighting, auto-target self, auto-pay, keyboard shortcuts | UI-2, PLAN Phase 1 (per-player view, server cost validation) |
-| **UI-4 Feedback** | Battle log from server events, floating numbers, turn banner, timer bar, surrender button | PLAN §6 battle events, Phase 2 timer/surrender |
+| **UI-2 Structure** | Vite + React + TS scaffold, typed socket layer, screens migrated one by one (auth → lobby → battle), Playwright green at each step | UI-1 |
+| **UI-3 Battle layout** | Icon skills + detail panel, status chips, valid-target highlighting, auto-target self, auto-pay, keyboard shortcuts | UI-2 (per-player view + server validation: ✅ done in Steps 1–8) |
+| **UI-4 Feedback** | Battle log from server events, floating numbers, turn banner, timer bar, surrender button | Roadmap 2.7 battle events, 2.4 surrender, 2.5 timer |
 | **UI-5 Lobby & polish** | Skill preview, team slots, remember team, cancel search, responsive breakpoints, a11y pass, reduced-motion | UI-2 |
 
 ---

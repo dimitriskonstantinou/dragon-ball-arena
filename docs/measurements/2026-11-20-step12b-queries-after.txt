@@ -1,0 +1,2 @@
+connect:    1 SQL statements (0 read the characters table)
+find-match: 1 SQL statements (0 read the characters table)

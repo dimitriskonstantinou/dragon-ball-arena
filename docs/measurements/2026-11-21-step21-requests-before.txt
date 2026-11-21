@@ -1,0 +1,6 @@
+page ready in 0.18s; requests: 5 total, 1 third-party
+  third-party: https://cdn.socket.io/4.5.4/socket.io.min.js
+page ready in 0.09s; requests: 5 total, 1 third-party
+  third-party: https://cdn.socket.io/4.5.4/socket.io.min.js
+page ready in 0.09s; requests: 5 total, 1 third-party
+  third-party: https://cdn.socket.io/4.5.4/socket.io.min.js

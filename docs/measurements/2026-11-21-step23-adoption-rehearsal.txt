@@ -1,0 +1,12 @@
+users                  4 -> 4
+user_stats             4 -> 4
+matches                2 -> 2
+user_characters        12 -> 12
+characters             5 -> 5
+missions               0 -> 0
+user_mission_progress  0 -> 0
+alembic_version: None -> [('def555b6f5cf',)]
+users (ids, names, emails, password hashes) identical: True
+matches identical: True
+user_stats identical: True
+schema differences between the adopted DB and the models: none

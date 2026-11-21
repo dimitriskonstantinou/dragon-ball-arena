@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Dragon Ball Arena</title>
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- Self-hosted (no third-party script): exact npm socket.io-client 4.5.4 build, see vendor/ -->
+    <script src="vendor/socket.io-4.5.4.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -69,6 +70,7 @@
         </div>
 
         <h3 id="status" style="margin:5px 0;"></h3>
+        <div id="turn-timer"></div>
         <div id="instruction"></div>
 
         <div id="enemy-player-status" style="min-height: 20px;"></div>
@@ -86,6 +88,7 @@
 
         <div id="my-dice" class="dice-pool"></div>
         <button id="end-turn" class="end-btn" onclick="openPaymentModal()">EXECUTE ATTACKS</button>
+        <button id="surrender-btn" class="surrender-btn" onclick="surrender()">Surrender</button>
         <div id="log"></div>
     </div>
 

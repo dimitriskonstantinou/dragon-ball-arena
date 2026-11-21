@@ -1,0 +1,4 @@
+fresh-DB start: 2787 ms
+fresh-DB start: 1552 ms
+fresh-DB start: 2428 ms
+existing-DB start: 1496 ms

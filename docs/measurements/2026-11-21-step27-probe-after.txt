@@ -1,0 +1,51 @@
+2026-11-21 17:56:20,799 INFO alembic.runtime.migration: Context impl SQLiteImpl.
+2026-11-21 17:56:20,799 INFO alembic.runtime.migration: Will assume non-transactional DDL.
+2026-11-21 17:56:20,808 INFO alembic.runtime.migration: Running upgrade  -> def555b6f5cf, baseline schema (tables as created before migrations existed)
+2026-11-21 17:56:20,843 INFO alembic.runtime.migration: Running upgrade def555b6f5cf -> 4d7e92ca43bc, add users.session_version (revocable sessions)
+2026-11-21 17:56:20,850 INFO alembic.runtime.migration: Running upgrade 4d7e92ca43bc -> 4170133af35a, case-insensitive unique usernames (SEC-5)
+2026-11-21 17:56:20,867 INFO alembic.runtime.migration: Running upgrade 4170133af35a -> 399b42c2815d, draws: matches.is_draw, user_stats.total_draws (ENG-2)
+2026-11-21 17:56:20,897 INFO app: Character registry synced: 5 added, 0 updated
+https://evil.example is not an accepted origin. (further occurrences of this error will be logged with level INFO)
+2026-11-21 17:56:22,032 ERROR engineio.server: https://evil.example is not an accepted origin. (further occurrences of this error will be logged with level INFO)
+2026-11-21 17:56:23,040 ERROR app: Could not save match result: room=432fb25e winner=p1 p1_user=7 p2_user=8 started_at=2026-11-21T15:56:23.037906+00:00
+Traceback (most recent call last):
+  File "~\Desktop\Projects\Naruto_Arena\backend\app.py", line 388, in end_game
+    persist_match_result(game, winner)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "~\Desktop\Projects\Naruto_Arena\tools\probe_exploits.py", line 274, in failing_persist
+    raise RuntimeError('simulated database outage')
+RuntimeError: simulated database outage
+[not reproduced] free skills Payment doesn't match the cost of your queued skills!
+[not reproduced] queue_move affordability Not enough Ki for Kamehameha!
+[not reproduced] self-target skill applied to a different ally 
+[not reproduced] out-of-range targetIndex Invalid target!
+[not reproduced] dead character queue Goku (Saiyan Saga) has been defeated and cannot act!
+[not reproduced] dead enemy target Raditz (Saiyan Saga) has already been defeated!
+[not reproduced] set_skill_cost_on_stack description_template crash 
+[not reproduced] scale_skill_by_stack description_template never applied (desc now: '40 Piercing Dmg (ignores dmg reduction) | 1 Rage, ')
+[not reproduced] Kaioken description still claims '| 1 Rand' after cost became 2 random 
+[not reproduced] 'invisible' mark is present in the state payload sent to the victim 
+[not reproduced] counter-mark is raised as an error (damage not broadcast to anyone until later) 
+[not reproduced] player socket ids in broadcast state 
+[MEASURE] update-state payload for 3v3: 8527 bytes
+[CONFIRMED] reflect ignores attacker's invulnerability/defense (by inspection: apply_damage line ~176)
+[not reproduced] find-match with non-list payload crashes the handler (no validation) [{'name': 'error-msg', 'args': ['You must select exactly 3 characters!'], 'namespace': '/'}]
+[not reproduced] a production server starts without SECRET_KEY / logins are signed with a publicly known key (prod start exit=1, dev server uses the public key=False)
+[not reproduced] another website can open a logged-in game connection / login cookie lacks SameSite (foreign-origin handshake: 400, cookie flags: Expires=Mon, 21 Dec 2026 15:56:22 GMT; HttpOnly; Path=/; SameSite=Lax)
+[not reproduced] resolve_turn not atomic: a crash mid-turn leaves the game half-resolved (raditz hp 100 -> 100, dice 12 -> 12)
+[not reproduced] cancel-skill lets the opponent cancel your queued move 
+[not reproduced] find-match accepts the same character 3 times [['Pick 3 different characters!']]
+[not reproduced] same account can be matched against itself (two tabs) 
+[not reproduced] team wiped at turn start (delayed damage/DoT) gets no winner (raditz hp=0, winner=p1)
+[not reproduced] finished matches are never removed from memory (winner=p1)
+[not reproduced] a database failure at match end hides the final result from the players (final states delivered: 2/2)
+[not reproduced] a double commit lets the player skip the opponent's turn (turns advanced by 1, now p2's turn)
+[not reproduced] two tabs of one account searching at the same instant are matched against each other 
+[not reproduced] an idle player can hold the match forever (no turn timer) (after 1 hour idle: still p2's turn)
+[not reproduced] a page reload mid-match forfeits the match instantly (winner=None, rejoined=True)
+[not reproduced] there is no way to surrender a match (winner after 'surrender': p2)
+[not reproduced] unlimited password guessing / account creation from one IP (30 wrong logins -> [401, 429], 10 registrations -> [201, 429])
+[not reproduced] a stolen login cookie keeps working after logout / login cookies never expire (stolen cookie: 200 before logout, 401 after; cookie has an expiry: True)
+[not reproduced] look-alike usernames allowed / any email accepted / simultaneous same-name registration crashes (Name+name: (201, 409), bad email: 400, simultaneous: ['201', '409'])
+[not reproduced] image URLs carry the request's host (broken behind a proxy) / no /healthz (first image: ['/photos/characters/Goku_(Saiyan-Saga).png'], /healthz: 200)
+[not reproduced] mutual KO is not a draw (whoever is checked first 'wins') (hp: [0, 0], winner: 'draw')

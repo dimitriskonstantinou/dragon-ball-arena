@@ -47,20 +47,38 @@ def has_module(name):
     return subprocess.run([sys.executable, '-c', f'import {name}'], capture_output=True).returncode == 0
 
 
-def section_tests(tmp_db_url):
+def browser_tests_available():
+    probe = "from playwright.sync_api import sync_playwright\nwith sync_playwright() as p: p.chromium.launch().close()"
+    return subprocess.run([sys.executable, '-c', probe], capture_output=True).returncode == 0
+
+
+def section_tests(tmp_db_url, browser):
     out('## Tests')
     out('| Suite | Result | PASS | FAIL | Time |')
     out('|---|---|---|---|---|')
-    for name, script, env in (('engine', 'test_game_engine.py', None),
-                              ('smoke', 'test_integration_smoke.py', {'DATABASE_URL': tmp_db_url})):
+    suites = [('engine', 'test_game_engine.py', None),
+              ('content', 'test_content.py', None),
+              ('config', 'test_config.py', None),
+              ('rate_limit', 'test_rate_limit.py', None),
+              ('migrations', 'test_migrations.py', None),
+              ('smoke', 'test_integration_smoke.py', {'DATABASE_URL': tmp_db_url})]
+    if not browser:
+        out('| browser | skipped (--no-browser) | | | |')
+    elif not browser_tests_available():
+        out('| browser | skipped (pip install -r requirements-dev.txt; python -m playwright install chromium) | | | |')
+    else:
+        suites.append(('browser', 'test_browser_e2e.py', None))
+    for name, script, env in suites:
         proc, secs = run([sys.executable, script], env)
         text = proc.stdout + proc.stderr
         passes = len(re.findall(r'\bPASS\b', text))
         fails = len(re.findall(r'\bFAIL\b', text))
         result = 'ok' if proc.returncode == 0 else f'EXIT {proc.returncode}'
         out(f'| {name} | {result} | {passes} | {fails} | {secs:.2f}s |')
+        # Tracebacks are only interesting when the suite itself failed --
+        # the server deliberately logs some (unexpected-error tests).
         for line in text.splitlines():
-            if 'FAIL' in line or 'Traceback' in line or 'Error' in line:
+            if re.search(r'\bFAIL\b', line) or (proc.returncode != 0 and ('Traceback' in line or 'Error' in line)):
                 out(f'    {line.strip()}')
     out()
 
@@ -74,8 +92,11 @@ def section_coverage(tmp_db_url):
     if os.path.exists(data_file):
         os.remove(data_file)
     base = [sys.executable, '-m', 'coverage', 'run', f'--data-file={data_file}', '--source=.',
-            '--omit=test_*']
+            '--omit=test_*,migrations/*']  # generated Alembic files; covered by test_migrations.py
     run(base + ['test_game_engine.py'])
+    run(base[:4] + ['-a'] + base[4:] + ['test_content.py'])
+    run(base[:4] + ['-a'] + base[4:] + ['test_config.py'])
+    run(base[:4] + ['-a'] + base[4:] + ['test_rate_limit.py'])
     run(base[:4] + ['-a'] + base[4:] + ['test_integration_smoke.py'], {'DATABASE_URL': tmp_db_url})
     proc, _ = run([sys.executable, '-m', 'coverage', 'report', f'--data-file={data_file}'])
     out('```')
@@ -112,7 +133,9 @@ def section_size():
         out(f'| {os.path.relpath(f, ROOT)} | {n} | {b} |')
     out(f'| **total** | **{total_l}** | **{total_b}** |')
     fe = sum(os.path.getsize(f) for f in glob.glob(os.path.join(FRONTEND, '*.*')))
-    out(f'\nFrontend first-load (html+css+js, excl. CDN socket.io): {fe / 1024:.1f} KB\n')
+    vendor = sum(os.path.getsize(f) for f in glob.glob(os.path.join(FRONTEND, 'vendor', '*.js')))
+    out(f'\nFrontend first-load (html+css+js): {fe / 1024:.1f} KB own code'
+        f' + {vendor / 1024:.1f} KB vendored libraries = {(fe + vendor) / 1024:.1f} KB, all from our own server\n')
 
 
 def image_info(path):
@@ -151,11 +174,15 @@ def section_assets():
 def section_content():
     out('## Roster / content integrity')
     sys.path.insert(0, BACKEND)
-    import characters
+    import content_loader
     import game_engine
-    chars = characters.CHARACTERS
+    chars = content_loader.catalog()
     skills = [(cid, s) for cid, c in chars.items() for s in c['skills']]
     out(f'{len(chars)} characters, {len(skills)} skills')
+    content_dir = os.path.join(BACKEND, 'content', 'characters')
+    if os.path.isdir(content_dir):
+        files = [f for f in os.listdir(content_dir) if f.endswith('.json')]
+        out(f'content files: {len(files)} characters in backend/content/ (loaded + validated: {len(chars)})')
 
     referenced = set()
     missing = []
@@ -187,12 +214,16 @@ def section_content():
             'players': {k: {'id': 'sid', 'resources': game_engine.roll_dice(3), 'status': [],
                             'team': copy.deepcopy(team)} for k in ('p1', 'p2')}}
     out(f'update-state payload (sample 3v3): {len(json.dumps(game))} bytes')
+    if hasattr(game_engine, 'view_for'):
+        out(f'update-state payload actually sent per player (view_for): '
+            f'{len(json.dumps(game_engine.view_for(game, "p1")))} bytes')
     out()
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--save', help='also write the report to this file')
+    ap.add_argument('--no-browser', action='store_true', help='skip the Playwright browser suite (~15 s)')
     args = ap.parse_args()
 
     tmp_db = os.path.join(tempfile.gettempdir(), 'dba_measure_smoke.db')
@@ -210,7 +241,7 @@ def main():
     except FileNotFoundError:
         out()
 
-    section_tests(tmp_db_url)
+    section_tests(tmp_db_url, browser=not args.no_browser)
     section_coverage(tmp_db_url)
     section_lint()
     section_size()

@@ -1,7 +1,7 @@
 # Dragon Ball Arena — Technology & Deployment Plan
 
 Goal: public online game, **1v1 player-vs-player only** (no bots), many matches running at the same time.
-Companion to [PLAN.md](PLAN.md) (code fixes) and [UI_PLAN.md](UI_PLAN.md).
+Companion to [MASTER_ROADMAP.md](MASTER_ROADMAP.md) (Phase 8) and [UI_PLAN.md](UI_PLAN.md).
 
 ---
 
@@ -16,7 +16,7 @@ Companion to [PLAN.md](PLAN.md) (code fixes) and [UI_PLAN.md](UI_PLAN.md).
 | `db.create_all()` | ✔ dev | **Not enough.** It never alters existing tables, so the first schema change after launch breaks prod. | **Flask-Migrate** (Alembic) migrations. |
 | `python app.py` dev server | ✔ dev | **Not for production.** | **gunicorn + gevent**, 1 worker. |
 | Game state in a Python dict (`GAMES`) | ✔ | **OK for launch**, with two consequences: (1) one server process only; (2) a restart or deploy ends every live match. | Accept for v1 (deploy at quiet hours + warning). Move state to Redis when scaling out (Stage 10). |
-| `characters.py` as content source | ✔ | **Keep** while you're authoring. | Auto-sync to the DB on every deploy (release step), so there's no manual reseed in prod. |
+| Content files (`backend/content/*.json`) | ✔ | **Keep** as the source of truth (Steps 12a/12b). | Loaded + validated at startup into memory; the DB `characters` table is only an id registry, synced automatically on start. |
 | Python 3.14 locally | | Very new; some async libs (gevent) can lag behind on wheels. | Pin **Python 3.12** in production (Docker image). Run tests on both. |
 
 **Capacity (honest estimate, to be measured in Stage 5):** one small instance (1–2 vCPU, 1–2 GB) with gevent
@@ -133,59 +133,84 @@ Check current pricing when you sign up; all of these have small paid tiers suita
 
 Each stage ends with a **check**. Measure before/after as usual (`tools/measure.py`), plus the stage-specific numbers.
 
-### Stage 0 — Prerequisites (from PLAN.md) — *must be done before anyone else plays*
-1. PLAN Phase 1: server-side cost/target validation, per-player state view. **Without this, players can cheat
-   by sending crafted socket messages from the browser console.**
-2. PLAN Phase 2: role from `request.sid`, payload validation, turn timer, surrender, reconnect grace window,
-   room cleanup, per-room locking, no self-matching.
-3. PLAN Phase 3 security items: CORS origins, required `SECRET_KEY`, cookie flags, login rate limit.
-- **Check:** `python tools/probe_exploits.py` reports nothing reproduced; all tests green.
+### Stage 0 — Prerequisites (MASTER_ROADMAP Phases 1–3) — *must be done before anyone else plays*
+**✅ Met after Step 32** (only the user's merges into `dev` are pending).
+1. ✅ Roadmap Phase 1 (Steps 1–7, 11, 27–29, 31, 32): validation, per-player views, atomic turns, winner rules (no
+   draws), untargetable invulnerability, reactive defenses per skill, seeded randomness.
+2. ✅ Roadmap Phase 2 (Steps 8–9, 13–18): identity, payload validation, room cleanup, per-room locking, turn timer,
+   surrender, reconnect grace window. (2.7 battle events / 2.8 names are UX -- frontend phase.)
+3. ✅ Roadmap Phase 3 (Steps 19–26): config + secrets, origins + cookies, self-hosted client, rate limits, migrations,
+   revocable sessions, usernames, proxy readiness.
+- **Check:** `python tests.py` ALL GREEN; the probe's only confirmed item is the reflect design question (ENG-5).
 
 ### Stage 1 — Production-ready configuration
-1. `backend/config.py`: read everything from env: `SECRET_KEY`, `DATABASE_URL`, `ALLOWED_ORIGINS`,
-   `ENV=development|production`. In production, refuse to start if `SECRET_KEY` is missing.
-2. Cookies in prod: `SESSION_COOKIE_SECURE=True`, `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE='Lax'`.
-3. Behind a proxy: wrap the app in `werkzeug.middleware.proxy_fix.ProxyFix` so scheme/IP are correct.
-4. **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS proxies the
-   absolute URL can come out as `http://` and browsers block it (mixed content).
-5. `GET /healthz` → `{"ok": true}` plus a cheap DB check (used by the host + uptime monitor).
-6. Logging: Python `logging` to stdout (hosts collect stdout); replace `print()`; log tracebacks for non-`GameError`s.
+1. ✅ *(Step 19)* `backend/config.py` reads and validates every setting: `ENV` (development|staging|production),
+   `SECRET_KEY` (required + strong in staging/production, or the server refuses to start), `DATABASE_URL`, `PORT`,
+   `TURN_SECONDS`, `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, and (Step 20) `ALLOWED_ORIGINS` -- required, https only,
+   in staging/production: set it to each site's own URL (e.g. `https://dev.yourdomain`, `https://yourdomain`). Note: the turn-timer ticker is a background thread in the one server process;
+   with gevent it becomes a greenlet (`socketio.start_background_task` handles both).
+2. ✅ *(Step 20)* Cookies: `HttpOnly` + `SameSite=Lax` always, `Secure` automatically in staging/production.
+3. ✅ *(Step 22)* Behind a proxy: set `TRUSTED_PROXIES` (1 behind Render/one load balancer, 2 with Cloudflare in front
+   as well) so ProxyFix reads the real client IP/scheme. **Without it the rate limits treat every player as one IP.**
+4. ✅ *(Step 26)* **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS
+   proxies the absolute URL can come out as `http://` and browsers block it (mixed content).
+5. ✅ *(Step 26)* `GET /healthz` → 200 `{"status": "ok"}` when the DB answers, 503 `{"status": "unavailable"}` when
+   not; `Cache-Control: no-store`; no login, reveals nothing else (used by the host + uptime monitor).
+6. ✅ *(Step 26)* Logging: Python `logging` to stderr (hosts collect stdout/stderr) in one format, level from
+   `LOG_LEVEL`; tracebacks for non-`GameError`s (Step 14).
 7. Move the `if __name__ == '__main__'` dev runner to dev-only; prod uses gunicorn.
 8. `.env.example` documenting every variable (never commit a real `.env`; add it to `.gitignore`).
 - **Check:** app starts with `ENV=production` + env vars set, fails clearly without `SECRET_KEY`; tests green.
 
-### Stage 2 — PostgreSQL + migrations
-1. Add `psycopg[binary]` and `Flask-Migrate` to `requirements.txt` (pinned).
-2. Run Postgres locally (Docker: `docker run -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16`) and point
-   `DATABASE_URL` at it.
-3. `flask db init` → `flask db migrate -m "initial"` → review the generated migration → `flask db upgrade`.
-   From now on **every model change = a migration**; remove `db.create_all()` from app startup.
-4. Seeding becomes a **release step**: `flask db upgrade && python seed_db.py` runs on every deploy before the
-   new version takes traffic. `characters.py` stays where you author content.
-5. Case-insensitive unique usernames (functional index on `lower(username)`).
-6. Make the smoke test run against Postgres too (CI does this in Stage 4).
-- **Check:** fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op.
+### Stage 2 — PostgreSQL + migrations — ✅ *done in Step 33*
+1. ✅ `psycopg[binary]==3.3.9` in `requirements.txt` (pip-audit clean). (Flask-Migrate/Alembic: Step 23.)
+2. ✅ Local Postgres: `python tests.py` starts a throwaway `postgres:16` container (`dba-test-postgres`, port 55432)
+   whenever Docker is running. To run the game itself on it: `DATABASE_URL=postgresql+psycopg://dba:dbatest@127.0.0.1:55432/dba_test python app.py`.
+3. ✅ Migrations exist (Step 23) and are tested on PostgreSQL (`backend/test_postgres.py`): fresh build == models,
+   full downgrade/upgrade, existing data through every later migration, refusal rolls back completely, Step 27's
+   revision upgrades cleanly, VARCHAR limits enforced.
+4. Release step: `flask db upgrade && python seed_db.py` (registers characters before the new version takes
+   traffic; the server also syncs on start). Content is authored in `backend/content/`.
+5. ✅ *(Step 25)* Case-insensitive unique usernames (`users.username_key`, unique index -- portable, no functional index).
+6. ✅ The whole smoke suite runs against Postgres too (`smoke_postgres` in `tests.py`; CI will do the same).
+- **Check:** ✅ fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op (all automated).
 
-### Stage 3 — Production server & container
-1. Add `gunicorn` + `gevent` (pinned). Start command:
-   `gunicorn -k gevent -w 1 --bind 0.0.0.0:$PORT app:app`
-   **Exactly 1 worker**: in-memory games can't be shared between processes. Confirm the exact worker class
-   against the Flask-SocketIO deployment docs for the pinned versions, and verify websockets in Stage 5.
-2. `Dockerfile` on `python:3.12-slim`: install requirements, copy `backend/` + `frontend/`, non-root user,
-   `CMD` = the gunicorn line. `.dockerignore` excludes `game.db`, `__pycache__`, `.git`.
-3. Serve the socket.io client JS from our own server (not cdn.socket.io), versioned with the backend.
-4. Optimize images (PLAN §5): ~2 MB → ~200 KB, since every player downloads them.
+### Stage 3 — Production server & container — ✅ *items 1–3 done in Step 34*
+1. ✅ `backend/requirements-server.txt`: gunicorn 27.0.1 + gevent 26.9.0 + packaging 26.3 (pip-audit clean). Start
+   command (in the Dockerfile): `gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:$PORT app:app`.
+   **Exactly 1 worker**: in-memory games can't be shared between processes. Websockets work through
+   `simple-websocket` (python-engineio's gevent driver; no gevent-websocket needed) -- verified: the browser's
+   transport is `websocket`. `SOCKETIO_ASYNC_MODE=gevent` is set by the image (default `threading` everywhere else).
+2. ✅ `Dockerfile` on `python:3.12-slim` (283 MB): dependencies layer first, `backend/` + `frontend/`, non-root user
+   `arena`, Docker `HEALTHCHECK` on `/healthz`. `.dockerignore` keeps out `game.db`, `.dev_secret_key`, `.env`, `.git`,
+   docs, tools and tests. Settings only via environment variables.
+   **Proof (`python tests.py --container` / `tools/check_container.py`, 22 checks):** production settings on
+   PostgreSQL (migrations at start, `/healthz`, Secure/HttpOnly/SameSite cookie, foreign origin refused, Docker
+   health "healthy"); missing `SECRET_KEY`/`DATABASE_URL` stops the container with a clear error (no restart loop);
+   all backend suites pass on the image's Python 3.12; all 39 browser checks play through two containers over real
+   websockets, incl. turn timeouts and disconnect forfeits under gevent.
+3. ✅ *(Step 21)* The socket.io client is served from our own server (`frontend/vendor/socket.io-4.5.4.min.js`,
+   versioned filename, so it can get long cache headers in Stage 3).
+4. Optimize images (audit AST-1): ~2 MB → ~200 KB, since every player downloads them.
 5. Static caching headers for `/photos/*` and JS/CSS (with a version query string on deploy).
 - **Check:** `docker build` + `docker run` locally → two browsers play a full match over websockets
   (DevTools → Network → WS shows `101 Switching Protocols`).
 
-### Stage 4 — CI (GitHub Actions)
-1. Push the repo to GitHub (private).
-2. Workflow on every push/PR: set up Python 3.12, start a Postgres service container, install deps,
-   run `test_game_engine.py`, `test_integration_smoke.py` (against that Postgres), `pyflakes`, `probe_exploits.py`.
-3. Upload the `tools/measure.py` report as a build artifact, so every PR has before/after numbers.
-4. Protect `main`: merge only when CI is green.
-- **Check:** a PR with a deliberately broken test is blocked.
+### Stage 4 — CI (GitHub Actions) — ✅ *workflow added in Step 36; branch protection = the user's switch*
+1. ✅ The repo is on GitHub.
+2. ✅ `.github/workflows/tests.yml`, on every push, pull request and by hand (`workflow_dispatch`): Ubuntu 24.04,
+   Python 3.12 (pip cache), `pip install -r backend/requirements-dev.txt`, `python -m playwright install --with-deps
+   chromium`, then **`python tests.py --container`** -- every suite incl. PostgreSQL (tests.py starts it in Docker on
+   the runner) and the production image check, compared with `tools/tests_baseline.json`; exit 1 = red run.
+   Read-only token; a newer push to the same branch cancels the older run. (Once the React frontend exists:
+   `npm ci && npm run build` before the browser tests.)
+3. ✅ The `tests.py` report is shown on each run's summary page and kept as the `tests-report` artifact.
+4. **Protect `main` and `dev`** (GitHub → Settings → Branches → Add rule → "Require status checks to pass before
+   merging" → check `tests`; also "Require a pull request before merging" for `main`). Only the repo owner can do it.
+- **Check:** a PR with a deliberately broken test is shown red and blocked (after step 4).
+- Proven locally before the first cloud run: the same install + `tests.py` in a clean `python:3.12` Linux
+  container (all non-Docker suites green, Chromium deps install), and `tests.py --container` on Docker Desktop
+  with the Linux host mapping (`--add-host=host.docker.internal:host-gateway`) the runner needs.
 
 ### Stage 5 — Load test (measure capacity *before* launch)
 1. `tools/loadtest.py`: uses the `python-socketio` client to register N users, pair them into N/2 matches, and
@@ -198,7 +223,7 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 
 ### Stage 6 — Staging deploy
 1. Create the host account, a Postgres instance, and a web service from the GitHub repo (Docker).
-2. Set env vars: `ENV=production`, `SECRET_KEY` (long random), `DATABASE_URL`, `ALLOWED_ORIGINS`.
+2. Set env vars: `ENV=production`, `SECRET_KEY` (long random), `DATABASE_URL`, `ALLOWED_ORIGINS`, `TRUSTED_PROXIES`.
 3. Release command: `flask db upgrade && python seed_db.py`. Health check path: `/healthz`.
 4. Auto-deploy from a `staging` branch.
 5. Play full matches from two different networks (Wi-Fi + phone 4G/5G).
@@ -211,6 +236,9 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 - **Check:** `https://yourdomain` loads, socket connects over `wss://`, cookie shows `Secure`.
 
 ### Stage 8 — Monitoring, backups, operations
+*(Logs are ready since Step 35: set `LOG_FORMAT=json` on the host and ship stderr to a log service; useful searches:
+`Server starting` = every deploy with its `version`; `ERROR` = bugs with context + traceback; `Login failed` /
+`Rate limit hit` = attacks; `Match ended` = results with cause; `arena.stats` = load every 60 s.)*
 1. **Sentry** (free tier) for backend exceptions + frontend JS errors.
 2. **Uptime monitor** (e.g. UptimeRobot / Better Stack) on `/healthz`, alert to your phone or email.
 3. App metrics in logs every minute: connected sockets, active matches, queue length. Optional `/admin/stats`

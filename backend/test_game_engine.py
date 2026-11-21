@@ -52,6 +52,22 @@ def run_skill_via_queue(game, skill, target_index=0, target_role='p2'):
     return ge.resolve_turn(game, [])
 
 
+def dice_for_cost(cost):
+    """Exactly the dice that pay `cost` (random requirements paid with energy)."""
+    return [t for t, amt in cost.items() if t != 'random' for _ in range(amt)] + ['energy'] * cost.get('random', 0)
+
+
+def play(game, player_id, char_id, skill_id, target_role, target_index):
+    """Queue + resolve one real (costed) skill the legitimate way: hand the
+    player exactly the dice it costs, then pay with them."""
+    char = next(c for c in game['players'][player_id]['team'] if c['id'] == char_id)
+    skill = next(s for s in char['skills'] if s['id'] == skill_id)
+    payment = dice_for_cost(skill['cost'])
+    game['players'][player_id]['resources'].extend(payment)
+    ge.queue_move(game, player_id, char_id, skill_id, target_role, target_index)
+    return ge.resolve_turn(game, payment)
+
+
 # ---------------------------------------------------------------------------
 
 def test_basic_damage():
@@ -103,7 +119,8 @@ def test_general_invulnerability_blocks_damage():
     game = make_game()
     b = game['players']['p2']['team'][0]
     ge.add_status(b, {'type': 'invulnerable', 'duration': 10, 'tag': 'buff'})
-    skill = {"id": "s", "name": "s", "cost": {}, "target_type": "enemy",
+    # A team skill (single-target skills can't pick an invulnerable enemy at all since Step 28).
+    skill = {"id": "s", "name": "s", "cost": {}, "target_type": "enemy_team",
              "effects": [{"type": "damage", "value": 20}], "cooldown": 0}
     run_skill_via_queue(game, skill)
     check("invulnerable target takes no damage", b['health'] == 100, b['health'])
@@ -113,12 +130,13 @@ def test_class_specific_invulnerability():
     game = make_game()
     b = game['players']['p2']['team'][0]
     ge.add_status(b, {'type': 'physical_invulnerable', 'duration': 10, 'tag': 'buff'})
-    physical_skill = {"id": "s1", "name": "s1", "cost": {}, "target_type": "enemy", "classes": ["physical"],
+    # Team skills: a single-target physical skill can't pick this enemy at all (Step 28).
+    physical_skill = {"id": "s1", "name": "s1", "cost": {}, "target_type": "enemy_team", "classes": ["physical"],
                        "effects": [{"type": "damage", "value": 20}], "cooldown": 0}
     run_skill_via_queue(game, physical_skill)
     check("physical_invulnerable blocks a physical-classed skill", b['health'] == 100, b['health'])
 
-    chakra_skill = {"id": "s2", "name": "s2", "cost": {}, "target_type": "enemy", "classes": ["chakra"],
+    chakra_skill = {"id": "s2", "name": "s2", "cost": {}, "target_type": "enemy_team", "classes": ["chakra"],
                      "effects": [{"type": "damage", "value": 20}], "cooldown": 0}
     game['turn'] = 'p1'
     run_skill_via_queue(game, chakra_skill)
@@ -198,12 +216,14 @@ def test_chakra_restrict_blocks_cost():
                      "effects": [{"type": "damage", "value": 5}], "cooldown": 0, "currentCooldown": 0}]
     ge.add_status(game['players']['p1'], {'type': 'chakra_restrict', 'chakra_type': 'energy',
                                             'duration': 10, 'tag': 'harmful'})
-    blocked = False
+    game['players']['p1']['resources'] = ['energy']  # affordable, so only the restriction can block it
+    blocked_msg = ''
     try:
         ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
-    except Exception:
-        blocked = True
-    check("chakra_restrict blocks queueing a move needing that chakra type", blocked)
+    except Exception as e:
+        blocked_msg = str(e)
+    check("chakra_restrict blocks queueing a move needing that chakra type",
+          'restricted' in blocked_msg.lower(), blocked_msg)
 
 
 def test_remove_and_steal_and_regen_chakra():
@@ -416,8 +436,8 @@ def test_win_condition_still_works():
 
 def test_content_smoke():
     """Load the real character roster and make sure every skill's effects
-    reference known effect types (catches typos in characters.py)."""
-    import characters
+    reference known effect types (catches typos in the content files)."""
+    import content_loader
     known_types = {
         'damage', 'piercing_damage', 'affliction_damage', 'self_damage', 'aoe_damage', 'dot',
         'heal', 'hot', 'team_heal', 'heal_block', 'stun', 'silence', 'defense', 'remove_defense',
@@ -432,25 +452,33 @@ def test_content_smoke():
         'damage_ignore_invuln', 'expiring_defense', 'mark_for_counter',
     }
     bad = []
-    for cid, char in characters.CHARACTERS.items():
+    for cid, char in content_loader.catalog().items():
         for skill in char['skills']:
             for effect in skill.get('effects', []):
                 if effect['type'] not in known_types:
                     bad.append((cid, skill['id'], effect['type']))
-    check("every skill effect type in characters.py is recognized by the engine", bad == [], bad)
+    check("every skill effect type in the content is recognized by the engine", bad == [], bad)
+
+    # description_template needs a computed {value}; only scale_skill_by_stack
+    # has one (it once sat on set_skill_cost_on_stack and raised NameError).
+    misplaced = [(cid, skill['id'], effect['type'])
+                 for cid, char in content_loader.catalog().items() for skill in char['skills']
+                 for effect in skill.get('effects', [])
+                 if 'description_template' in effect and effect['type'] != 'scale_skill_by_stack']
+    check("description_template is only used on scale_skill_by_stack", misplaced == [], misplaced)
 
 
 def test_goku_saiyan_saga_kit():
-    """Exercises Goku's real kit straight from characters.py (not synthetic
+    """Exercises Goku's real kit straight from the content files (not synthetic
     skills), so a future balance tweak that breaks the intended interactions
     gets caught. Kaioken is a permanent, repeatable, escalating transform
     (not a temporary buff) that rewrites Kamehameha and Kaioken Attack in
     place -- this is the main thing worth regression-testing here."""
-    import characters
-    if 'goku_saiyan_saga' not in characters.CHARACTERS:
+    import content_loader
+    if 'goku_saiyan_saga' not in content_loader.catalog():
         print("  SKIPPED: goku_saiyan_saga not in the current roster")
         return
-    skills_by_id = {s['id']: s for s in characters.CHARACTERS['goku_saiyan_saga']['skills']}
+    skills_by_id = {s['id']: s for s in content_loader.catalog()['goku_saiyan_saga']['skills']}
     check("goku_saiyan_saga has the 3 signature skills + the universal one",
           set(skills_by_id) == {'kamehameha', 'kaioken', 'kaioken_attack', 'afterimage_technique'},
           set(skills_by_id))
@@ -468,8 +496,7 @@ def test_goku_saiyan_saga_kit():
     kaioken_attack_live = next(s for s in a['skills'] if s['id'] == 'kaioken_attack')
 
     # Kamehameha at base power, before any Kaioken use
-    ge.queue_move(game, 'p1', 'A', 'kamehameha', 'p2', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'kamehameha', 'p2', 0)
     check("Kamehameha deals its rounded base damage (25) before Kaioken", b['health'] == 75, b['health'])
     check("Kamehameha is pure damage, no stun", b['status'] == [], b['status'])
 
@@ -488,8 +515,7 @@ def test_goku_saiyan_saga_kit():
     # --- 1st Kaioken use ---
     check("Kaioken's cost before any use is 1 Random", kaioken_live['cost'] == {'random': 1}, kaioken_live['cost'])
     hp_before = a['health']
-    ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'kaioken', 'p1', 0)
     check("1st Kaioken use costs 20 HP", a['health'] == hp_before - 20, a['health'])
     check("1st Kaioken use sets the stack counter to 1", a.get('stacks', {}).get('kaioken') == 1, a.get('stacks'))
     check("Kaioken's cost permanently becomes 2 Random after the 1st use",
@@ -499,21 +525,26 @@ def test_goku_saiyan_saga_kit():
     check("Kaioken Attack is unlocked after the 1st Kaioken use", kaioken_attack_live.get('locked') is False)
     check("Kaioken Attack's damage is set to its base (40) on the 1st Kaioken use",
           kaioken_attack_live['effects'][0]['value'] == 40, kaioken_attack_live['effects'][0]['value'])
+    # Regression: the texts used to go stale (Kaioken Attack still said "Locked
+    # until Kaioken is used", Kaioken still said "1 Rand" after costing 2).
+    check("Kaioken Attack's text shows its current damage (40) and no longer says it's locked",
+          kaioken_attack_live['description'].startswith('40 ') and 'Locked' not in kaioken_attack_live['description'],
+          kaioken_attack_live['description'])
+    check("Kaioken's text shows its new 2 Random cost after the 1st use",
+          kaioken_live['description'].endswith('2 Rand'), kaioken_live['description'])
 
     # Kamehameha now actually hits harder in combat
     game['turn'] = 'p1'
     kamehameha_live['currentCooldown'] = 0
     hp_before_b = b['health']
-    ge.queue_move(game, 'p1', 'A', 'kamehameha', 'p2', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'kamehameha', 'p2', 0)
     check("Kamehameha's boosted damage actually applies in combat", b['health'] == hp_before_b - 45, b['health'])
 
     # --- 2nd Kaioken use: still 20 HP, Kaioken Attack scales to 50, Kamehameha does NOT re-boost ---
     game['turn'] = 'p1'
     kaioken_live['currentCooldown'] = 0
     hp_before2 = a['health']
-    ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'kaioken', 'p1', 0)
     check("2nd Kaioken use still costs 20 HP", a['health'] == hp_before2 - 20, a['health'])
     check("Kaioken's cost stays at 2 Random (doesn't escalate further)",
           kaioken_live['cost'] == {'random': 2}, kaioken_live['cost'])
@@ -521,13 +552,14 @@ def test_goku_saiyan_saga_kit():
           kamehameha_live['effects'][0]['value'] == 45, kamehameha_live['effects'][0]['value'])
     check("Kaioken Attack scales to 50 on the 2nd Kaioken use",
           kaioken_attack_live['effects'][0]['value'] == 50, kaioken_attack_live['effects'][0]['value'])
+    check("Kaioken Attack's text follows its damage to 50",
+          kaioken_attack_live['description'].startswith('50 '), kaioken_attack_live['description'])
 
     # --- 3rd Kaioken use: cost jumps to 40 HP, Kaioken Attack scales to 60 ---
     game['turn'] = 'p1'
     kaioken_live['currentCooldown'] = 0
     hp_before3 = a['health']
-    ge.queue_move(game, 'p1', 'A', 'kaioken', 'p1', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'kaioken', 'p1', 0)
     check("3rd Kaioken use costs 40 HP", a['health'] == hp_before3 - 40, a['health'])
     check("Kaioken Attack scales to 60 on the 3rd Kaioken use",
           kaioken_attack_live['effects'][0]['value'] == 60, kaioken_attack_live['effects'][0]['value'])
@@ -538,17 +570,20 @@ def test_goku_saiyan_saga_kit():
     b2 = game2['players']['p2']['team'][0]
     a2['skills'] = [copy.deepcopy(skills_by_id['afterimage_technique'])]
     a2['skills'][0]['currentCooldown'] = 0
-    ge.queue_move(game2, 'p1', 'A', 'afterimage_technique', 'p1', 0)
-    ge.resolve_turn(game2, [])
+    play(game2, 'p1', 'A', 'afterimage_technique', 'p1', 0)
     check("Afterimage Technique grants self-invulnerability",
           any(s['type'] == 'invulnerable' for s in a2['status']), a2['status'])
 
     game2['turn'] = 'p2'
     b2['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
                       'effects': [{'type': 'damage', 'value': 20}], 'cooldown': 0, 'currentCooldown': 0}]
-    ge.queue_move(game2, 'p2', 'B', 'poke', 'p1', 0)
-    ge.resolve_turn(game2, [])
-    check("Afterimage Technique blocks the incoming attack", a2['health'] == 100, a2['health'])
+    try:
+        play(game2, 'p2', 'B', 'poke', 'p1', 0)
+        refused = False
+    except ge.GameError:
+        refused = True
+    check("Afterimage Technique makes Goku untargetable (the attack can't even be queued)",
+          refused and a2['health'] == 100, (refused, a2['health']))
 
 
 def test_tien_best_friend_primes_tri_beam():
@@ -556,12 +591,12 @@ def test_tien_best_friend_primes_tri_beam():
     version -- unlike Kaioken's permanent transform, this must revert, either
     when Tri-Beam actually gets used (consumed) or when the priming window
     runs out unused (expired). Both paths are tested against Tien's real
-    data from characters.py."""
-    import characters
-    if 'tien_saiyan_saga' not in characters.CHARACTERS:
+    data from the content files."""
+    import content_loader
+    if 'tien_saiyan_saga' not in content_loader.catalog():
         print("  SKIPPED: tien_saiyan_saga not in the current roster")
         return
-    skills_by_id = {s['id']: s for s in characters.CHARACTERS['tien_saiyan_saga']['skills']}
+    skills_by_id = {s['id']: s for s in content_loader.catalog()['tien_saiyan_saga']['skills']}
     base_tri_beam_cost = dict(skills_by_id['tri_beam']['cost'])
     base_tri_beam_effects = copy.deepcopy(skills_by_id['tri_beam']['effects'])
 
@@ -579,8 +614,7 @@ def test_tien_best_friend_primes_tri_beam():
 
     check("Tri-Beam starts with its base cost", tri_beam_live['cost'] == base_tri_beam_cost, tri_beam_live['cost'])
 
-    ge.queue_move(game, 'p1', 'A', 'best_friend', 'p1', 0)  # target_type is "self" -- no enemy effect anymore
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'best_friend', 'p1', 0)  # target_type is "self" -- no enemy effect anymore
     check("Best Friend primes Tri-Beam's cost to 2 Random",
           tri_beam_live['cost'] == {'random': 2}, tri_beam_live['cost'])
     check("Best Friend primes Tri-Beam's effects (affliction+stun+bigger self dmg)",
@@ -590,8 +624,7 @@ def test_tien_best_friend_primes_tri_beam():
     game['turn'] = 'p1'
     hp_before_a = a['health']
     hp_before_b = b['health']
-    ge.queue_move(game, 'p1', 'A', 'tri_beam', 'p2', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'tri_beam', 'p2', 0)
     check("primed Tri-Beam deals 45 affliction damage",
           b['health'] == hp_before_b - 45, b['health'])
     check("primed Tri-Beam also stuns", any(s['type'] == 'stun' for s in b['status']), b['status'])
@@ -608,8 +641,7 @@ def test_tien_best_friend_primes_tri_beam():
     for s in a2['skills']: s['currentCooldown'] = 0
     tri_beam_live2 = next(s for s in a2['skills'] if s['id'] == 'tri_beam')
 
-    ge.queue_move(game2, 'p1', 'A', 'best_friend', 'p1', 0)  # target_type is "self"
-    ge.resolve_turn(game2, [])  # prime_skill's duration:1 -> 4 ticks (see game_engine.py comment for why); this already ticked once (p2's start_turn)
+    play(game2, 'p1', 'A', 'best_friend', 'p1', 0)  # target_type is "self"; prime_skill's duration:1 -> 4 ticks (see game_engine.py comment for why); this already ticked once (p2's start_turn)
     check("Tri-Beam is primed immediately after Best Friend", tri_beam_live2['cost'] == {'random': 2},
           tri_beam_live2['cost'])
 
@@ -629,11 +661,11 @@ def test_yamcha_puar_becomes_spirit_ball_for_a_window():
     combo payoff): using the primed 'Spirit Ball' does NOT immediately
     revert it back to Puar -- it stays Spirit Ball (gated only by its own
     cooldown) until the full 3-turn window itself runs out."""
-    import characters
-    if 'yamcha_saiyan_saga' not in characters.CHARACTERS:
+    import content_loader
+    if 'yamcha_saiyan_saga' not in content_loader.catalog():
         print("  SKIPPED: yamcha_saiyan_saga not in the current roster")
         return
-    skills_by_id = {s['id']: s for s in characters.CHARACTERS['yamcha_saiyan_saga']['skills']}
+    skills_by_id = {s['id']: s for s in content_loader.catalog()['yamcha_saiyan_saga']['skills']}
     base_puar_cost = dict(skills_by_id['puar']['cost'])
     base_puar_name = skills_by_id['puar']['name']
     base_puar_cooldown = skills_by_id['puar']['cooldown']
@@ -645,8 +677,7 @@ def test_yamcha_puar_becomes_spirit_ball_for_a_window():
     a['skills'][0]['currentCooldown'] = 0
     puar_live = a['skills'][0]
 
-    ge.queue_move(game, 'p1', 'A', 'puar', 'p1', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'puar', 'p1', 0)
     check("Puar grants Yamcha a 15-point shield", a.get('defense', 0) == 15, a.get('defense'))
     check("Puar transforms into Spirit Ball (name swap)", puar_live['name'] == 'Spirit Ball', puar_live['name'])
     check("Spirit Ball has its own cost", puar_live['cost'] == {'energy': 1, 'spirit': 1}, puar_live['cost'])
@@ -662,8 +693,7 @@ def test_yamcha_puar_becomes_spirit_ball_for_a_window():
     game['turn'] = 'p1'
     puar_live['currentCooldown'] = 0
     hp_before_b = b['health']
-    ge.queue_move(game, 'p1', 'A', 'puar', 'p2', 0)
-    ge.resolve_turn(game, [])
+    play(game, 'p1', 'A', 'puar', 'p2', 0)
     check("Spirit Ball ignores invulnerability but is still absorbed by destructible defense (5 pts)",
           b['health'] == hp_before_b - (40 - 5) and b['defense'] == 0, (b['health'], b['defense']))
     check("using Spirit Ball does NOT revert it back to Puar", puar_live['name'] == 'Spirit Ball', puar_live['name'])
@@ -719,12 +749,10 @@ def test_wolf_fang_fist_counters_marked_enemy():
                      'effects': [{'type': 'damage', 'value': 30}], 'cooldown': 0, 'currentCooldown': 0}]
     hp_before_b = b['health']
     hp_before_a = a['health']
-    blocked_msg = None
-    try:
-        ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
-    except Exception as e:
-        blocked_msg = str(e)
-    check("the marked enemy's attempted skill is rejected, never queued", blocked_msg is not None, blocked_msg)
+    result = ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
+    check("the counter is reported as a game event (not an error) with its damage",
+          result is not None and result.get('countered') == 20 and 'countered' in result.get('message', ''), result)
+    check("the marked enemy's attempted skill is never queued", game['pending_moves'] == [], game['pending_moves'])
     check("the marked enemy takes 20 piercing damage for attempting it",
           b['health'] == hp_before_b - 20, b['health'])
     check("the would-be victim (Yamcha) took no damage -- the enemy's move never resolved",
@@ -740,6 +768,816 @@ def test_wolf_fang_fist_counters_marked_enemy():
     except Exception:
         allowed = False
     check("with the mark consumed, the enemy can queue normally afterward", allowed)
+
+
+def test_payment_must_cover_queued_costs():
+    """Regression: resolve_turn used to accept ANY payment the player owned,
+    including an empty one -- every queued skill was effectively free."""
+    def costed_game(resources):
+        game = make_game()
+        a = game['players']['p1']['team'][0]
+        a['skills'] = [{"id": "blast", "name": "Blast", "cost": {"energy": 1, "random": 1},
+                        "target_type": "enemy", "effects": [{"type": "damage", "value": 20}],
+                        "cooldown": 0, "currentCooldown": 0}]
+        game['players']['p1']['resources'] = list(resources)
+        return game
+
+    def rejected(game, payment):
+        try:
+            ge.resolve_turn(game, payment)
+            return False
+        except Exception:
+            return True
+
+    game = costed_game(['energy', 'rage'])
+    ge.queue_move(game, 'p1', 'A', 'blast', 'p2', 0)
+    check("empty payment for a costed skill is rejected", rejected(game, []))
+    check("rejected payment deals no damage", game['players']['p2']['team'][0]['health'] == 100)
+    check("rejected payment takes no dice", sorted(game['players']['p1']['resources']) == ['energy', 'rage'],
+          game['players']['p1']['resources'])
+    check("underpaying (missing the random die) is rejected", rejected(game, ['energy']))
+    wrong_type = costed_game(['energy', 'rage', 'rage'])
+    ge.queue_move(wrong_type, 'p1', 'A', 'blast', 'p2', 0)
+    check("paying the specific (energy) cost with the wrong type is rejected", rejected(wrong_type, ['rage', 'rage']))
+
+    game = costed_game(['energy', 'rage', 'martial'])
+    ge.queue_move(game, 'p1', 'A', 'blast', 'p2', 0)
+    check("overpaying (an extra die) is rejected", rejected(game, ['energy', 'rage', 'martial']))
+
+    game = costed_game(['energy', 'rage', 'martial'])
+    ge.queue_move(game, 'p1', 'A', 'blast', 'p2', 0)
+    ge.resolve_turn(game, ['energy', 'martial'])
+    check("exact payment (random paid with any type) resolves the skill",
+          game['players']['p2']['team'][0]['health'] == 80, game['players']['p2']['team'][0]['health'])
+    check("exact payment removes exactly the paid dice", game['players']['p1']['resources'][:1] == ['rage'],
+          game['players']['p1']['resources'])
+
+    game = costed_game([])
+    check("committing with nothing queued and no payment is still allowed", not rejected(game, []))
+
+
+def test_queue_rejects_unaffordable_skills():
+    """Regression: queue_move never looked at the dice pool at all."""
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    for c in game['players']['p1']['team']:
+        c['skills'] = [{"id": "blast", "name": "Blast", "cost": {"energy": 1, "random": 1},
+                        "target_type": "enemy", "effects": [{"type": "damage", "value": 20}],
+                        "cooldown": 0, "currentCooldown": 0}]
+
+    def blocked(char_id):
+        try:
+            ge.queue_move(game, 'p1', char_id, 'blast', 'p2', 0)
+            return False
+        except Exception:
+            return True
+
+    game['players']['p1']['resources'] = ['rage', 'rage']
+    check("skill whose specific type isn't in the pool can't be queued", blocked('A'))
+
+    game['players']['p1']['resources'] = ['energy']
+    check("skill whose random part can't be covered can't be queued", blocked('A'))
+
+    game['players']['p1']['resources'] = ['energy', 'rage', 'martial']
+    check("affordable skill queues", not blocked('A'))
+    check("a 2nd skill that the pool can't cover together with the 1st is rejected", blocked('A2'))
+    check("re-queueing the same character replaces its move instead of double-counting the cost", not blocked('A'))
+
+
+def test_target_validation():
+    """Regression: queue_move used to accept any target -- self skills on
+    other allies, dead or out-of-range targets (skill wasted, still on
+    cooldown), the wrong side, and moves from dead characters."""
+    def skill(sid, target_type):
+        return {"id": sid, "name": sid, "cost": {}, "target_type": target_type,
+                "effects": [{"type": "invulnerable", "duration": 1}] if target_type in ('self', 'ally')
+                else [{"type": "damage", "value": 10}], "cooldown": 0, "currentCooldown": 0}
+
+    def fresh():
+        game = make_game()
+        game['players']['p1']['team'].append(make_char('A2'))
+        game['players']['p2']['team'].append(make_char('B2'))
+        for c in game['players']['p1']['team']:
+            c['skills'] = [skill('hit', 'enemy'), skill('guard', 'self'), skill('help', 'ally'),
+                           skill('sweep', 'enemy_team')]
+        return game
+
+    def blocked(game, char_id, skill_id, pid, idx):
+        try:
+            ge.queue_move(game, 'p1', char_id, skill_id, pid, idx)
+            return False
+        except Exception:
+            return True
+
+    game = fresh()
+    ge.queue_move(game, 'p1', 'A', 'guard', 'p1', 1)  # clicked A2, but 'self' means the caster
+    move = game['pending_moves'][0]
+    check("a 'self' skill is retargeted to the caster, whatever was clicked",
+          (move['targetPid'], move['targetIndex']) == ('p1', 0), move)
+    ge.resolve_turn(game, [])
+    check("...so the self-buff lands on the caster, not the clicked ally",
+          any(s['type'] == 'invulnerable' for s in game['players']['p1']['team'][0]['status'])
+          and not game['players']['p1']['team'][1]['status'])
+
+    game = fresh()
+    check("enemy skill aimed at your own side is rejected", blocked(game, 'A', 'hit', 'p1', 0))
+    check("ally skill aimed at the enemy side is rejected", blocked(game, 'A', 'help', 'p2', 0))
+    check("out-of-range target index is rejected", blocked(game, 'A', 'hit', 'p2', 99))
+    check("negative target index is rejected", blocked(game, 'A', 'hit', 'p2', -1))
+    check("non-integer target index is rejected", blocked(game, 'A', 'hit', 'p2', '0'))
+
+    game = fresh()
+    game['players']['p2']['team'][0]['health'] = 0
+    check("a defeated enemy can't be targeted", blocked(game, 'A', 'hit', 'p2', 0))
+    check("a living enemy still can", not blocked(game, 'A', 'hit', 'p2', 1))
+
+    game = fresh()
+    game['players']['p1']['team'][1]['health'] = 0
+    check("a defeated ally can't be targeted", blocked(game, 'A', 'help', 'p1', 1))
+    check("a defeated character can't act", blocked(game, 'A2', 'hit', 'p2', 0))
+
+    game = fresh()
+    check("a team skill works whichever enemy was clicked", not blocked(game, 'A', 'sweep', 'p2', 1))
+
+    game = fresh()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'marked_for_counter', 'value': 20, 'duration': 2, 'tag': 'harmful'})
+    game['turn'] = 'p2'
+    b['skills'] = [skill('hit', 'enemy')]
+    try:
+        ge.queue_move(game, 'p2', 'B', 'hit', 'p2', 0)  # invalid: own side
+    except Exception:
+        pass
+    check("an invalid target is rejected before the counter-mark can trigger",
+          b['health'] == 100 and any(s['type'] == 'marked_for_counter' for s in b['status']),
+          (b['health'], b['status']))
+
+
+def test_view_for_hides_private_info():
+    """Regression: the full state (opponent's live queue, invisible traps,
+    socket ids) used to be broadcast to both players."""
+    game = make_game()
+    game['players']['p1']['user_id'] = 1
+    game['players']['p2']['user_id'] = 2
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    a['skills'] = [{"id": "s", "name": "s", "cost": {}, "target_type": "enemy",
+                    "effects": [{"type": "damage", "value": 5}], "cooldown": 0, "currentCooldown": 0}]
+    ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+    ge.add_status(b, {'type': 'marked_for_counter', 'value': 20, 'duration': 2, 'tag': 'harmful', 'invisible': True})
+    live_before = copy.deepcopy(game)
+
+    p1_view = ge.view_for(game, 'p1')
+    p2_view = ge.view_for(game, 'p2')
+    check("no socket/account ids in either view",
+          all(f not in p for v in (p1_view, p2_view) for p in v['players'].values() for f in ('id', 'user_id')))
+    check("the active player still sees their own queue", len(p1_view['pending_moves']) == 1, p1_view['pending_moves'])
+    check("the opponent does not see the active player's queue", p2_view['pending_moves'] == [], p2_view['pending_moves'])
+    check("the trapped player can't see the invisible mark on their own character",
+          p2_view['players']['p2']['team'][0]['status'] == [], p2_view['players']['p2']['team'][0]['status'])
+    check("the player who placed the mark still sees it",
+          any(s['type'] == 'marked_for_counter' for s in p1_view['players']['p2']['team'][0]['status']))
+    check("building views never modifies the live game state", game == live_before)
+
+
+def test_rule_violations_raise_game_error():
+    """app.py shows GameError messages to players and logs anything else as
+    a bug -- so every rule violation must be a GameError."""
+    def raises_game_error(fn):
+        try:
+            fn()
+            return False
+        except ge.GameError:
+            return True
+        except Exception:
+            return False
+
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [{"id": "s", "name": "s", "cost": {"energy": 1}, "target_type": "enemy",
+                    "effects": [{"type": "damage", "value": 5}], "cooldown": 0, "currentCooldown": 0}]
+    check("not your turn -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p2', 'B', 's', 'p1', 0)))
+    check("not enough Ki -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)))
+    game['players']['p1']['resources'] = ['energy']
+    check("invalid target -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p1', 'A', 's', 'p2', 9)))
+    check("unknown skill -> GameError", raises_game_error(lambda: ge.queue_move(game, 'p1', 'A', 'nope', 'p2', 0)))
+    ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+    check("wrong payment -> GameError", raises_game_error(lambda: ge.resolve_turn(game, [])))
+
+
+def test_counter_that_kills_last_character_ends_match():
+    """Regression: the counter-trap applied damage inside queue_move with no
+    win check, so a team wiped by it left the match running."""
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    b['health'] = 15
+    b['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
+                    'effects': [{'type': 'damage', 'value': 5}], 'cooldown': 0, 'currentCooldown': 0}]
+    ge.add_status(b, {'type': 'marked_for_counter', 'value': 20, 'duration': 2, 'tag': 'harmful', 'invisible': True})
+    game['turn'] = 'p2'
+    result = ge.queue_move(game, 'p2', 'B', 'poke', 'p1', 0)
+    check("lethal counter is reported", result is not None and result['countered'] == 20, result)
+    check("lethal counter on the last character ends the match", game.get('winner') == 'p1', game.get('winner'))
+
+
+def test_resolve_turn_is_all_or_nothing():
+    """Regression: dice were spent and earlier moves applied before a later
+    move crashed, leaving the match half-resolved and stuck."""
+    def setup():
+        game = make_game()
+        game['players']['p1']['team'].append(make_char('A2'))
+        good = {"id": "hit", "name": "hit", "cost": {"energy": 1}, "target_type": "enemy",
+                "effects": [{"type": "damage", "value": 20}], "cooldown": 1, "currentCooldown": 0}
+        broken = {"id": "bug", "name": "bug", "cost": {}, "target_type": "enemy",
+                  "effects": [{"type": "damage"}], "cooldown": 0, "currentCooldown": 0}  # no 'value' -> KeyError
+        game['players']['p1']['team'][0]['skills'] = [good]
+        game['players']['p1']['team'][1]['skills'] = [broken]
+        game['players']['p1']['resources'] = ['energy', 'rage']
+        ge.queue_move(game, 'p1', 'A', 'hit', 'p2', 0)
+        ge.queue_move(game, 'p1', 'A2', 'bug', 'p2', 0)
+        return game
+
+    game = setup()
+    live = game
+    before = copy.deepcopy(game)
+    crashed = None
+    try:
+        ge.resolve_turn(game, ['energy'])
+    except Exception as e:
+        crashed = e
+    check("a crash mid-turn still surfaces as an error (so the server logs it)",
+          crashed is not None and not isinstance(crashed, ge.GameError), repr(crashed))
+    check("...and the whole game state is rolled back exactly", game == before)
+    check("...in place (the server's reference to this game stays valid)", game is live)
+    check("...so the earlier move's damage is undone", game['players']['p2']['team'][0]['health'] == 100)
+    check("...and no dice were spent", game['players']['p1']['resources'] == ['energy', 'rage'],
+          game['players']['p1']['resources'])
+    check("...and it's still the same player's turn", game['turn'] == 'p1' and len(game['pending_moves']) == 2)
+
+    game = setup()
+    game['players']['p1']['team'][1]['skills'] = []  # queued skill vanished
+    before = copy.deepcopy(game)
+    try:
+        ge.resolve_turn(game, ['energy'])
+        missing = None
+    except Exception as e:
+        missing = e
+    check("a queued move whose skill no longer exists is a GameError", isinstance(missing, ge.GameError), repr(missing))
+    check("...and changes nothing", game == before)
+
+    for bad in (None, 'energy', [1]):
+        game = setup()
+        try:
+            ge.resolve_turn(game, bad)
+            err = None
+        except Exception as e:
+            err = e
+        check(f"a malformed payment ({bad!r}) is a GameError", isinstance(err, ge.GameError), repr(err))
+
+
+def test_set_skill_cost_on_stack_updates_text():
+    """Regression: this effect read an undefined variable (NameError) when
+    given text to update. It now takes a plain new_description."""
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [{'id': 'x', 'name': 'x', 'description': 'old | 1 Rand', 'cost': {'random': 1},
+                    'effects': [], 'cooldown': 0, 'currentCooldown': 0}]
+    a['stacks'] = {'k': 1}
+    ge.apply_effect({'type': 'set_skill_cost_on_stack', 'stack_key': 'k', 'at_stack': 1, 'skill_id': 'x',
+                     'cost': {'random': 2}, 'new_description': 'new | 2 Rand'},
+                    a, [a], game['players']['p1'], game['players']['p2'], [])
+    check("set_skill_cost_on_stack changes the cost", a['skills'][0]['cost'] == {'random': 2})
+    check("set_skill_cost_on_stack updates the text", a['skills'][0]['description'] == 'new | 2 Rand',
+          a['skills'][0]['description'])
+
+
+def test_view_for_strips_skill_mechanics():
+    """Skill effects (and prime_skill's base_* backups) are server-only; they
+    were most of the payload and the client never reads them."""
+    import content_loader
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = copy.deepcopy(content_loader.catalog()['tien_saiyan_saga']['skills'])
+    game['players']['p2']['team'][0]['skills'] = copy.deepcopy(content_loader.catalog()['goku_saiyan_saga']['skills'])
+    play(game, 'p1', 'A', 'best_friend', 'p1', 0)  # primes Tri-Beam -> creates base_* backups
+    check("(setup) priming created base_* backups on the live skill",
+          any(k.startswith('base_') for s in a['skills'] for k in s))
+
+    frontend_fields = {'id', 'name', 'description', 'image', 'cost', 'currentCooldown', 'locked', 'locked_reason',
+                       'classes', 'target_type', 'cooldown'}
+    for role in ('p1', 'p2'):
+        view = ge.view_for(game, role)
+        skills = [s for p in view['players'].values() for c in p['team'] for s in c['skills']]
+        check(f"{role}'s view has no skill effects or base_* backups (either team)",
+              not any(k == 'effects' or k.startswith('base_') for s in skills for k in s))
+        live = [s for p in game['players'].values() for c in p['team'] for s in c['skills']]
+        check(f"{role}'s view keeps every field the frontend reads",
+              all({k: v for k, v in l.items() if k in frontend_fields}
+                  == {k: v for k, v in v.items() if k != 'ignores_invulnerable'} for l, v in zip(live, skills)))
+        flagged = sorted(s['id'] for s in skills if s.get('ignores_invulnerable'))
+        check(f"{role}'s view flags exactly the skills that go through invulnerability (primed Tri-Beam)",
+              flagged == ['tri_beam'], flagged)
+    check("the live game state still has every skill's effects",
+          all('effects' in s for p in game['players'].values() for c in p['team'] for s in c['skills']))
+
+
+def test_cancel_move_only_cancels_your_own_move_on_your_turn():
+    """Regression: cancel_move had no turn/owner check and matched on charId
+    only -- with the same character on both teams, the opponent could cancel
+    your queued move during your turn."""
+    game = make_game()
+    for p in ('p1', 'p2'):
+        game['players'][p]['team'][0]['id'] = 'goku'  # same character on both teams
+    game['players']['p1']['team'][0]['skills'] = [{"id": "s", "name": "s", "cost": {}, "target_type": "enemy",
+                                                   "effects": [{"type": "damage", "value": 5}],
+                                                   "cooldown": 0, "currentCooldown": 0}]
+    ge.queue_move(game, 'p1', 'goku', 's', 'p2', 0)
+    try:
+        ge.cancel_move(game, 'p2', 'goku')
+        err = None
+    except Exception as e:
+        err = e
+    check("the opponent can't cancel during your turn", isinstance(err, ge.GameError), repr(err))
+    check("...and your queued move survives", len(game['pending_moves']) == 1, game['pending_moves'])
+    ge.cancel_move(game, 'p1', 'goku')
+    check("you can still cancel your own move", game['pending_moves'] == [], game['pending_moves'])
+
+
+def test_team_wiped_at_turn_start_loses_immediately():
+    """Regression (ENG-1): start_turn's status tick (DoT, delayed damage)
+    could wipe a team without any winner being declared -- the match went on
+    with a dead team, and if the wiped player held the turn they could stall
+    forever."""
+    import content_loader
+    # Real content: Piccolo's Special Beam Cannon detonates at the start of his next turn.
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    b = game['players']['p2']['team'][0]
+    a['skills'] = copy.deepcopy(content_loader.catalog()['piccolo_saiyan_saga']['skills'])
+    b['health'] = 30
+    play(game, 'p1', 'A', 'special_beam_cannon', 'p2', 0)
+    check("(setup) the charge doesn't kill yet", b['health'] == 30 and not game['winner'])
+    dice_before = list(game['players']['p1']['resources'])
+    ge.resolve_turn(game, [])  # p2 passes -> p1's turn starts -> detonation
+    check("a delayed hit that wipes a team at turn start ends the match", game['winner'] == 'p1', game['winner'])
+    check("...without rolling dice for a finished game", game['players']['p1']['resources'] == dice_before,
+          game['players']['p1']['resources'])
+
+    # Worst case: the wiped player is the one whose turn is starting.
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    b['health'] = 5
+    ge.add_status(b, {'type': 'dot', 'value': 10, 'duration': 4, 'tag': 'harmful'})
+    ge.resolve_turn(game, [])  # p1 passes -> p2's turn starts -> DoT kills p2's last character
+    check("a DoT that kills the starting player's last character ends the match",
+          game['winner'] == 'p1' and b['health'] == 0, (game['winner'], b['health']))
+
+    # A tick that doesn't kill must leave the game running normally.
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'dot', 'value': 10, 'duration': 4, 'tag': 'harmful'})
+    ge.resolve_turn(game, [])
+    check("a non-lethal tick keeps the game going (turn passes, dice rolled)",
+          game['winner'] is None and game['turn'] == 'p2' and len(game['players']['p2']['resources']) == 1
+          and b['health'] == 90, (game['winner'], game['turn'], game['players']['p2']['resources'], b['health']))
+
+
+def test_turn_timeout_rules():
+    """BE-1: a timed-out turn passes with nothing resolved or paid; the
+    TIMEOUTS_TO_FORFEIT-th timeout in a row forfeits; a real commit resets the streak."""
+    game = make_game()
+    a = game['players']['p1']['team'][0]
+    a['skills'] = [{"id": "hit", "name": "hit", "cost": {"energy": 1}, "target_type": "enemy",
+                    "effects": [{"type": "damage", "value": 20}], "cooldown": 0, "currentCooldown": 0}]
+    game['players']['p1']['resources'] = ['energy']
+    ge.queue_move(game, 'p1', 'A', 'hit', 'p2', 0)
+    strikes = ge.timeout_turn(game)
+    check("a timeout passes the turn to the opponent", game['turn'] == 'p2' and strikes == 1, (game['turn'], strikes))
+    check("...without resolving the queued move", game['players']['p2']['team'][0]['health'] == 100)
+    check("...without spending Ki", game['players']['p1']['resources'] == ['energy'], game['players']['p1']['resources'])
+    check("...without putting anything on cooldown", a['skills'][0]['currentCooldown'] == 0)
+
+    ge.timeout_turn(game)                                  # p2 strike 1
+    check("each player has their own timeout streak",
+          game['players']['p1']['timeouts'] == 1 and game['players']['p2']['timeouts'] == 1)
+    ge.resolve_turn(game, [])                              # p1 commits (even an empty turn counts as acting)
+    check("a real commit resets that player's streak", game['players']['p1']['timeouts'] == 0)
+
+    game = make_game()
+    for i in range(1, ge.TIMEOUTS_TO_FORFEIT):
+        ge.timeout_turn(game)                              # p1 times out...
+        check(f"timeout {i} of {ge.TIMEOUTS_TO_FORFEIT} doesn't end the match", not game['winner'])
+        ge.timeout_turn(game)                              # ...and so does p2
+    ge.timeout_turn(game)                                  # p1's 3rd in a row
+    check(f"timeout number {ge.TIMEOUTS_TO_FORFEIT} in a row forfeits to the opponent", game['winner'] == 'p2',
+          game['winner'])
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    b['health'] = 5
+    ge.add_status(b, {'type': 'dot', 'value': 10, 'duration': 4, 'tag': 'harmful'})
+    ge.timeout_turn(game)                                  # turn passes -> p2's turn starts -> DoT kills p2
+    check("a timeout that passes the turn still applies turn-start ticks (and their win)", game['winner'] == 'p1',
+          game['winner'])
+
+
+def test_surrender():
+    """BE-4: the player who surrenders loses, on any turn, and nothing else changes."""
+    for who, expected in (('p1', 'p2'), ('p2', 'p1')):
+        game = make_game()
+        before = copy.deepcopy(game['players'])
+        ge.surrender(game, who)
+        check(f"{who} surrendering makes {expected} the winner (even when it's p1's turn)", game['winner'] == expected,
+              game['winner'])
+        check(f"...without touching either team ({who})", game['players'] == before)
+
+
+def test_first_team_wiped_out_loses():
+    """ENG-2 (user, 2026-11-21): no draws. Everything resolves in order -- moves in
+    queue order, a skill's effects in their listed order, start-of-turn ticks in
+    the order they were cast -- and the team wiped out FIRST loses. The match ends
+    at that moment: nothing after it applies."""
+    check("there is no draw result any more", not hasattr(ge, 'DRAW'))
+
+    def last_stand(game, hp=10):
+        a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+        a['health'] = b['health'] = hp
+        return a, b
+
+    # A skill's effects in their listed order: damage that kills the last enemy, THEN recoil.
+    game = make_game()
+    a, b = last_stand(game)
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}, {"type": "self_damage", "value": 20}]})
+    check("damage first, recoil second: the enemy team falls first -> the attacker wins",
+          game['winner'] == 'p1', game['winner'])
+    check("...and the recoil never lands (the match ended at the kill)", a['health'] == 10, a['health'])
+
+    game = make_game()
+    a, b = last_stand(game)
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "self_damage", "value": 20}, {"type": "damage", "value": 20}]})
+    check("recoil first, damage second: the attacker falls first -> the attacker loses",
+          game['winner'] == 'p2' and b['health'] == 10, (game['winner'], b['health']))
+
+    # A reflected first hit kills the attacker before the second hit lands.
+    game = make_game()
+    a, b = last_stand(game)
+    ge.add_status(b, {'type': 'reflect', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}, {"type": "damage", "value": 20}]})
+    check("a reflected first hit that kills the attacker -> the attacker loses; the second hit never lands",
+          (game['winner'], a['health'], b['health']) == ('p2', 0, 10), (game['winner'], a['health'], b['health']))
+
+    # A whole-team attack where the first target reflects the hit onto the attacker's last character.
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    a = game['players']['p1']['team'][0]
+    b, c = game['players']['p2']['team']
+    a['health'], c['health'] = 10, 10
+    ge.add_status(b, {'type': 'reflect', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "aoe", "name": "aoe", "cost": {}, "target_type": "enemy_team", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}]})
+    check("whole-team attack whose reflected hit kills the attacker's last character -> the attacker loses",
+          game['winner'] == 'p2' and a['health'] == 0 and b['health'] == 100, (game['winner'], a['health'], b['health']))
+
+    # Several moves: the first kills the last enemy, the second (recoil) never happens.
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    a, a2 = game['players']['p1']['team']
+    b = game['players']['p2']['team'][0]
+    b['health'], a2['health'] = 10, 5
+    a['skills'] = [{"id": "hit", "name": "hit", "cost": {}, "target_type": "enemy", "cooldown": 0, "currentCooldown": 0,
+                    "effects": [{"type": "damage", "value": 20}]}]
+    a2['skills'] = [{"id": "boom", "name": "boom", "cost": {}, "target_type": "self", "cooldown": 0,
+                     "currentCooldown": 0, "effects": [{"type": "self_damage", "value": 50}]}]
+    ge.queue_move(game, 'p1', 'A', 'hit', 'p2', 0)
+    ge.queue_move(game, 'p1', 'A2', 'boom', 'p1', 1)
+    ge.resolve_turn(game, [])
+    check("moves resolve in queue order and stop once the match is decided (the later move never runs)",
+          game['winner'] == 'p1' and a2['health'] == 5, (game['winner'], a2['health']))
+
+    # Start-of-turn ticks land in the order they were cast, across both teams.
+    for first, winner in (('p2', 'p1'), ('p1', 'p2')):
+        game = make_game()
+        last_stand(game)
+        second = 'p1' if first == 'p2' else 'p2'
+        for side in (first, second):    # cast order
+            ge.add_status(game['players'][side]['team'][0], {'type': 'dot', 'value': 50, 'duration': 4,
+                                                              'tag': 'harmful'})
+        ge.resolve_turn(game, [])
+        survivor = game['players'][winner]['team'][0]['health']
+        check(f"two lethal poisons tick in cast order: the one on {first} was cast first -> {winner} wins",
+              game['winner'] == winner, game['winner'])
+        check(f"...and the later poison never lands ({winner}'s fighter keeps 10 HP)", survivor == 10, survivor)
+
+    game = make_game()
+    last_stand(game)
+    ge.add_status(game['players']['p2']['team'][0], {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
+    ge.add_status(game['players']['p1']['team'][0], {'type': 'delayed_damage', 'value': 50, 'duration': 1,
+                                                     'tag': 'harmful'})
+    ge.resolve_turn(game, [])
+    check("a delayed-damage detonation also waits for its turn in cast order", game['winner'] == 'p1', game['winner'])
+
+    game = make_game()
+    last_stand(game)
+    for side in ('p2', 'p1'):
+        ge.add_status(game['players'][side]['team'][0], {'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'})
+    ge.timeout_turn(game)
+    check("the same rule after a timeout passes the turn", game['winner'] == 'p1', game['winner'])
+
+    # The real roster: Tien's Tri-Beam (piercing damage, then recoil) finishing the last enemy at low HP.
+    import content_loader
+    tien = content_loader.catalog().get('tien_saiyan_saga')
+    if tien is None:
+        print("  SKIPPED: tien_saiyan_saga not in the current roster")
+    else:
+        tri_beam = copy.deepcopy(next(s for s in tien['skills'] if s['id'] == 'tri_beam'))
+        recoil = next(e['value'] for e in tri_beam['effects'] if e['type'] == 'self_damage')
+        damage = next(e['value'] for e in tri_beam['effects'] if e['type'] == 'piercing_damage')
+        game = make_game()
+        a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+        a['health'], b['health'] = recoil, damage
+        tri_beam['currentCooldown'] = 0
+        a['skills'] = [tri_beam]
+        play(game, 'p1', 'A', 'tri_beam', 'p2', 0)
+        check(f"Tien's real Tri-Beam kills the last enemy before its recoil -> Tien's player wins, Tien keeps {recoil} HP",
+              (game['winner'], a['health'], b['health']) == ('p1', recoil, 0), (game['winner'], a['health'], b['health']))
+
+    game = make_game()
+    for side in ('p1', 'p2'):
+        game['players'][side]['team'][0]['health'] = 0
+    check("a hand-built state with both teams down and no KO times still names a winner (never a draw)",
+          ge.check_winner(game) in ('p1', 'p2'), game['winner'])
+
+    game = make_game()
+    ge.add_status(game['players']['p2']['team'][0], {'type': 'dot', 'value': 1, 'duration': 4, 'tag': 'harmful'})
+    game['players']['p1']['team'][0]['ko_seq'] = 7
+    view = ge.view_for(game, 'p1')
+    sent = [(c.get('ko_seq'), [s.get('cast_seq') for s in c['status']]) for p in view['players'].values()
+            for c in p['team']]
+    check("the ordering numbers (cast/KO times) stay on the server", sent == [(None, []), (None, [None])], sent)
+
+
+def test_invulnerable_is_untargetable():
+    """ENG-4 (decided 2026-11-20): invulnerable = untargetable, except skills that
+    go through invulnerability. Refused when queued: no Ki, no cooldown wasted."""
+    def attacker(game, effects, classes=None, target_type='enemy'):
+        skill = {"id": "s", "name": "Blast", "cost": {}, "target_type": target_type, "cooldown": 2,
+                 "currentCooldown": 0, "effects": effects}
+        if classes:
+            skill['classes'] = classes
+        game['players']['p1']['team'][0]['skills'] = [skill]
+        return skill
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    skill = attacker(game, [{"type": "damage", "value": 20}])
+    try:
+        ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+        refused = None
+    except ge.GameError as e:
+        refused = str(e)
+    check("a normal skill can't target an invulnerable enemy, with a clear message",
+          refused == "B is invulnerable and can't be targeted by Blast!", refused)
+    check("...so nothing is queued and no cooldown is spent",
+          game['pending_moves'] == [] and skill['currentCooldown'] == 0, (game['pending_moves'], skill['currentCooldown']))
+
+    for etype in ge.IGNORES_INVULNERABILITY:
+        game = make_game()
+        b = game['players']['p2']['team'][0]
+        ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+        attacker(game, [{"type": etype, "value": 20}])
+        ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+        check(f"a skill with {etype} (goes through invulnerability) can still target it", len(game['pending_moves']) == 1)
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'physical_invulnerable', 'duration': 2, 'tag': 'buff'})
+    attacker(game, [{"type": "damage", "value": 20}], classes=['physical'])
+    try:
+        ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+        phys = None
+    except ge.GameError as e:
+        phys = str(e)
+    check("class invulnerability: a physical skill can't target a physically invulnerable enemy", phys is not None)
+    game['players']['p1']['team'][0]['skills'][0]['classes'] = ['chakra']
+    ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+    check("...but a Ki (chakra) skill still can", len(game['pending_moves']) == 1)
+
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    ge.add_status(game['players']['p1']['team'][1], {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    attacker(game, [{"type": "heal", "value": 10}], target_type='ally')
+    ge.queue_move(game, 'p1', 'A', 's', 'p1', 1)
+    check("an invulnerable ALLY can still be targeted by helpful skills", len(game['pending_moves']) == 1)
+
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    b, c = game['players']['p2']['team']
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "t", "name": "t", "cost": {}, "target_type": "enemy_team", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 10}]})
+    check("team skills still work and simply skip the invulnerable enemy", (b['health'], c['health']) == (100, 90),
+          (b['health'], c['health']))
+
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    b, c = game['players']['p2']['team']
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "r", "name": "r", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "random_multi_damage", "value": 10, "count": 2}]}, target_index=1)
+    check("random-target hits never pick an untargetable enemy (all hits land on the targetable one)",
+          (b['health'], c['health']) == (100, 90), (b['health'], c['health']))
+
+    skill = {"id": "x", "effects": [{"type": "affliction_damage", "value": 1}], "base_effects": []}
+    shown = ge.strip_skill_internals({'skills': [skill]})['skills'][0]
+    check("the client gets an ignores_invulnerable display flag instead of the effects",
+          shown == {"id": "x", "ignores_invulnerable": True}, shown)
+    plain = ge.strip_skill_internals({'skills': [{"id": "y", "effects": [{"type": "damage", "value": 1}]}]})
+    check("...and no flag at all for ordinary skills (no payload growth)", plain['skills'][0] == {"id": "y"}, plain)
+
+
+def test_reactive_defenses_protect_against_a_whole_skill():
+    """ENG-3 (decided 2026-11-20): one dodge / counter / reflect answers a whole
+    skill on that target, not just its first effect."""
+    hit_and_stun = [{"type": "damage", "value": 20}, {"type": "stun", "duration": 1}]
+
+    def stunned(c):
+        return any(s['type'] == 'stun' for s in c['status'])
+
+    for defense in ('dodge', 'counter'):
+        game = make_game()
+        b = game['players']['p2']['team'][0]
+        ge.add_status(b, {'type': defense, 'duration': 10, 'tag': 'buff'})
+        run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                                   "effects": copy.deepcopy(hit_and_stun)})
+        check(f"{defense} stops the WHOLE skill: no damage and no stun", b['health'] == 100 and not stunned(b),
+              (b['health'], b['status']))
+        check(f"...and uses up exactly that one {defense}", not any(s['type'] == defense for s in b['status']))
+
+    game = make_game()
+    a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'reflect', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}, {"type": "damage", "value": 15},
+                                           {"type": "stun", "duration": 1}]})
+    check("reflect turns ALL of the skill's damage back on the attacker (20 + 15)", a['health'] == 65, a['health'])
+    check("...the target takes nothing and isn't stunned", b['health'] == 100 and not stunned(b),
+          (b['health'], b['status']))
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 10}] * 3})
+    check("a 3-hit skill uses up only ONE of two dodges", b['health'] == 100
+          and sum(s['type'] == 'dodge' for s in b['status']) == 1, (b['health'], b['status']))
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    a = game['players']['p1']['team'][0]
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    a['skills'] = [{"id": "s1", "name": "s1", "cost": {}, "target_type": "enemy", "cooldown": 0, "currentCooldown": 0,
+                    "effects": copy.deepcopy(hit_and_stun)}]
+    game['players']['p1']['team'].append(make_char('A2'))
+    game['players']['p1']['team'][1]['skills'] = [{"id": "s2", "name": "s2", "cost": {}, "target_type": "enemy",
+                                                   "cooldown": 0, "currentCooldown": 0,
+                                                   "effects": copy.deepcopy(hit_and_stun)}]
+    ge.queue_move(game, 'p1', 'A', 's1', 'p2', 0)
+    ge.queue_move(game, 'p1', 'A2', 's2', 'p2', 0)
+    ge.resolve_turn(game, [])
+    check("one dodge stops one skill; a second skill in the same turn lands in full",
+          b['health'] == 80 and stunned(b), (b['health'], b['status']))
+
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    b, c = game['players']['p2']['team']
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "t", "name": "t", "cost": {}, "target_type": "enemy_team", "cooldown": 0,
+                               "effects": copy.deepcopy(hit_and_stun)})
+    check("team skill: each target reacts on its own (B dodges all of it, C takes all of it)",
+          (b['health'], stunned(b), c['health'], stunned(c)) == (100, False, 80, True),
+          (b['health'], b['status'], c['health'], c['status']))
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "affliction_damage", "value": 30}, {"type": "stun", "duration": 1}]})
+    check("affliction (ignores reactive defenses) still lands through a dodge; the rest of the skill is dodged",
+          b['health'] == 70 and not stunned(b), (b['health'], b['status']))
+
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    ally = game['players']['p1']['team'][1]
+    ally['health'] = 50
+    ge.add_status(ally, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "h", "name": "h", "cost": {}, "target_type": "ally", "cooldown": 0,
+                               "effects": [{"type": "heal", "value": 20}]}, target_index=1, target_role='p1')
+    check("helping an ally never uses up the ally's dodge", ally['health'] == 70
+          and any(s['type'] == 'dodge' for s in ally['status']), (ally['health'], ally['status']))
+
+    import content_loader
+    raditz = content_loader.catalog().get('raditz_saiyan_saga')
+    if raditz is None:
+        print("  SKIPPED: raditz_saiyan_saga not in the current roster")
+    else:
+        knee = copy.deepcopy(next(s for s in raditz['skills'] if s['id'] == 'knee_attack'))
+        knee['currentCooldown'] = 0
+        game = make_game()
+        a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+        a['skills'] = [knee]
+        ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+        play(game, 'p1', 'A', 'knee_attack', 'p2', 0)
+        check("Raditz's real Knee Attack (damage + stun) is fully dodged by one dodge",
+              b['health'] == 100 and not stunned(b), (b['health'], b['status']))
+
+
+def test_seeded_randomness_makes_a_match_reproducible():
+    """ENG-7: each match has its own seeded random stream (dice, random dice
+    removal, random targets). Same seed + same moves = the same match."""
+    import content_loader
+    import json
+    cat = content_loader.catalog()
+    if 'raditz_saiyan_saga' not in cat or 'goku_saiyan_saga' not in cat:
+        print("  SKIPPED: raditz_saiyan_saga / goku_saiyan_saga not in the current roster")
+        return
+
+    def new_match(seed):
+        def fighter(cid):
+            c = copy.deepcopy(cat[cid])
+            c['defense'] = 0
+            return c
+        g = {'roomId': 'r', 'turn': None, 'winner': None, 'turn_count': 0, 'pending_moves': [],
+             'players': {'p1': {'id': 'a', 'resources': [], 'status': [],
+                                'team': [fighter('raditz_saiyan_saga'), fighter('goku_saiyan_saga')]},
+                         'p2': {'id': 'b', 'resources': [], 'status': [],
+                                'team': [fighter('goku_saiyan_saga'), fighter('raditz_saiyan_saga'),
+                                         fighter('goku_saiyan_saga')]}}}
+        g['players']['p2']['team'][1]['id'] = 'raditz_b'
+        g['players']['p2']['team'][2]['id'] = 'goku_b'
+        ge.seed_match(g, seed)
+        ge.start_turn(g, 'p1')
+        return g
+
+    def play_out(g, turns=12):
+        """Raditz casts Double Sunday (2 random enemy targets) whenever affordable; otherwise pass."""
+        for _ in range(turns):
+            if g['winner']:
+                break
+            me = g['turn']
+            raditz = next(c for c in g['players'][me]['team'] if c['id'].startswith('raditz'))
+            skill = next(s for s in raditz['skills'] if s['id'] == 'double_sunday')
+            enemy = 'p2' if me == 'p1' else 'p1'
+            pay = None
+            if raditz['health'] > 0 and skill['currentCooldown'] == 0 and \
+                    ge.can_afford(g['players'][me]['resources'], [skill['cost']]):
+                target = next(i for i, c in enumerate(g['players'][enemy]['team']) if c['health'] > 0)
+                ge.queue_move(g, me, raditz['id'], 'double_sunday', enemy, target)
+                pool = list(g['players'][me]['resources'])
+                pay = [pool.pop(pool.index('energy'))] + pool[:1]
+            ge.resolve_turn(g, pay or [])
+        return json.dumps(g, sort_keys=True)
+
+    first, again = play_out(new_match(2026)), play_out(new_match(2026))
+    check("the same seed + the same moves give exactly the same match (dice, random targets, HP)", first == again)
+    other = play_out(new_match(7))
+    check("...and a different seed gives a different match", other != first)
+    played = json.loads(first)
+    check("(the scenario really used randomness: dice were rolled and Double Sunday hit someone)",
+          played['rng_draws'] > 10 and any(c['health'] < c['maxHealth'] for c in played['players']['p2']['team']),
+          (played['rng_draws'], [c['health'] for c in played['players']['p2']['team']]))
+
+    seeds = {ge.seed_match({}) for _ in range(50)}
+    check("without a given seed, every match gets its own random 64-bit seed", len(seeds) == 50
+          and all(0 <= s < 2 ** 64 for s in seeds))
+
+    g = new_match(99)
+    view = ge.view_for(g, 'p1')
+    check("the seed and draw counter are never sent to players (they'd predict every die)",
+          'rng_seed' not in view and 'rng_draws' not in view and 'rng_seed' in g)
+
+    # A crashed turn is rolled back INCLUDING the random stream: the retry rolls what it would have rolled.
+    a, b = new_match(5), new_match(5)
+    real_start_turn = ge.start_turn
+    def roll_then_crash(*args, **kwargs):
+        real_start_turn(*args, **kwargs)          # the next player's dice are rolled (draws used)...
+        raise RuntimeError("simulated bug")       # ...then the turn crashes
+    ge.start_turn = roll_then_crash
+    try:
+        ge.resolve_turn(a, [])
+        crashed = False
+    except RuntimeError:
+        crashed = True
+    finally:
+        ge.start_turn = real_start_turn
+    ge.resolve_turn(a, [])
+    ge.resolve_turn(b, [])
+    check("a turn that crashed and was rolled back doesn't shift the random stream (the retry rolls the same dice)",
+          crashed and json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True))
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

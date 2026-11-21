@@ -1,0 +1,2 @@
+after 220 finished matches: GAMES=220 ENDED_ROOMS=220 socket.io match rooms=220 SID_ROOM_MAP=0
+memory growth over 200 matches: 5992 KB total, 30.0 KB per match

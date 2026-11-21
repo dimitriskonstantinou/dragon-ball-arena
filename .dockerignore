@@ -1,0 +1,26 @@
+# Only what the server needs goes into the image (see Dockerfile).
+.git
+.gitignore
+.gitattributes
+.claude
+**/__pycache__
+**/*.pyc
+.venv
+venv
+docs
+tools
+tests.py
+*.md
+Dockerfile
+.dockerignore
+
+# Local data and secrets: never in an image.
+backend/game.db
+backend/*.db
+backend/.dev_secret_key
+.env
+*.env
+
+# Tests and test tooling (run outside the image; see tests.py).
+backend/test_*.py
+backend/requirements-dev.txt

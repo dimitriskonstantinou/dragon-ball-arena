@@ -3,7 +3,6 @@
 // from, and doesn't connect at all until we know the user is logged in.
 const socket = io({ autoConnect: false });
 let myRole = null;
-let myRoomId = null;
 let selectedCharId = null;
 let selectedSkillId = null;
 let selectedSkillObj = null;
@@ -146,7 +145,6 @@ function findMatch() {
 socket.on('match-status', (msg) => { document.getElementById('lobby-status').innerText = msg; });
 
 socket.on('game-start', (data) => {
-    myRoomId = data.roomId;
     myRole = data.role;
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
@@ -169,13 +167,17 @@ socket.on('update-state', game => {
     if(game.winner) {
         document.getElementById('status').innerText = game.winner === myRole ? "YOU WIN!" : "YOU LOSE!";
         document.getElementById('end-turn').style.display = 'none';
+        document.getElementById('surrender-btn').style.display = 'none';
+        showTurnTimer(null);
         refreshUserBadge();
         return;
     }
 
     const isMyTurn = game.turn === myRole;
     document.getElementById('status').innerText = isMyTurn ? "PLAN YOUR MOVES" : "OPPONENT THINKING...";
+    showTurnTimer(game.turn_seconds_left, isMyTurn);
     document.getElementById('end-turn').style.display = isMyTurn ? 'inline-block' : 'none';
+    document.getElementById('surrender-btn').style.display = 'inline-block';
 
     const myData = game.players[myRole];
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
@@ -222,6 +224,24 @@ function updateTurnHeader(isMyTurn, myImg, enemyImg) {
 }
 
 socket.on('error-msg', msg => log("❌ " + msg));
+
+// --- TURN TIMER ---
+// The server owns the deadline and sends the seconds left with each state;
+// this only counts down locally between updates.
+let turnTimerInterval = null;
+function showTurnTimer(secondsLeft, isMyTurn) {
+    clearInterval(turnTimerInterval);
+    const el = document.getElementById('turn-timer');
+    if (secondsLeft == null) { el.innerText = ''; return; }
+    const endsAt = Date.now() + secondsLeft * 1000;
+    const render = () => {
+        const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        el.innerText = `${isMyTurn ? 'Your' : "Opponent's"} turn ends in ${left}s`;
+        el.classList.toggle('urgent', left <= 10);
+    };
+    render();
+    turnTimerInterval = setInterval(render, 250);
+}
 
 // --- MATH ---
 function calculateRemainingDice(totalDice, pendingMoves) {
@@ -480,6 +500,7 @@ function onSkillClicked(charId, skillId, btnElement, event) {
     if (type === 'enemy' || type === 'enemy_team') {
         updateInstruction(type === 'enemy_team' ? "SELECT ANY ENEMY (hits the whole team)" : "SELECT AN ENEMY");
         document.getElementById('enemy-team').classList.add('targeting-mode');
+        if (type === 'enemy') markUntargetable(selectedSkillObj);
     } else if (type === 'ally' || type === 'ally_team') {
         updateInstruction(type === 'ally_team' ? "SELECT ANY ALLY (affects the whole team)" : "SELECT AN ALLY");
         document.getElementById('my-team').classList.add('targeting-mode');
@@ -489,17 +510,39 @@ function onSkillClicked(charId, skillId, btnElement, event) {
     }
 }
 
+// Mirrors game_engine.is_targetable_by (the server decides; this is the UI cue):
+// an invulnerable enemy can't be picked unless the skill goes through invulnerability.
+function isUntargetable(target, skill) {
+    if (skill.ignores_invulnerable) return false;
+    const types = (target.status || []).map(s => s.type);
+    return types.includes('invulnerable') || (skill.classes || []).some(c => types.includes(`${c}_invulnerable`));
+}
+
+function enemyTeam() {
+    return currentGameState.players[myRole === 'p1' ? 'p2' : 'p1'].team;
+}
+
+function markUntargetable(skill) {
+    const cards = document.getElementById('enemy-team').children;
+    enemyTeam().forEach((target, i) => {
+        if (cards[i]) cards[i].classList.toggle('untargetable', target.health > 0 && isUntargetable(target, skill));
+    });
+}
+
 function onEnemyClicked(targetIndex) {
     if (!selectedSkillId || !selectedSkillObj) return;
     const type = selectedSkillObj.target_type || 'enemy';
     if (type !== 'enemy' && type !== 'enemy_team') return;
+    const target = enemyTeam()[targetIndex];
+    if (type === 'enemy' && target && isUntargetable(target, selectedSkillObj)) {
+        updateInstruction(`${target.name.toUpperCase()} IS INVULNERABLE -- PICK ANOTHER TARGET`);
+        return;   // keep the skill selected
+    }
 
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
     socket.emit('queue-skill', {
-        roomId: myRoomId,
         charId: selectedCharId,
         skillId: selectedSkillId,
-        myPlayerKey: myRole,
         targetPlayerKey: enemyRole,
         targetIndex: targetIndex
     });
@@ -512,10 +555,8 @@ function onAllyClicked(targetIndex) {
     if (type !== 'ally' && type !== 'ally_team' && type !== 'self') return;
 
     socket.emit('queue-skill', {
-        roomId: myRoomId,
         charId: selectedCharId,
         skillId: selectedSkillId,
-        myPlayerKey: myRole,
         targetPlayerKey: myRole,
         targetIndex: targetIndex
     });
@@ -529,18 +570,23 @@ function resetTargeting() {
     document.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('selected'));
     document.getElementById('enemy-team').classList.remove('targeting-mode');
     document.getElementById('my-team').classList.remove('targeting-mode');
+    document.querySelectorAll('.char-card.untargetable').forEach(c => c.classList.remove('untargetable'));
     updateInstruction("");
 }
 
+function surrender() {
+    if (confirm('Surrender this match? It counts as a loss.')) socket.emit('surrender', {});
+}
+
 function cancelMove(charId) {
-    socket.emit('cancel-skill', { roomId: myRoomId, myPlayerKey: myRole, charId: charId });
+    socket.emit('cancel-skill', { charId: charId });
 }
 
 // --- PAYMENT MODAL ---
 function openPaymentModal() {
     const moves = currentGameState.pending_moves || [];
     if(moves.length === 0) {
-        socket.emit('commit-turn', { roomId: myRoomId, paymentList: [] });
+        socket.emit('commit-turn', { paymentList: [] });
         return;
     }
     const modal = document.getElementById('payment-modal');
@@ -634,7 +680,7 @@ function removeRandomSelection(slotIndex) {
 
 function submitPayment() {
     const finalPayment = [...payment_auto, ...payment_random_selected];
-    socket.emit('commit-turn', { roomId: myRoomId, paymentList: finalPayment });
+    socket.emit('commit-turn', { paymentList: finalPayment });
     closeModal();
 }
 

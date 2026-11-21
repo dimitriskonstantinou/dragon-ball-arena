@@ -4,3 +4,9 @@ python-socketio==5.16.3
 python-engineio==4.13.3
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.51
+pydantic==2.14.4
+Flask-Migrate==4.1.0
+alembic==1.20.1
+Mako==1.4.3
+# PostgreSQL driver (production database; DEPLOY_PLAN Stage 2). Not needed for SQLite dev.
+psycopg[binary]==3.3.9
