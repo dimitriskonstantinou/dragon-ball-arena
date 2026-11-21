@@ -1496,6 +1496,90 @@ def test_reactive_defenses_protect_against_a_whole_skill():
               b['health'] == 100 and not stunned(b), (b['health'], b['status']))
 
 
+def test_seeded_randomness_makes_a_match_reproducible():
+    """ENG-7: each match has its own seeded random stream (dice, random dice
+    removal, random targets). Same seed + same moves = the same match."""
+    import content_loader
+    import json
+    cat = content_loader.catalog()
+    if 'raditz_saiyan_saga' not in cat or 'goku_saiyan_saga' not in cat:
+        print("  SKIPPED: raditz_saiyan_saga / goku_saiyan_saga not in the current roster")
+        return
+
+    def new_match(seed):
+        def fighter(cid):
+            c = copy.deepcopy(cat[cid])
+            c['defense'] = 0
+            return c
+        g = {'roomId': 'r', 'turn': None, 'winner': None, 'turn_count': 0, 'pending_moves': [],
+             'players': {'p1': {'id': 'a', 'resources': [], 'status': [],
+                                'team': [fighter('raditz_saiyan_saga'), fighter('goku_saiyan_saga')]},
+                         'p2': {'id': 'b', 'resources': [], 'status': [],
+                                'team': [fighter('goku_saiyan_saga'), fighter('raditz_saiyan_saga'),
+                                         fighter('goku_saiyan_saga')]}}}
+        g['players']['p2']['team'][1]['id'] = 'raditz_b'
+        g['players']['p2']['team'][2]['id'] = 'goku_b'
+        ge.seed_match(g, seed)
+        ge.start_turn(g, 'p1')
+        return g
+
+    def play_out(g, turns=12):
+        """Raditz casts Double Sunday (2 random enemy targets) whenever affordable; otherwise pass."""
+        for _ in range(turns):
+            if g['winner']:
+                break
+            me = g['turn']
+            raditz = next(c for c in g['players'][me]['team'] if c['id'].startswith('raditz'))
+            skill = next(s for s in raditz['skills'] if s['id'] == 'double_sunday')
+            enemy = 'p2' if me == 'p1' else 'p1'
+            pay = None
+            if raditz['health'] > 0 and skill['currentCooldown'] == 0 and \
+                    ge.can_afford(g['players'][me]['resources'], [skill['cost']]):
+                target = next(i for i, c in enumerate(g['players'][enemy]['team']) if c['health'] > 0)
+                ge.queue_move(g, me, raditz['id'], 'double_sunday', enemy, target)
+                pool = list(g['players'][me]['resources'])
+                pay = [pool.pop(pool.index('energy'))] + pool[:1]
+            ge.resolve_turn(g, pay or [])
+        return json.dumps(g, sort_keys=True)
+
+    first, again = play_out(new_match(2026)), play_out(new_match(2026))
+    check("the same seed + the same moves give exactly the same match (dice, random targets, HP)", first == again)
+    other = play_out(new_match(7))
+    check("...and a different seed gives a different match", other != first)
+    played = json.loads(first)
+    check("(the scenario really used randomness: dice were rolled and Double Sunday hit someone)",
+          played['rng_draws'] > 10 and any(c['health'] < c['maxHealth'] for c in played['players']['p2']['team']),
+          (played['rng_draws'], [c['health'] for c in played['players']['p2']['team']]))
+
+    seeds = {ge.seed_match({}) for _ in range(50)}
+    check("without a given seed, every match gets its own random 64-bit seed", len(seeds) == 50
+          and all(0 <= s < 2 ** 64 for s in seeds))
+
+    g = new_match(99)
+    view = ge.view_for(g, 'p1')
+    check("the seed and draw counter are never sent to players (they'd predict every die)",
+          'rng_seed' not in view and 'rng_draws' not in view and 'rng_seed' in g)
+
+    # A crashed turn is rolled back INCLUDING the random stream: the retry rolls what it would have rolled.
+    a, b = new_match(5), new_match(5)
+    real_start_turn = ge.start_turn
+    def roll_then_crash(*args, **kwargs):
+        real_start_turn(*args, **kwargs)          # the next player's dice are rolled (draws used)...
+        raise RuntimeError("simulated bug")       # ...then the turn crashes
+    ge.start_turn = roll_then_crash
+    try:
+        ge.resolve_turn(a, [])
+        crashed = False
+    except RuntimeError:
+        crashed = True
+    finally:
+        ge.start_turn = real_start_turn
+    ge.resolve_turn(a, [])
+    ge.resolve_turn(b, [])
+    check("a turn that crashed and was rolled back doesn't shift the random stream (the retry rolls the same dice)",
+          crashed and json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

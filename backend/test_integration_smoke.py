@@ -452,6 +452,11 @@ else:
           p2_update is not None and p2_update['pending_moves'] == [], p2_update and p2_update['pending_moves'])
     check("no socket ids or account ids are sent to clients",
           all(f not in p for u in (p1_update, p2_update) if u for p in u['players'].values() for f in ('id', 'user_id')))
+    # Step 32 (ENG-7): every match has its own random stream; its seed stays on the server.
+    check("the server gave this match its own random seed",
+          isinstance(game.get('rng_seed'), int) and game.get('rng_draws', 0) > 0, (game.get('rng_seed'), game.get('rng_draws')))
+    check("...and never sends the seed or draw counter to either player",
+          all(u and 'rng_seed' not in u and 'rng_draws' not in u for u in (p1_update, p2_update)))
     sent_skills = [s for u in (p1_update, p2_update) if u for p in u['players'].values() for c in p['team'] for s in c['skills']]
     check("skill effects are not sent to clients, but name/cost/description are",
           sent_skills and all('effects' not in s and {'name', 'cost', 'description'} <= set(s) for s in sent_skills))

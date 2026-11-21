@@ -1,6 +1,7 @@
 import copy
 import itertools
 import random
+import secrets
 
 # ---------------------------------------------------------------------------
 # Status effect model
@@ -42,15 +43,42 @@ class GameError(Exception):
     bug: app.py logs it and shows the player a generic message instead."""
 
 
-def roll_dice(amount):
-    return [random.choice(CHAKRA_TYPES) for _ in range(amount)]
+# --- per-match randomness (ENG-7) -------------------------------------------
+# Every match has its own secret seed (game_state['rng_seed']) and a counter of
+# random draws so far ('rng_draws'). Draw n uses random.Random(f"{seed}:{n}"):
+# the same seed + the same moves always give the same dice / random targets, so
+# a match (or a random bug) can be replayed. Plain numbers in the state, not a
+# Random object: cheap to snapshot, JSON-friendly. Both stay on the server
+# (PRIVATE_GAME_FIELDS) -- whoever knows the seed can predict every die.
+
+def seed_match(game_state, seed=None):
+    """Gives a new match its own random stream; returns the seed."""
+    game_state['rng_seed'] = secrets.randbits(64) if seed is None else seed
+    game_state['rng_draws'] = 0
+    return game_state['rng_seed']
 
 
-def remove_dice(player_state, amount, chakra_type=None):
+def match_rng(game_state):
+    """The random source for the next draw of this match (hand-built states
+    without a seed, e.g. unit tests, fall back to the global module)."""
+    if not game_state or 'rng_seed' not in game_state:
+        return random
+    draw = game_state['rng_draws']
+    game_state['rng_draws'] = draw + 1
+    return random.Random(f"{game_state['rng_seed']}:{draw}")   # str seeds hash with SHA-512: stable everywhere
+
+
+def roll_dice(amount, game_state=None):
+    rng = match_rng(game_state)
+    return [rng.choice(CHAKRA_TYPES) for _ in range(amount)]
+
+
+def remove_dice(player_state, amount, chakra_type=None, game_state=None):
     """Removes up to `amount` dice from a player's resource pool and returns
     what was actually removed. If chakra_type is given, only that type is
     removed (and fewer than `amount` may come out if the pool lacks them)."""
     pool = player_state['resources']
+    rng = None
     removed = []
     if chakra_type:
         for _ in range(amount):
@@ -61,7 +89,8 @@ def remove_dice(player_state, amount, chakra_type=None):
                 break
     else:
         for _ in range(min(amount, len(pool))):
-            idx = random.randrange(len(pool))
+            rng = rng or match_rng(game_state)
+            idx = rng.randrange(len(pool))
             removed.append(pool.pop(idx))
     return removed
 
@@ -299,7 +328,7 @@ def apply_heal(target, amount, actor=None):
     target['health'] = min(target['maxHealth'], target['health'] + final)
 
 
-def apply_effect(effect, actor, targets, player, opponent, skill_classes, reactions=None):
+def apply_effect(effect, actor, targets, player, opponent, skill_classes, reactions=None, game_state=None):
     etype = effect['type']
 
     # Any effect may set "target": "self" to hit the caster instead of the
@@ -343,7 +372,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes, reacti
         # actual targets are randomly sampled from the opponent's living team.
         # Untargetable (invulnerable) enemies are never picked (ENG-4).
         alive_enemies = [c for c in opponent['team'] if c['health'] > 0 and not is_invulnerable(c, skill_classes)]
-        chosen = random.sample(alive_enemies, min(effect.get('count', 1), len(alive_enemies)))
+        chosen = match_rng(game_state).sample(alive_enemies, min(effect.get('count', 1), len(alive_enemies)))
         for t in chosen:
             real_target = resolve_protection(t, player, opponent) or t
             apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes, reactions=reactions)
@@ -473,14 +502,14 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes, reacti
                 remove_statuses(t, lambda s: s.get('type') == scope)
 
     elif etype == 'remove_chakra':
-        remove_dice(opponent, effect.get('amount', 1), effect.get('chakra_type'))
+        remove_dice(opponent, effect.get('amount', 1), effect.get('chakra_type'), game_state)
 
     elif etype == 'steal_chakra':
-        stolen = remove_dice(opponent, effect.get('amount', 1), effect.get('chakra_type'))
+        stolen = remove_dice(opponent, effect.get('amount', 1), effect.get('chakra_type'), game_state)
         player['resources'].extend(stolen)
 
     elif etype == 'chakra_regen':
-        player['resources'].extend(roll_dice(effect.get('amount', 1)))
+        player['resources'].extend(roll_dice(effect.get('amount', 1), game_state))
 
     elif etype == 'chakra_restrict':
         add_status(opponent, {'type': 'chakra_restrict', 'chakra_type': effect.get('chakra_type'),
@@ -625,6 +654,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes, reacti
 
 # Server-only fields on a player entry: socket id and account id.
 PRIVATE_PLAYER_FIELDS = ('id', 'user_id', 'disconnected_at')
+PRIVATE_GAME_FIELDS = ('rng_seed', 'rng_draws')   # the seed would let a player predict every die
 
 
 def view_for(game_state, role):
@@ -633,7 +663,7 @@ def view_for(game_state, role):
     moves (only the active player sees the queue), and 'invisible' statuses
     on the viewer's own characters (e.g. a counter-trap placed on them; the
     player who placed it still sees it)."""
-    view = copy.deepcopy(game_state)
+    view = copy.deepcopy({k: v for k, v in game_state.items() if k not in PRIVATE_GAME_FIELDS})
     for player in view['players'].values():
         for field in PRIVATE_PLAYER_FIELDS:
             player.pop(field, None)
@@ -736,7 +766,7 @@ def tick_statuses(game_state):
         active_p = []
         for s in player.get('status', []):
             if s['type'] == 'chakra_drain_over_time':
-                remove_dice(player, s.get('value', 1))
+                remove_dice(player, s.get('value', 1), game_state=game_state)
             s['duration'] -= 1
             if s['duration'] > 0:
                 active_p.append(s)
@@ -771,7 +801,7 @@ def start_turn(game_state, player_id):
     # -----------------------------------
 
     if dice_to_roll > 0:
-        new_dice = roll_dice(dice_to_roll)
+        new_dice = roll_dice(dice_to_roll, game_state)
         player['resources'].extend(new_dice)
 
     for char in player['team']:
@@ -1017,7 +1047,7 @@ def _apply_turn(game_state, player_id, player, opponent, payment_list, resolved_
         decided = False
         reactions = {}   # each target reacts (dodge/counter/reflect) once to this whole skill
         for effect in effects:
-            apply_effect(effect, actor_char, targets, player, opponent, skill_classes, reactions)
+            apply_effect(effect, actor_char, targets, player, opponent, skill_classes, reactions, game_state)
             if any_team_wiped(game_state):
                 decided = True   # the match ends at this moment: nothing after it applies
                 break

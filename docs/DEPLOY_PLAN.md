@@ -134,12 +134,14 @@ Check current pricing when you sign up; all of these have small paid tiers suita
 Each stage ends with a **check**. Measure before/after as usual (`tools/measure.py`), plus the stage-specific numbers.
 
 ### Stage 0 — Prerequisites (MASTER_ROADMAP Phases 1–3) — *must be done before anyone else plays*
-1. Roadmap Phase 1: ✅ cost/target validation, per-player views, atomic turns (Steps 1–7). Open: ENG-1 (winner on
-   turn-start wipe) and the rule decisions ENG-2/ENG-4.
-2. Roadmap Phase 2: ✅ identity from `request.sid`, payload validation, no self-matching (Steps 8–9). Open: room
-   cleanup, turn timer, surrender, reconnect grace window, per-room locking.
-3. Roadmap Phase 3: CORS origins, required `SECRET_KEY`, cookie flags, login rate limit, session revocation.
-- **Check:** `python tools/probe_exploits.py` reports nothing reproduced; all tests green.
+**✅ Met after Step 32** (only the user's merges into `dev` are pending).
+1. ✅ Roadmap Phase 1 (Steps 1–7, 11, 27–29, 31, 32): validation, per-player views, atomic turns, winner rules (no
+   draws), untargetable invulnerability, reactive defenses per skill, seeded randomness.
+2. ✅ Roadmap Phase 2 (Steps 8–9, 13–18): identity, payload validation, room cleanup, per-room locking, turn timer,
+   surrender, reconnect grace window. (2.7 battle events / 2.8 names are UX -- frontend phase.)
+3. ✅ Roadmap Phase 3 (Steps 19–26): config + secrets, origins + cookies, self-hosted client, rate limits, migrations,
+   revocable sessions, usernames, proxy readiness.
+- **Check:** `python tests.py` ALL GREEN; the probe's only confirmed item is the reflect design question (ENG-5).
 
 ### Stage 1 — Production-ready configuration
 1. ✅ *(Step 19)* `backend/config.py` reads and validates every setting: `ENV` (development|staging|production),
@@ -169,7 +171,7 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
    today; the migrations are written in batch mode so they also work on SQLite).
 4. Release step: `flask db upgrade && python seed_db.py` (registers characters before the new version takes
    traffic; the server also syncs on start). Content is authored in `backend/content/`.
-5. Case-insensitive unique usernames (functional index on `lower(username)`).
+5. ✅ *(Step 25)* Case-insensitive unique usernames (`users.username_key`, unique index -- portable, no functional index).
 6. Make the smoke test run against Postgres too (CI does this in Stage 4).
 - **Check:** fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op.
 

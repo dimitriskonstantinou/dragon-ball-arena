@@ -117,7 +117,7 @@ Cyclomatic complexity 131 (radon grade F); `game_engine.py` maintainability inde
 Every new mechanic grows the chain, and the content test keeps its own hand-copied list of known types.
 **Fix:** effect registry (`EFFECTS = {'damage': fn, ...}`), one function per effect, content test uses `EFFECTS.keys()`. Safe: yes, behavior-preserving refactor covered by the existing 162 checks. Do it before the roster grows.
 
-**ENG-7 — LOW — Engine randomness is global and unseeded (by reading)**
+**ENG-7 — LOW — Engine randomness is global and unseeded (by reading)** — ✅ FIXED in Step 32 (`seed_match()` gives every match a secret 64-bit `rng_seed` + an `rng_draws` counter; draw n uses `random.Random(f"{seed}:{n}")`, so the same seed + the same moves replay identically (tested on a real 12-turn scenario, incl. a crashed-and-rolled-back turn); both fields are server-only (`PRIVATE_GAME_FIELDS`); the seed is logged at match start. Replays still need the moves recorded -- later, with battle events (2.7)).
 `roll_dice`, `remove_dice`, `random_multi_damage` use the module-level `random`. Matches can't be replayed, and random bugs can't be reproduced.
 **Fix:** a per-game `random.Random(seed)` with the seed stored in the game state. Prepares replays and anti-cheat audits.
 

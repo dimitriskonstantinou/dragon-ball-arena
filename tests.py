@@ -220,6 +220,8 @@ def payload_and_speed():
 
     def one_round(n=300):
         g = new_game()
+        if hasattr(game_engine, 'seed_match'):
+            game_engine.seed_match(g, 1)    # like a real match: every die comes from the match's own stream
         for p in ('p1', 'p2'):
             for c in g['players'][p]['team']:
                 c['health'] = c['maxHealth'] = 10 ** 9

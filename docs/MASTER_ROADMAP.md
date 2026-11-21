@@ -34,7 +34,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 
 **Risks:** merging 10 stacked branches; mitigated by merging in order (they're linear).
 
-## Phase 1 — Engine integrity · *Steps 1–7 + 11 done; 4 items + content pipeline left*
+## Phase 1 — Engine integrity · *✅ complete (Steps 1–7, 11, 27–29, 31, 32)*
 
 **Objective:** the rules are correct, deterministic where intended, and unexploitable.
 **Problems:** ENG-1 (no winner on tick wipe), ENG-2 (mutual KO), ENG-3 (dodge per effect), ENG-4 (targeting invulnerable), ENG-7 (unseeded RNG).
@@ -47,7 +47,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 | ✅ 1.9b ENG-2 (**changed 2026-11-21 by the user: no draws**): the team wiped out **first** loses, in resolution order (moves in queue order, effects in listed order, start-of-turn ticks in the order they were cast); the match ends at that moment — *Step 29* | Replaces Step 27's draw (new migration drops its columns) | Done: Tri-Beam kill = Tien's player wins (recoil never lands); reflected first hit = attacker loses; ticks in cast order; no draw anywhere (engine, DB, UI) |
 | ✅ 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) — *Step 28* | — | Done: refused at queue time (no Ki/cooldown lost); greyed out in the UI (browser test); text fixed |
 | ✅ 1.11 ENG-3: reactive defenses apply **per skill** (decided) — *Step 31* | — | Done: Knee Attack fully dodged by one dodge (real content); 12 tests, 7 of them fail on the old engine |
-| 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
+| ✅ 1.12 ENG-7: per-game seeded RNG stored in state — *Step 32* | No | Done: same seed + same moves → identical match (real 12-turn scenario); seed never sent; rollback keeps the stream in step |
 | ✅ **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | **Done in Steps 12a + 12b**; 12c (socket payloads) later |
 
 **1.13 Content pipeline (decided architecture).** One authoritative source: version-controlled JSON files, one per
@@ -169,13 +169,14 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.12 / Step 32: per-match seeded randomness (ENG-7) -- the last Phase 1 item.** Dice rolls, Ki removal and
-random-target hits use Python's global, unseeded `random`, so a match can't be replayed and a random bug can't be
-reproduced. Plan: each match gets its own `random.Random(seed)`, with the seed stored server-side in the game state
-(never sent to players -- it would let them predict dice); every random call in the engine uses it; a test proves
-"same seed + same moves = identical end state" and that the seed never reaches a view. That completes Phase 1 --
-together with Phases 2-3 the DEPLOY_PLAN Stage 0 prerequisites are then met except the user's merge into `dev`.
-*(Step 31 done: dodge/counter/reflect protect against a whole skill -- ENG-3.)*
+**Phases 1–3 are complete** (2.7/2.8 are UX and move with the frontend phase), so DEPLOY_PLAN Stage 0 -- everything
+that must hold before anyone else plays -- is met; the probe's one remaining item is the reflect design question
+(ENG-5), not a hole. **Next is a priority choice for the user** (asked in the Step 32 report):
+- **Recommended: DEPLOY_PLAN Stage 2 -- PostgreSQL** (`psycopg`, run the migration + smoke suites against a real
+  Postgres, then Stage 3 gunicorn/Docker and Stage 4 CI running `python tests.py`) -- the path to the DEV site.
+- Phase 4 -- content cleanup (effect registry ENG-6, cost text CON-1, image sizes AST-1).
+- Phase 5 -- frontend foundation (React + TS + Vite), then the battle UI incl. the timeline.
+*(Step 32 done: per-match seeded randomness -- ENG-7. **Phase 1 complete.**)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

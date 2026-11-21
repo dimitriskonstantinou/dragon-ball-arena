@@ -214,7 +214,12 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
   reflect once per skill application; `_apply_turn` passes one `reactions` memo per move into `apply_effect`, which
   hands it to every `apply_damage` / `is_harmful_blocked` call. **New harmful effect types must pass `reactions`
   through**, or they'd react per effect again. Calls outside a skill (counter-trap damage) pass nothing = one-off.
-- Known engine gaps (audit): ENG-5 reflect semantics (raw, extras not reflected), ENG-7 unseeded RNG (Step 32).
+- **Randomness (Step 32):** never call `random` directly in the engine. Every random draw goes through
+  `match_rng(game_state)` (dice: `roll_dice(n, game_state)`, `remove_dice(..., game_state)`, random targets), which
+  uses the match's `rng_seed` + `rng_draws` (set by `seed_match()` in `app.start_match`, logged there). Same seed +
+  same moves = same match. Both fields are in `PRIVATE_GAME_FIELDS` (never sent: the seed predicts every die).
+  Hand-built test states without a seed fall back to the global `random`.
+- Known engine gaps (audit): ENG-5 reflect semantics (raw, extras not reflected) -- a game-design question.
 
 ### Adding an effect type
 1. Branch in `apply_effect` (+ `tick_statuses` if timed). (ENG-6: a registry refactor is planned; then add a function.)

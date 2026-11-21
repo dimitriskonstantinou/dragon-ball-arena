@@ -1,9 +1,9 @@
 {
-  "updated": "2026-11-21 18:51",
-  "git": "cf3b11a",
+  "updated": "2026-11-21 19:01",
+  "git": "628fb96",
   "suites": {
     "engine": {
-      "pass": 223,
+      "pass": 229,
       "skipped": 0
     },
     "content": {
@@ -23,7 +23,7 @@
       "skipped": 0
     },
     "smoke": {
-      "pass": 156,
+      "pass": 158,
       "skipped": 0
     },
     "browser": {
@@ -39,7 +39,7 @@
     "reflect ignores attacker's invulnerability/defense"
   ],
   "payload_bytes": 8606,
-  "turn_ms": 0.258,
+  "turn_ms": 0.286,
   "coverage": 92.0,
   "lint_issues": 3
 }

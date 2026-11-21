@@ -732,6 +732,9 @@ def start_match(p1, p2):
         },
         'pending_moves': []
     }
+    # Server-only (never sent): with this seed + the moves, the match can be replayed exactly.
+    seed = game_engine.seed_match(game)
+    log.info("Match started: room=%s p1_user=%s p2_user=%s rng_seed=%s", room_id, p1['user_id'], p2['user_id'], seed)
     lock = ROOM_LOCKS[room_id] = threading.RLock()  # exists before any event can find the room
     with lock:
         GAMES[room_id] = game
