@@ -7,10 +7,10 @@ https://evil.example is not an accepted origin. (further occurrences of this err
 ERROR [engineio.server] https://evil.example is not an accepted origin. (further occurrences of this error will be logged with level INFO)
 ERROR [app] Could not save match result: room=fe732711 winner=p1 p1_user=7 p2_user=8 started_at=2026-11-21T11:32:08.437396+00:00
 Traceback (most recent call last):
-  File "C:\Users\dimit\Desktop\Projects\Naruto_Arena\backend\app.py", line 370, in end_game
+  File "~\Desktop\Projects\Naruto_Arena\backend\app.py", line 370, in end_game
     persist_match_result(game, winner)
     ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-  File "C:\Users\dimit\Desktop\Projects\Naruto_Arena\tools\probe_exploits.py", line 274, in failing_persist
+  File "~\Desktop\Projects\Naruto_Arena\tools\probe_exploits.py", line 274, in failing_persist
     raise RuntimeError('simulated database outage')
 RuntimeError: simulated database outage
 [not reproduced] free skills Payment doesn't match the cost of your queued skills!

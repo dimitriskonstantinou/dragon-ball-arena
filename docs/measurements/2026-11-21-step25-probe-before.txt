@@ -4,22 +4,22 @@ https://evil.example is not an accepted origin. (further occurrences of this err
 ERROR [engineio.server] https://evil.example is not an accepted origin. (further occurrences of this error will be logged with level INFO)
 ERROR [app] Could not save match result: room=42404dc0 winner=p1 p1_user=516 p2_user=517 started_at=2026-11-21T11:26:03.113063+00:00
 Traceback (most recent call last):
-  File "C:\Users\dimit\Desktop\Projects\Naruto_Arena\backend\app.py", line 368, in end_game
+  File "~\Desktop\Projects\Naruto_Arena\backend\app.py", line 368, in end_game
     persist_match_result(game, winner)
     ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-  File "C:\Users\dimit\Desktop\Projects\Naruto_Arena\tools\probe_exploits.py", line 274, in failing_persist
+  File "~\Desktop\Projects\Naruto_Arena\tools\probe_exploits.py", line 274, in failing_persist
     raise RuntimeError('simulated database outage')
 RuntimeError: simulated database outage
 ERROR [app] Exception on /api/register [POST]
 Traceback (most recent call last):
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
     self.dialect.do_execute(
     ~~~~~~~~~~~~~~~~~~~~~~~^
         cursor, str_statement, effective_parameters, context
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
     cursor.execute(statement, parameters)
     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
 sqlite3.IntegrityError: UNIQUE constraint failed: users.username
@@ -27,36 +27,36 @@ sqlite3.IntegrityError: UNIQUE constraint failed: users.username
 The above exception was the direct cause of the following exception:
 
 Traceback (most recent call last):
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
     response = self.full_dispatch_request()
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
     rv = self.handle_user_exception(e)
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
     rv = self.dispatch_request()
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\flask\app.py", line 902, in dispatch_request
     return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
-  File "C:\Users\dimit\Desktop\Projects\Naruto_Arena\backend\app.py", line 438, in register
+  File "~\Desktop\Projects\Naruto_Arena\backend\app.py", line 438, in register
     db.session.flush()  # assigns user.id, needed by the rows below
     ~~~~~~~~~~~~~~~~^^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\scoping.py", line 923, in flush
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\scoping.py", line 923, in flush
     return self._proxied.flush(objects=objects)
            ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\session.py", line 4353, in flush
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\session.py", line 4353, in flush
     self._flush(objects)
     ~~~~~~~~~~~^^^^^^^^^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\session.py", line 4488, in _flush
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\session.py", line 4488, in _flush
     with util.safe_reraise():
          ~~~~~~~~~~~~~~~~~^^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 122, in __exit__
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\util\langhelpers.py", line 122, in __exit__
     raise exc_value.with_traceback(exc_tb)
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\session.py", line 4449, in _flush
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\session.py", line 4449, in _flush
     flush_context.execute()
     ~~~~~~~~~~~~~~~~~~~~~^^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 465, in execute
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 465, in execute
     rec.execute(self)
     ~~~~~~~~~~~^^^^^^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 641, in execute
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\unitofwork.py", line 641, in execute
     util.preloaded.orm_persistence.save_obj(
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
         self.mapper,
@@ -67,7 +67,7 @@ Traceback (most recent call last):
         ^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\persistence.py", line 94, in save_obj
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\persistence.py", line 94, in save_obj
     _emit_insert_statements(
     ~~~~~~~~~~~~~~~~~~~~~~~^
         base_mapper,
@@ -77,55 +77,55 @@ Traceback (most recent call last):
         ^^^^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\persistence.py", line 1234, in _emit_insert_statements
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\orm\persistence.py", line 1234, in _emit_insert_statements
     result = connection.execute(
         statement,
         params,
         execution_options=execution_options,
     )
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1421, in execute
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1421, in execute
     return meth(
         self,
         distilled_parameters,
         execution_options or NO_OPTIONS,
     )
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\elements.py", line 526, in _execute_on_connection
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\sql\elements.py", line 526, in _execute_on_connection
     return connection._execute_clauseelement(
            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
         self, distilled_params, execution_options
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1643, in _execute_clauseelement
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1643, in _execute_clauseelement
     ret = self._execute_context(
         dialect,
     ...<8 lines>...
         cache_hit=cache_hit,
     )
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1848, in _execute_context
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1848, in _execute_context
     return self._exec_single_context(
            ~~~~~~~~~~~~~~~~~~~~~~~~~^
         dialect, context, statement, parameters
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1988, in _exec_single_context
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1988, in _exec_single_context
     self._handle_dbapi_exception(
     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
         e, str_statement, effective_parameters, cursor, context
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 2365, in _handle_dbapi_exception
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 2365, in _handle_dbapi_exception
     raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\base.py", line 1969, in _exec_single_context
     self.dialect.do_execute(
     ~~~~~~~~~~~~~~~~~~~~~~~^
         cursor, str_statement, effective_parameters, context
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     )
     ^
-  File "C:\Users\dimit\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
+  File "~\AppData\Local\Programs\Python\Python314\Lib\site-packages\sqlalchemy\engine\default.py", line 952, in do_execute
     cursor.execute(statement, parameters)
     ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
 sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed: users.username
