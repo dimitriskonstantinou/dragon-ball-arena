@@ -30,6 +30,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 | 0.3 Reseed local DB | CON-6: Tien/Yamcha missing locally | `characters` table = 5 rows |
 | 0.4 Smoke test defaults to a temp DB | TST-1/DB-4: documented command writes to real DB | Running it leaves `game.db` unchanged (checked by mtime) |
 | 0.5 Extend `measure.py`: DB size, dependency count, engine timing | Audit metrics currently ad hoc | Metrics appear in every report |
+| ✅ 0.6 One test command with regression gates (`tests.py` + baseline) — *Step 30*, asked by the user | Tests only proved "nothing failed", not "nothing got worse" | Done: `python tests.py` (full) / `--quick`; fails on lost tests, new exploits, payload growth, coverage/lint drops, real-DB writes; the gates have their own unit tests; the CI job (Stage 4) will run it |
 
 **Risks:** merging 10 stacked branches; mitigated by merging in order (they're linear).
 
@@ -168,14 +169,15 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.11 / Step 30: dodge / counter / reflect protect against a whole skill, not one effect (ENG-3, decided
+**1.11 / Step 31: dodge / counter / reflect protect against a whole skill, not one effect (ENG-3, decided
 2026-11-20).** Today each reactive defense stops one *effect*: against Knee Attack (damage + stun) a dodge stops the
 damage but the stun still lands, and a reflect bounces only the first hit of a multi-hit skill. Plan: resolve
 reactive defenses once per skill application on each target (one dodge = the whole skill misses that target; one
 reflect = the whole skill turns back on the attacker; counter as today but per skill), keeping Step 29's rule (the
 team wiped out first loses) intact; update the two Step 29 tests that rely on per-effect reflect; tests for each
 defense x single/multi-effect x single/team skill. Then 1.12 (seeded RNG), which finishes Phase 1.
-*(Step 29 done: no draws -- the team wiped out first loses; ticks in cast order -- ENG-2.)*
+*(Step 30 done: `python tests.py` -- one command that runs everything and fails on any regression. Step 29 done:
+no draws -- the team wiped out first loses.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

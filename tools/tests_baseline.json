@@ -1,0 +1,45 @@
+{
+  "updated": "2026-11-21 18:37",
+  "git": "5c2dcbb",
+  "suites": {
+    "engine": {
+      "pass": 211,
+      "skipped": 0
+    },
+    "content": {
+      "pass": 53,
+      "skipped": 0
+    },
+    "config": {
+      "pass": 53,
+      "skipped": 0
+    },
+    "rate_limit": {
+      "pass": 10,
+      "skipped": 0
+    },
+    "migrations": {
+      "pass": 17,
+      "skipped": 0
+    },
+    "smoke": {
+      "pass": 156,
+      "skipped": 0
+    },
+    "browser": {
+      "pass": 39,
+      "skipped": 0
+    },
+    "runner_gates": {
+      "pass": 18,
+      "skipped": 0
+    }
+  },
+  "probe_confirmed": [
+    "reflect ignores attacker's invulnerability/defense"
+  ],
+  "payload_bytes": 8606,
+  "turn_ms": 0.327,
+  "coverage": 92.0,
+  "lint_issues": 3
+}

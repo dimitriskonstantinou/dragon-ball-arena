@@ -58,6 +58,18 @@ skill that kills the last enemy and then hurts its user wins before the recoil e
 
 ## Running the tests
 
+One command runs everything and tells you whether anything got worse:
+
+```
+python tests.py --quick    # ~12 s, while editing
+python tests.py            # ~70 s, everything (browser, exploit probe, coverage, lint, payload, speed)
+```
+
+It exits non-zero and lists each PROBLEM if a test fails, a test silently disappears, a known exploit comes
+back, the network payload grows, coverage or lint get worse, or the real `backend/game.db` is touched. The
+accepted numbers live in `tools/tests_baseline.json`; after an intended change, `python tests.py
+--update-baseline` records the new ones. The individual suites can also be run on their own:
+
 ```
 cd backend
 python test_game_engine.py        # engine unit + per-character kit tests (no DB, no server)

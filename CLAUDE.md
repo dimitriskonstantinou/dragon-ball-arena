@@ -43,13 +43,30 @@ backend/
   photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
   game.db                   Local SQLite (gitignored; holds real local accounts)
 frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
-tools/     measure.py (metrics snapshot) · probe_exploits.py (reproduces known bugs)
+tests.py   ONE command that checks everything + compares with tools/tests_baseline.json (run before/after every change)
+tools/     measure.py (detailed metrics snapshot) · probe_exploits.py (reproduces known bugs) ·
+           tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates)
 docs/      plans, audit, roadmap, step log, measurements/
 ```
 
 ## Commands
 
-From `backend/` unless noted (settings: see `config.py`; the defaults need nothing set):
+**Before and after every change, from the repo root:**
+
+```
+python tests.py --quick                # ~12 s: engine, content, rate limit, smoke (+ runner gates) -- the edit loop
+python tests.py                        # ~70 s: ALL suites incl. browser, probe, coverage, lint, payload, speed
+python tests.py --update-baseline      # only after an INTENDED change (new tests, fixed exploit, accepted payload
+                                       # growth): writes tools/tests_baseline.json -- commit it, explain it in the report
+```
+
+`tests.py` is green only if every suite passes **and** nothing regressed against the baseline: no suite runs fewer
+checks (a test silently lost), no newly SKIPPED test, no new CONFIRMED probe item, no payload growth (fixed sample),
+coverage not down by more than 1 point, no new pyflakes issue, and the real `backend/game.db` untouched (size, mtime,
+sha256). Engine speed only warns (noisy machine). Exit code 1 + a PROBLEM list otherwise. Every step's report
+includes its verdict; a step is not done unless the full run is ALL GREEN.
+
+Individual tools, from `backend/` unless noted (settings: see `config.py`; the defaults need nothing set):
 
 ```
 pip install -r requirements-dev.txt && python -m playwright install chromium   # runtime + test tools
@@ -67,14 +84,18 @@ python ../tools/measure.py --save ../docs/measurements/<date>-<step>-before.md  
 python ../tools/probe_exploits.py      # CONFIRMED = bug still present; uses a temp DB
 ```
 
-`measure.py` runs engine, content, smoke and browser suites (`--no-browser` skips the ~15 s browser run),
-coverage, pyflakes and asset checks; tools come from `requirements-dev.txt` (Pillow optional, for image checks).
+`measure.py` writes the detailed before/after snapshot saved per step (`docs/measurements/`): suites, coverage per
+file, pyflakes, code size, asset weight, content integrity, payload (`--no-browser` skips the browser run); tools come
+from `requirements-dev.txt` (Pillow optional, for image checks). `tests.py` is the pass/fail gate; `measure.py` is the
+detailed record.
 Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the requirements files.
 
 ## Workflow (how every change is made)
 
-1. **One step at a time, user-approved.** Pick the next roadmap task. Say what changes and why; measure before;
-   change; measure after; report (files, behavior, numbers, remaining problems, next task). Then **stop and wait**
+1. **One step at a time, user-approved.** Pick the next roadmap task. Say what changes and why; measure before
+   (`python tests.py` must be ALL GREEN first + `measure.py --save ...-before.md`); change (`tests.py --quick` while
+   editing); measure after (`python tests.py` + `measure.py --save ...-after.md`); report (files, behavior, numbers,
+   the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
 2. **One branch per step:** `feature/stepN-<name>` from the previous step's branch. Commit code + tests + docs +
@@ -88,7 +109,8 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
 
 ### Definition of done
 
-Implementation finished · existing behavior intact · regression/new tests added and all green · errors handled ·
+Implementation finished · existing behavior intact · regression/new tests added and **`python tests.py` ALL GREEN**
+(baseline updated only for intended changes, and explained) · errors handled ·
 security considered · before/after measured and explained · docs updated (audit/roadmap/step log/CLAUDE.md as
 relevant) · no new dependencies without reason · no unexplained TODOs · self-reviewed diff · anything not verified
 (e.g. not played in a browser) is **stated as unverified**.
@@ -188,7 +210,7 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
   classes unless `skill_ignores_invulnerability(skill)` (an effect in `IGNORES_INVULNERABILITY`, read from the skill's
   *current* effects -- priming changes them). The client gets `ignores_invulnerable: true` (only when true) from
   `strip_skill_internals` and greys out untargetable portraits; the server stays the authority.
-- Known engine gaps (audit): ENG-3 dodge/counter/reflect per effect (Step 30), ENG-7 unseeded RNG
+- Known engine gaps (audit): ENG-3 dodge/counter/reflect per effect (Step 31), ENG-7 unseeded RNG
   (rules decided, see below).
 
 ### Adding an effect type

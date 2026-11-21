@@ -190,9 +190,10 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 ### Stage 4 — CI (GitHub Actions)
 1. Push the repo to GitHub (private).
 2. Workflow on every push/PR: set up Python 3.12, start a Postgres service container, `pip install -r
-   requirements-dev.txt`, `python -m playwright install --with-deps chromium`, run `test_game_engine.py`,
-   `test_content.py`, `test_integration_smoke.py` (against that Postgres), `test_browser_e2e.py`, `pyflakes`,
-   `probe_exploits.py`. (Once the React frontend exists: `npm ci && npm run build` before the browser tests.)
+   requirements-dev.txt`, `python -m playwright install --with-deps chromium`, then **`python tests.py`** (Step 30:
+   every suite + probe + coverage + lint + payload, compared with `tools/tests_baseline.json`; exit 1 on any
+   regression), with the smoke test also against that Postgres. (Once the React frontend exists: `npm ci && npm run
+   build` before the browser tests.)
 3. Upload the `tools/measure.py` report as a build artifact, so every PR has before/after numbers.
 4. Protect `main`: merge only when CI is green.
 - **Check:** a PR with a deliberately broken test is blocked.
