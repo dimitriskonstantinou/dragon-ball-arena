@@ -606,6 +606,49 @@ else:
               match_row is not None and {match_row.player1_id, match_row.player2_id} == {winner_uid, loser_uid},
               match_row)
 
+    # --- Step 27 regression (ENG-2): when both teams fell at the same moment, the
+    # engine named p2 the winner (it looked at p1's team first). Now: a draw. ---
+    draw_http = [appmod.app.test_client(), appmod.app.test_client()]
+    for i, http in enumerate(draw_http, 1):
+        register(http, f'draw{i}_{suffix}', f'draw{i}_{suffix}@test.local')
+    d1, d2 = (appmod.socketio.test_client(appmod.app, flask_test_client=h) for h in draw_http)
+    d1.emit('find-match', team_ids)
+    d2.emit('find-match', team_ids)
+    draw_start = next(e['args'][0] for e in d1.get_received() if e['name'] == 'game-start')
+    draw_room = draw_start['roomId']
+    dg = appmod.GAMES[draw_room]
+    for side in ('p1', 'p2'):
+        team = dg['players'][side]['team']
+        for ch in team[1:]:
+            ch['health'] = 0
+        team[0]['health'] = 10
+        team[0]['status'] = [{'type': 'dot', 'value': 50, 'duration': 4, 'tag': 'harmful'}]
+    d2.get_received()
+    (d1 if dg['turn'] == draw_start['role'] else d2).emit('commit-turn', {'paymentList': []})
+    seen = [d1.get_received(), d2.get_received()]
+    check("a mutual KO ends the match as a draw for both players",
+          all(any(e['name'] == 'update-state' and e['args'][0].get('winner') == 'draw' for e in got) for got in seen),
+          [[e['args'][0].get('winner') for e in got if e['name'] == 'update-state'] for got in seen])
+    check("...with a draw message (not 'DRAW WINS')",
+          all(any(e['name'] == 'message' and (e['args'] if isinstance(e['args'], str) else e['args'][0]) == "GAME OVER! DRAW -- both teams fell at the same time."
+                  for e in got) for got in seen), [[e['args'] for e in got if e['name'] == 'message'] for got in seen])
+    check("...and the finished match is gone from memory", draw_room not in appmod.GAMES)
+    draw_uids = [dg['players'][s]['user_id'] for s in ('p1', 'p2')]
+    with appmod.app.app_context():
+        rows = [appmod.db.session.get(appmod.UserStats, uid) for uid in draw_uids]
+        check("both players' stats: 1 match, 1 draw, no win/loss, no streaks",
+              all((s.total_matches, s.total_draws, s.total_wins, s.total_losses, s.current_win_streak,
+                   s.current_loss_streak) == (1, 1, 0, 0, 0, 0) for s in rows),
+              [(s.total_matches, s.total_draws, s.total_wins, s.total_losses) for s in rows])
+        draw_row = appmod.Match.query.filter(appmod.Match.player1_id.in_(draw_uids)).one()
+        check("the match is saved as a draw with no winner",
+              draw_row.is_draw is True and draw_row.winner_id is None, (draw_row.is_draw, draw_row.winner_id))
+        won_row = appmod.Match.query.filter_by(winner_id=winner_uid).order_by(appmod.Match.id.desc()).first()
+        check("...while a normal match is saved as not a draw", won_row.is_draw is False)
+    me = draw_http[0].get('/api/me').get_json()
+    check("the player's own stats (badge) include the draw", me['stats']['total_draws'] == 1, me['stats'])
+    d1.disconnect(); d2.disconnect()
+
     # --- Step 13 regression: finished matches used to stay in memory forever
     # (GAMES, ENDED_ROOMS and the Socket.IO room; ~30 KB each). ---
     socket_rooms = appmod.socketio.server.manager.rooms.get('/', {})

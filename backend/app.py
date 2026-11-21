@@ -254,17 +254,20 @@ def persist_match_result(game, winner_role):
     if not p1_uid or not p2_uid:
         return  # shouldn't happen once matchmaking requires login; stay defensive
 
-    winner_uid = game['players'][winner_role].get('user_id') if winner_role else None
+    if winner_role not in ('p1', 'p2', game_engine.DRAW):
+        raise ValueError(f"unknown match result {winner_role!r}")
+    is_draw = winner_role == game_engine.DRAW
+    winner_uid = None if is_draw else game['players'][winner_role]['user_id']
     started_at_raw = game.get('started_at')
     started_at = datetime.fromisoformat(started_at_raw) if started_at_raw else datetime.now(timezone.utc)
 
-    db.session.add(Match(player1_id=p1_uid, player2_id=p2_uid, winner_id=winner_uid,
+    db.session.add(Match(player1_id=p1_uid, player2_id=p2_uid, winner_id=winner_uid, is_draw=is_draw,
                           started_at=started_at, ended_at=datetime.now(timezone.utc)))
 
-    for uid, won in ((p1_uid, winner_uid == p1_uid), (p2_uid, winner_uid == p2_uid)):
+    for uid in (p1_uid, p2_uid):
         stats = db.session.get(UserStats, uid)
         if stats:
-            stats.record_result(won)
+            stats.record_result('draw' if is_draw else 'win' if uid == winner_uid else 'loss')
 
     db.session.commit()
 
@@ -392,7 +395,12 @@ def end_game(room_id, winner, reason=None):
                       game['players']['p2'].get('user_id'), game.get('started_at'))
 
     broadcast_state(game)
-    message = f"GAME OVER! {winner.upper()} WINS!" if not reason else reason
+    if reason:
+        message = reason
+    elif winner == game_engine.DRAW:
+        message = "GAME OVER! DRAW -- both teams fell at the same time."
+    else:
+        message = f"GAME OVER! {winner.upper()} WINS!"
     socketio.emit('message', message, to=room_id)
     socketio.close_room(room_id)
 

@@ -154,7 +154,7 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `auth-required` | not logged in |
 | `match-status` | text while searching |
 | `game-start` | `{roomId, role}` -- also sent on reconnect (a reloaded page lands back in its match) |
-| `update-state` | per-player view (`view_for`) + `turn_seconds_left` (countdown; `null` once the match is over) + `players[r].connected` |
+| `update-state` | per-player view (`view_for`; `winner`: `p1`/`p2`/`draw` once over) + `turn_seconds_left` (countdown; `null` once the match is over) + `players[r].connected` |
 | `message` | game event text (counter fired, game over) |
 | `error-msg` | `GameError` text or generic server error |
 
@@ -177,7 +177,9 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - Cooldown: after use `currentCooldown = cooldown + 1`, decremented at the start of the owner's turn.
 - Statuses: `{type, value?, duration, classes?, tag: 'harmful'|'buff', invisible?}`; player-level ones on `player['status']`.
 - `start_turn` checks the winner right after ticking statuses; anything that can kill must be followed by `check_winner`.
-- Known engine gaps (audit): ENG-2 mutual KO, ENG-3 dodge per effect, ENG-4 invulnerable targetable, ENG-7 unseeded RNG
+- `game['winner']` is `'p1'`, `'p2'` or `game_engine.DRAW` (both teams down at the same moment, Step 27). A draw is
+  saved as `matches.is_draw` with `winner_id` NULL; `UserStats.record_result('win'|'loss'|'draw')`.
+- Known engine gaps (audit): ENG-3 dodge per effect, ENG-4 invulnerable targetable, ENG-7 unseeded RNG
   (rules decided, see below).
 
 ### Adding an effect type

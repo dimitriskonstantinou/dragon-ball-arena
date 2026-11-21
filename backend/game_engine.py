@@ -733,11 +733,18 @@ def resolve_target(game_state, player_id, actor_char, skill, target_pid, target_
     return expected_pid, target_index
 
 
+DRAW = 'draw'   # game_state['winner'] is 'p1', 'p2' or DRAW once the match is over
+
+
 def check_winner(game_state):
-    """Sets and returns game_state['winner'] once a whole team is down."""
+    """Sets and returns game_state['winner'] once a whole team is down. Both
+    teams down at the same moment (e.g. damage-over-time ticking on both, or a
+    reflected hit) is a draw (ENG-2, decided 2026-11-20)."""
     p1_alive = any(c['health'] > 0 for c in game_state['players']['p1']['team'])
     p2_alive = any(c['health'] > 0 for c in game_state['players']['p2']['team'])
-    if not p1_alive:
+    if not p1_alive and not p2_alive:
+        game_state['winner'] = DRAW
+    elif not p1_alive:
         game_state['winner'] = 'p2'
     elif not p2_alive:
         game_state['winner'] = 'p1'

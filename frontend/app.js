@@ -91,7 +91,7 @@ function onAuthenticated(user) {
 function renderUserBadge(user) {
     const s = user.stats || {};
     document.getElementById('user-badge-text').innerText =
-        `${user.username}  |  W:${s.total_wins || 0} L:${s.total_losses || 0}  |  Streak:${s.current_win_streak || 0}`;
+        `${user.username}  |  W:${s.total_wins || 0} L:${s.total_losses || 0} D:${s.total_draws || 0}  |  Streak:${s.current_win_streak || 0}`;
 }
 
 async function refreshUserBadge() {
@@ -165,7 +165,8 @@ socket.on('update-state', game => {
     closeModal();
 
     if(game.winner) {
-        document.getElementById('status').innerText = game.winner === myRole ? "YOU WIN!" : "YOU LOSE!";
+        document.getElementById('status').innerText =
+            game.winner === 'draw' ? "DRAW!" : game.winner === myRole ? "YOU WIN!" : "YOU LOSE!";
         document.getElementById('end-turn').style.display = 'none';
         document.getElementById('surrender-btn').style.display = 'none';
         showTurnTimer(null);

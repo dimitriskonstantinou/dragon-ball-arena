@@ -95,7 +95,7 @@ If the wiped team's owner has the turn, they can simply never commit; with no tu
 leave, and leaving counts as a loss.
 **Fix:** call `check_winner` after `tick_statuses` in `start_turn`; app ends the game when `start_turn` produces a winner. Safe now: yes. Depends on: —.
 
-**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw*
+**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw* — ✅ FIXED in Step 27 (`check_winner` returns `game_engine.DRAW`; "DRAW!" for both players; saved as `matches.is_draw` with no winner, counted in `user_stats.total_draws`, ends both streaks; third real migration). Tested via start-of-turn ticks, a reflected hit, a timeout, and Tien's real Tri-Beam.
 *Where:* `check_winner` checks p1's team first. Tien (10 HP) killing Raditz with Tri-Beam (15 self-damage) → winner `p2`
 although p1 acted. Also reachable with Kaioken self-damage and reflect.
 **Fix:** needs a rule decision: draw, or "the acting player wins". Then encode it in `check_winner`. Safe now: after the decision.

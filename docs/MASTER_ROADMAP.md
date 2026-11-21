@@ -42,7 +42,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 | Task | Needs a user decision? | Done when |
 |---|---|---|
 | ✅ 1.8 ENG-1: `check_winner` after turn-start ticks — *Step 11* | No | Done: probe #22 fixed; engine + smoke regression tests |
-| 1.9 ENG-2: mutual KO = **draw** (decided) | Needs a draws column → do after migrations (DB-1) or add with care | Draw shown to both, stats count it, test |
+| ✅ 1.9 ENG-2: mutual KO = **draw** (decided) — *Step 27* | Needed a draws column (migration) | Done: draw shown to both, saved with no winner, `total_draws` counted, streaks end; 4 paths tested |
 | 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) | — | Rule + text + UI cue + tests consistent |
 | 1.11 ENG-3: reactive defenses apply **per skill** (decided) | — | Knee Attack fully dodged by one dodge |
 | 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
@@ -165,14 +165,14 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.9 / Step 27: a mutual KO is a draw (ENG-2, rule decided 2026-11-20).** When the last characters of both teams
-fall in the same turn (e.g. a reflected or damage-over-time hit), the engine currently names whoever it checks first
-as the winner. Plan: `check_winner` returns a draw, both players see "Draw", the result is saved with no winner and
-counted in a new `draws` stat (a migration -- the reason this waited for Step 23), streaks handled, tests for each
-path that can end a turn (commit, start-of-turn ticks, timeout). Then the other decided rules (1.10 invulnerable =
-untargetable, 1.11 reactive defenses per skill, 1.12 seeded RNG), which finish Phase 1 -- DEPLOY_PLAN Stage 0 wants
-Phases 1–3 done before anyone else plays.
-*(Step 26 done: relative image URLs, `/healthz`, logging config -- **Phase 3 complete**.)*
+**1.10 / Step 28: invulnerable = untargetable (ENG-4 + CON-2, rule decided 2026-11-20).** Afterimage/Block say
+"Untargetable", but today an invulnerable enemy can still be targeted: the attacker's Ki and cooldown are spent for
+nothing. Plan: `resolve_target` (server) refuses invulnerable targets with a clear message, except skills that
+explicitly ignore invulnerability (Spirit Ball, affliction); team/AoE skills skip invulnerable characters; the client
+greys out those portraits (UI cue); skill texts made consistent; tests for each case. Then 1.11 (reactive defenses
+per skill) and 1.12 (seeded RNG), which finish Phase 1 -- DEPLOY_PLAN Stage 0 wants Phases 1–3 done before anyone
+else plays.
+*(Step 27 done: a mutual KO is a draw -- ENG-2.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

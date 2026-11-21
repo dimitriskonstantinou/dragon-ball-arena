@@ -52,6 +52,8 @@ con.execute("insert into users (id, username, email, password_hash, created_at) 
             "values (1, 'old_player', 'old@x.io', 'hash-kept', '2026-08-16 20:00:00')")
 con.execute("insert into users (id, username, email, password_hash, created_at) "
             "values (2, 'Old_Vegeta', 'veg@x.io', 'hash-2', '2026-08-17 20:00:00')")
+con.execute("insert into matches (id, player1_id, player2_id, winner_id, started_at, ended_at) "
+            "values (1, 1, 2, 1, '2026-08-18 20:00:00', '2026-08-18 20:09:00')")
 con.execute("insert into user_stats (user_id, total_matches, total_wins, total_losses, current_win_streak, "
             "longest_win_streak, current_loss_streak) values (1, 7, 4, 3, 0, 2, 1)")
 con.commit(); con.close()
@@ -110,6 +112,8 @@ con = sqlite3.connect(DB)
 print("session_version", con.execute("select session_version from users where id = 1").fetchone() == (0,))
 print("keys", con.execute("select username, username_key from users order by id").fetchall()
       == [("old_player", "old_player"), ("Old_Vegeta", "old_vegeta")])
+print("draws", con.execute("select total_draws from user_stats where user_id = 1").fetchone() == (0,),
+      con.execute("select winner_id, is_draw from matches where id = 1").fetchone() == (1, 0))
 con.close()
 print("diff", schema_diff(appmod) == [])
 ''')
@@ -119,6 +123,7 @@ print("diff", schema_diff(appmod) == [])
     check("...and later migrations apply to it (existing accounts get session_version 0)",
           'session_version True' in out, out)
     check("...and every existing account gets its lower-cased username key", 'keys True' in out, out)
+    check("...and old stats/matches get 0 draws / not a draw (winners kept)", 'draws True True' in out, out)
     check("...and ends up with exactly the models' schema", 'diff True' in out, out)
 
 
