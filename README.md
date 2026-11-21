@@ -103,6 +103,8 @@ frontend/
   A successful register/login sets a Flask session cookie; Socket.IO connections
   read that same cookie to resolve which account owns the connection. Logins expire
   after 30 days without a visit, and logging out signs the account out on every device.
+- Usernames are 3-20 letters, digits, `_` or `-`, unique regardless of capitalization
+  ("Goku" and "goku" are the same name; you can log in with either).
 - Every account currently has **every character in `backend/content/`** (including ones added
   after it registered) -- a temporary rule until mission-based unlocks exist.
   The `Mission`/`UserMissionProgress` tables exist for the planned mission-based

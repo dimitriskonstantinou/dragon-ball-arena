@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import copy
 import logging
 import os
+import re
 import threading
 import time
 import uuid
@@ -19,6 +20,7 @@ import game_engine
 import rate_limit
 from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
+from sqlalchemy.exc import IntegrityError
 
 log = logging.getLogger(__name__)
 if __name__ == '__main__':
@@ -412,6 +414,13 @@ def too_many(what, wait):
     return response
 
 
+# New usernames: plain ASCII letters, digits, _ and - (so lower-casing is
+# unambiguous and no look-alike Unicode names). Emails: a basic shape check only;
+# real verification needs a confirmation mail (later).
+USERNAME_RE = re.compile(r'[A-Za-z0-9_-]{3,20}')
+EMAIL_RE = re.compile(r'[^@\s]+@[^@\s]+\.[^@\s.]+')
+
+
 @app.route('/api/register', methods=['POST'])
 def register():
     wait = register_limiter.retry_after(request.remote_addr)
@@ -426,29 +435,45 @@ def register():
         return jsonify({'error': 'username, email and password are required'}), 400
     if not (3 <= len(username) <= 20):
         return jsonify({'error': 'username must be 3-20 characters'}), 400
+    if not USERNAME_RE.fullmatch(username):
+        return jsonify({'error': 'username may only contain letters, digits, _ and -'}), 400
+    if len(email) > 255 or not EMAIL_RE.fullmatch(email):
+        return jsonify({'error': 'please enter a valid email address'}), 400
     if len(password) < 6:
         return jsonify({'error': 'password must be at least 6 characters'}), 400
-    if User.query.filter_by(username=username).first():
-        return jsonify({'error': 'username already taken'}), 409
-    if User.query.filter_by(email=email).first():
-        return jsonify({'error': 'email already registered'}), 409
+    taken = account_conflict(username, email)
+    if taken:
+        return jsonify({'error': taken}), 409
 
-    user = User(username=username, email=email, password_hash=generate_password_hash(password))
-    db.session.add(user)
-    db.session.flush()  # assigns user.id, needed by the rows below
-
-    db.session.add(UserStats(user_id=user.id))
-
-    # Unlock rows are recorded for the future mission system; today access is
-    # decided by unlocked_character_ids() (every active character).
-    for cid in CATALOG:
-        db.session.add(UserCharacter(user_id=user.id, character_id=cid))
-
-    db.session.commit()
+    user = User(username=username, username_key=User.key_for(username), email=email,
+                password_hash=generate_password_hash(password))
+    try:
+        db.session.add(user)
+        db.session.flush()  # assigns user.id, needed by the rows below
+        db.session.add(UserStats(user_id=user.id))
+        # Unlock rows are recorded for the future mission system; today access is
+        # decided by unlocked_character_ids() (every active character).
+        for cid in CATALOG:
+            db.session.add(UserCharacter(user_id=user.id, character_id=cid))
+        db.session.commit()
+    except IntegrityError:
+        # Someone registered the same name/email between our check and this
+        # write (two requests at once): the unique index decided. Say so cleanly.
+        db.session.rollback()
+        return jsonify({'error': account_conflict(username, email) or 'username already taken'}), 409
     register_limiter.hit(request.remote_addr)
 
     start_session(user)
     return jsonify(user.to_dict()), 201
+
+def account_conflict(username, email):
+    """The 'already taken' message for a new account, or None."""
+    if User.query.filter_by(username_key=User.key_for(username)).first():
+        return 'username already taken'
+    if User.query.filter_by(email=email).first():
+        return 'email already registered'
+    return None
+
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -459,7 +484,7 @@ def login():
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
 
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter_by(username_key=User.key_for(username)).first()
     if not user or not check_password_hash(user.password_hash, password):
         login_limiter.hit(request.remote_addr)
         return jsonify({'error': 'invalid username or password'}), 401

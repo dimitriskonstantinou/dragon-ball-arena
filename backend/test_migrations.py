@@ -50,6 +50,8 @@ con = sqlite3.connect(DB)
 con.execute("drop table alembic_version")
 con.execute("insert into users (id, username, email, password_hash, created_at) "
             "values (1, 'old_player', 'old@x.io', 'hash-kept', '2026-08-16 20:00:00')")
+con.execute("insert into users (id, username, email, password_hash, created_at) "
+            "values (2, 'Old_Vegeta', 'veg@x.io', 'hash-2', '2026-08-17 20:00:00')")
 con.execute("insert into user_stats (user_id, total_matches, total_wins, total_losses, current_win_streak, "
             "longest_win_streak, current_loss_streak) values (1, 7, 4, 3, 0, 2, 1)")
 con.commit(); con.close()
@@ -106,6 +108,8 @@ print("adopted", version(DB) == [head])
 print("user", user == ("old_player", "old@x.io", "hash-kept"), "stats", stats == (7, 4, 3))
 con = sqlite3.connect(DB)
 print("session_version", con.execute("select session_version from users where id = 1").fetchone() == (0,))
+print("keys", con.execute("select username, username_key from users order by id").fetchall()
+      == [("old_player", "old_player"), ("Old_Vegeta", "old_vegeta")])
 con.close()
 print("diff", schema_diff(appmod) == [])
 ''')
@@ -114,6 +118,7 @@ print("diff", schema_diff(appmod) == [])
     check("...keeping its accounts and stats untouched", 'user True stats True' in out, out)
     check("...and later migrations apply to it (existing accounts get session_version 0)",
           'session_version True' in out, out)
+    check("...and every existing account gets its lower-cased username key", 'keys True' in out, out)
     check("...and ends up with exactly the models' schema", 'diff True' in out, out)
 
 
@@ -137,6 +142,27 @@ import app
 ''')
     check("a database whose columns don't exactly match the baseline is refused (no crash half-way through)",
           rc != 0 and 'users columns differ' in err and "extra ['nickname']" in err, (rc, err[-300:]))
+
+
+def test_look_alike_usernames_stop_the_upgrade():
+    rc, out, err = run(LEGACY_DB + '''
+con = sqlite3.connect(DB)
+con.execute("insert into users (id, username, email, password_hash, created_at) "
+            "values (3, 'OLD_PLAYER', 'imp@x.io', 'hash-3', '2026-08-18 20:00:00')")
+con.commit(); con.close()
+try:
+    import app
+except BaseException as e:
+    print("refused", type(e).__name__)
+con = sqlite3.connect(DB)
+print("rows", con.execute("select count(*) from users").fetchone()[0])
+print("no_key_column", "username_key" not in [r[1] for r in con.execute("pragma table_info(users)")])
+con.close()
+''')
+    check("names that differ only in capitalization stop the upgrade with a clear list (no guessing who to rename)",
+          'refused' in out and "differ only in capitalization: 'OLD_PLAYER', 'old_player'" in err, (out, err[-400:]))
+    check("...without changing the accounts or adding the column", 'rows 3' in out and 'no_key_column True' in out,
+          out)
 
 
 def test_downgrade_and_upgrade_round_trip():

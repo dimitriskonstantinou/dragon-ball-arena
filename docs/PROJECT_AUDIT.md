@@ -188,7 +188,7 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 Signed client-side cookie with only `user_id`; logout just clears that browser. A stolen cookie works forever.
 **Fix:** session version/nonce stored per user (bump on logout/password change) + lifetime.
 
-**SEC-5 — MEDIUM — Username/email rules (by reading)**
+**SEC-5 — MEDIUM — Username/email rules (by reading)** — ✅ FIXED in Step 25 (`users.username_key` = lower-cased name with a unique index, the second real migration, which refuses to run if look-alike names already exist; login by any capitalization; new names limited to letters/digits/`_`/`-`; basic email shape check; a simultaneous duplicate registration gets a clean 409). Not yet: email verification (needs a mail service), the 2 existing local accounts with non-email "emails" keep working (login is by username).
 Usernames are case-sensitive ("Goku" and "goku" can coexist, which allows impersonation); email format isn't checked; a concurrent duplicate register would hit the unique index and return a 500.
 **Fix:** case-insensitive uniqueness, simple email check, catch `IntegrityError`.
 

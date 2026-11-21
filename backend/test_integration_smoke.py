@@ -157,6 +157,60 @@ try:
 finally:
     appmod.login_limiter, appmod.register_limiter = real_login_limiter, real_register_limiter
 
+# --- Step 25 regression: "Goku" and "goku" could both register (impersonation), any
+# string was accepted as an email, and two simultaneous registrations of one name
+# crashed with a 500 (unique-index error) instead of saying "taken". ---
+web = appmod.app.test_client()
+look_alike = register(web, f'P1_{suffix}', f'look_{suffix}@test.local')
+check("a name that differs only in capitalization from an existing one is refused",
+      look_alike.status_code == 409 and look_alike.get_json() == {'error': 'username already taken'},
+      (look_alike.status_code, look_alike.get_json()))
+any_case = appmod.app.test_client().post('/api/login', json={'username': f'P1_{suffix.upper()}', 'password': 'testpass123'})
+check("login works with any capitalization and returns the name as registered",
+      any_case.status_code == 200 and any_case.get_json()['username'] == f'p1_{suffix}', any_case.get_json())
+for bad_name in ('goku x', 'gōku_' + suffix[:4], 'goku<b>', 'a.b.c'):
+    resp = register(web, bad_name, f'n{uuid.uuid4().hex[:6]}@test.local')
+    check(f"username {bad_name!a} (not letters/digits/_/-) is refused",
+          resp.status_code == 400 and 'letters, digits' in resp.get_json()['error'], resp.get_json())
+for bad_email in ('not-an-email', 'a@b', '@x.io', 'a b@x.io', 'a@x.', 'x' * 251 + '@x.io'):
+    resp = register(web, f'm{uuid.uuid4().hex[:8]}', bad_email)
+    check(f"email {bad_email[:20]!r} is refused", resp.status_code == 400
+          and resp.get_json() == {'error': 'please enter a valid email address'}, resp.get_json())
+ok_email = register(appmod.app.test_client(), f'Mail-{suffix}', 'First.Last+db@Mail.Example.org')
+check("a normal email (dots, plus, capitals) and a name with - and capitals are accepted",
+      ok_email.status_code == 201 and ok_email.get_json()['email'] == 'first.last+db@mail.example.org',
+      ok_email.get_json())
+
+import threading as _threading
+real_hash = appmod.generate_password_hash
+appmod.generate_password_hash = lambda *a, **k: (_time.sleep(0.1), real_hash(*a, **k))[1]
+race_results = []
+try:
+    def race(name, email):
+        resp = register(appmod.app.test_client(), name, email)
+        race_results.append((resp.status_code, resp.get_json()))
+
+    def simultaneously(*args_pairs):
+        threads = [_threading.Thread(target=race, args=args) for args in args_pairs]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    simultaneously((f'Race_{suffix}', f'r1_{suffix}@test.local'), (f'race_{suffix}', f'r2_{suffix}@test.local'))
+    simultaneously((f'e1_{suffix}', f'same_{suffix}@test.local'), (f'e2_{suffix}', f'same_{suffix}@test.local'))
+finally:
+    appmod.generate_password_hash = real_hash
+check("two simultaneous registrations of one name (different capitalization): one succeeds, the other gets "
+      "'username already taken' (not a 500)",
+      sorted(code for code, _ in race_results[:2]) == [201, 409]
+      and {'error': 'username already taken'} in [body for _, body in race_results[:2]], race_results[:2])
+check("...and the same for two simultaneous registrations of one email",
+      sorted(code for code, _ in race_results[2:]) == [201, 409]
+      and {'error': 'email already registered'} in [body for _, body in race_results[2:]], race_results[2:])
+with appmod.app.app_context():
+    stored = appmod.User.query.filter(appmod.User.username_key == f'race_{suffix}').count()
+check("...leaving exactly one account with that name", stored == 1, stored)
+
 # --- Step 24 regression: a login cookie never expired and couldn't be revoked -- a
 # copied ("stolen") cookie kept working after its owner logged out. ---
 owner, thief = appmod.app.test_client(), appmod.app.test_client()

@@ -98,7 +98,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | ✅ 3.2 Allowed origins from env; cookie `SameSite=Lax`, `Secure`, `HttpOnly` — *Step 20* | SEC-2 | Done: probe item fixed; foreign/look-alike origins refused (smoke); production cookie flags verified in a real start |
 | ✅ 3.3 Login/register rate limits — *Step 22* | SEC-3 | Done: 6th failed login / 6th account per IP → 429; proxy-aware via `TRUSTED_PROXIES` |
 | ✅ 3.4 Session versioning + lifetime — *Step 24* | SEC-4 | Done: a copied cookie dies at logout; open sockets closed; 30-day expiry; first real migration |
-| 3.5 Case-insensitive usernames, email check, IntegrityError handled | SEC-5 | Tests for each |
+| ✅ 3.5 Case-insensitive usernames, email check, IntegrityError handled — *Step 25* | SEC-5 | Done: look-alike names 409, bad emails 400, simultaneous registration 500 → 409; second real migration |
 | 3.6 Relative image URLs, `/healthz`, logging config, ~~self-hosted socket.io~~ (✅ *Step 21*) | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
 
 ## Phase 4 — Content system & cleanup
@@ -165,12 +165,13 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.5 / Step 25: usernames that can't impersonate each other + basic account checks (SEC-5).** "Goku" and "goku"
-can both be registered today (impersonation), emails aren't checked at all, and two simultaneous registrations of the
-same name crash with a 500 (unique-index error) instead of a clear message. Plan: case-insensitive uniqueness (login
-by any capitalization), a basic email format check, and a clean "already taken" for the race -- likely the second
-real migration (a unique index on the lower-cased name), with a check for existing look-alike duplicates first.
-Then 3.6 (relative image URLs, `/healthz`, logging config), which finishes Phase 3 and unblocks the DEV site.
+**3.6 / Step 26: ready to run behind a proxy (finishes Phase 3).** Character/skill image URLs are absolute
+(built from the request's host), which breaks behind a proxy or a different domain; there is no health-check endpoint
+for the host to probe; and logging is only configured when running `python app.py` (under gunicorn nothing would be
+logged in a known format). Plan: relative image URLs (smaller payload too), `GET /healthz` (DB reachable + content
+loaded, no secrets), logging configured in one place with the level from `config.py`. That finishes Phase 3 and
+unblocks the DEV site (DEPLOY_PLAN Stage 1).
+*(Step 25 done: case-insensitive usernames, email check, clean "taken" on races -- SEC-5.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

@@ -22,6 +22,9 @@ class User(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(20), unique=True, nullable=False, index=True)
+    # The name lower-cased: unique, so "Goku" and "goku" can't both exist (SEC-5),
+    # and login accepts any capitalization. Always set via User.key_for().
+    username_key = db.Column(db.String(20), unique=True, nullable=False, index=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
@@ -31,6 +34,10 @@ class User(db.Model):
 
     stats = db.relationship('UserStats', backref='user', uselist=False, cascade='all, delete-orphan')
     unlocked_characters = db.relationship('UserCharacter', backref='user', cascade='all, delete-orphan')
+
+    @staticmethod
+    def key_for(username):
+        return username.lower()
 
     def to_dict(self):
         return {

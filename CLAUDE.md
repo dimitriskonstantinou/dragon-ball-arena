@@ -261,6 +261,11 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login` (both: 4
   disconnects the account's open sockets (`USER_SIDS`). Logins expire after `SESSION_DAYS` (default 30) without a
   visit -- Flask verifies the signed timestamp; each request renews it. Anything that changes credentials later (a
   password change) must bump `session_version` too.
+- **Accounts (Step 25):** usernames are unique **case-insensitively** via `users.username_key` (always
+  `User.key_for(name)`); look a user up by `username_key`, never by `username` (that's the display spelling). New
+  names: `[A-Za-z0-9_-]{3,20}`; emails: lower-cased + a basic shape check (no verification yet). The pre-check gives
+  the nice message, but the unique indexes decide: `register` catches `IntegrityError` around the whole write and
+  answers 409.
 - New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
 
 ### Performance requirements
