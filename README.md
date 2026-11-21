@@ -215,6 +215,8 @@ Supported effect types:
 | Cleanse | `cleanse` (`scope`: `"harmful"`, `"buff"`, or a specific status type) |
 | Chakra | `remove_chakra`, `steal_chakra`, `chakra_regen`, `chakra_restrict`, `chakra_drain_over_time` |
 
+Invulnerable means **untargetable**: a single-target enemy skill can't pick an invulnerable character (class-scoped: `physical_invulnerable` only stops physical skills), unless the skill contains `affliction_damage`, `damage_ignore_invuln` or `delayed_damage`. Team skills simply skip them, and random hits never pick them.
+
 After adding a skill, run `python test_content.py` and `python test_game_engine.py`.
 The content tests reject typo'd fields and effect types, broken references and
 missing images, and cast every skill once in a sandbox match.

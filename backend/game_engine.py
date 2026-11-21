@@ -161,6 +161,23 @@ def is_invulnerable(target, skill_classes):
     return False
 
 
+# Effects that go through invulnerability by design. A skill containing one may
+# target an invulnerable enemy; every other skill can't (ENG-4, decided 2026-11-20:
+# invulnerable = untargetable). Read from the skill's CURRENT effects: priming
+# (prime_skill) swaps effects mid-match, e.g. Tri-Beam -> affliction after Best Friend.
+IGNORES_INVULNERABILITY = ('affliction_damage', 'damage_ignore_invuln', 'delayed_damage')
+
+
+def skill_ignores_invulnerability(skill):
+    return any(e.get('type') in IGNORES_INVULNERABILITY for e in skill.get('effects', []))
+
+
+def is_targetable_by(target, skill):
+    """Can `skill` pick `target` (an enemy)? Invulnerable to the skill's
+    classes = untargetable, unless the skill goes through invulnerability."""
+    return skill_ignores_invulnerability(skill) or not is_invulnerable(target, skill.get('classes', []))
+
+
 def is_harmful_blocked(target, skill_classes):
     """Shared guard for non-damage harmful effects (stun/silence/dot/etc.):
     blocked by invulnerability, or consumes a dodge if present."""
@@ -287,7 +304,8 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         # Ignores the resolved target entirely (like aoe_damage) -- the UI
         # still requires clicking *a* target to fire the skill, but the
         # actual targets are randomly sampled from the opponent's living team.
-        alive_enemies = [c for c in opponent['team'] if c['health'] > 0]
+        # Untargetable (invulnerable) enemies are never picked (ENG-4).
+        alive_enemies = [c for c in opponent['team'] if c['health'] > 0 and not is_invulnerable(c, skill_classes)]
         chosen = random.sample(alive_enemies, min(effect.get('count', 1), len(alive_enemies)))
         for t in chosen:
             real_target = resolve_protection(t, player, opponent) or t
@@ -598,6 +616,12 @@ def strip_skill_internals(character):
     and never reads 'effects' or prime_skill's 'base_*' backups. Used for
     both match views and the lobby roster, so the rule lives in one place."""
     for skill in character.get('skills', []):
+        if 'effects' in skill:
+            # Display flag so the client can grey out untargetable enemies without seeing effects.
+            if skill_ignores_invulnerability(skill):
+                skill['ignores_invulnerable'] = True
+            else:
+                skill.pop('ignores_invulnerable', None)
         for key in [k for k in skill if k == 'effects' or k.startswith('base_')]:
             del skill[key]
     return character
@@ -730,6 +754,8 @@ def resolve_target(game_state, player_id, actor_char, skill, target_pid, target_
         raise GameError("Invalid target!")
     if team[target_index]['health'] <= 0:
         raise GameError(f"{team[target_index]['name']} has already been defeated!")
+    if target_type == 'enemy' and not is_targetable_by(team[target_index], skill):
+        raise GameError(f"{team[target_index]['name']} is invulnerable and can't be targeted by {skill['name']}!")
     return expected_pid, target_index
 
 

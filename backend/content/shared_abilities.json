@@ -4,7 +4,7 @@
     "afterimage_technique": {
       "id": "afterimage_technique",
       "name": "Afterimage Technique",
-      "description": "Untargetable/immune to all damage & harmful effects for 1 turn | 1 Rand",
+      "description": "Untargetable & immune to harm for 1 turn, except skills that ignore invulnerability | 1 Rand",
       "cost": {
         "random": 1
       },

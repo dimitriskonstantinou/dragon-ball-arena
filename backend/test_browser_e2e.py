@@ -147,7 +147,11 @@ def queue_skills(page):
         # Click the portrait like a player would: the middle of your own card is
         # covered by skill buttons, which would select another skill instead.
         if 'ENEMY' in instruction:
-            target = page.locator('#enemy-team .char-card:not(.dead) .char-img').first
+            # Like a player: never click a greyed-out (invulnerable = untargetable) enemy.
+            targets = page.locator('#enemy-team .char-card:not(.dead):not(.untargetable) .char-img')
+            if targets.count() == 0:
+                continue
+            target = targets.first
         else:  # ally / self skills: this same character
             target = page.locator('#my-team .char-card').nth(i).locator('.char-img')
         log_lines = page.locator('#log div').count()
@@ -382,8 +386,58 @@ def test_surrender_with_confirmation(browser, url):
     ctx2.close()
 
 
+def test_invulnerable_enemy_is_greyed_out_and_cant_be_picked(browser, url):
+    """ENG-4 (Step 28): after Afterimage, that character is untargetable -- greyed out
+    while choosing a single-target attack; clicking it explains why and queues nothing."""
+    errors = []
+    ctx1, p1, _ = new_player(browser, url, errors, 'mu')
+    ctx2, p2, _ = new_player(browser, url, errors, 'nu')
+    find_match(p1, [0, 1, 2])
+    find_match(p2, [2, 3, 4])
+    for p in (p1, p2):
+        p.wait_for_selector('#game-screen', state='visible')
+        p.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+    first, second = (p1, p2) if is_my_turn(p1) else (p2, p1)
+
+    first.locator('#my-team .char-card').nth(0).locator('.skill-btn:not([disabled])', has_text='Untargetable').click()
+    first.locator('#my-team .char-card').nth(0).locator('.char-img').click(position={'x': 12, 'y': 100})
+    first.wait_for_selector('#my-team .char-card >> nth=0 >> .cancel-btn')
+    end_turn(first)
+    second.wait_for_selector('#end-turn', state='visible')
+    second.wait_for_function("document.querySelectorAll('#enemy-team .char-card')[0].querySelector('.status-badge, [class*=status]')")
+
+    picked = None
+    buttons = second.locator('#my-team .skill-btn:not([disabled])', has_text='Dmg')
+    for j in range(buttons.count()):
+        buttons.nth(j).click()
+        guarded_class = second.locator('#enemy-team .char-card').nth(0).get_attribute('class') or ''
+        if second.locator('#instruction').inner_text() == 'SELECT AN ENEMY' and 'untargetable' in guarded_class:
+            picked = buttons.nth(j).inner_text().splitlines()[0]
+            break
+    check("choosing a single-target attack greys out the invulnerable enemy", picked is not None, picked)
+    guarded = second.locator('#enemy-team .char-card').nth(0)
+    second.wait_for_timeout(400)   # .char-card fades with a 0.2 s transition
+    opacity =float(guarded.evaluate("el => getComputedStyle(el).opacity")) if picked else 1.0
+    check("...visibly (faded, no targeting pulse)", opacity < 0.6, opacity)
+    log_lines = second.locator('#log div').count()
+    guarded.locator('.char-img').click(position={'x': 12, 'y': 100})
+    second.wait_for_timeout(400)
+    check("clicking it explains why instead of sending the attack",
+          'IS INVULNERABLE' in second.locator('#instruction').inner_text()
+          and second.locator('#my-team .cancel-btn').count() == 0 and second.locator('#log div').count() == log_lines,
+          second.locator('#instruction').inner_text())
+    other = second.locator('#enemy-team .char-card:not(.dead):not(.untargetable) .char-img').first
+    other.click(position={'x': 12, 'y': 100})
+    second.wait_for_selector('#my-team .cancel-btn')
+    check("...and the attack can still be aimed at a targetable enemy", second.locator('#my-team .cancel-btn').count() == 1)
+    unexpected = real_errors(errors)
+    check("no JavaScript errors or unexpected dialogs", unexpected == [], unexpected)
+    ctx1.close()
+    ctx2.close()
+
+
 TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_reload_mid_match_returns_to_the_match,
-         test_surrender_with_confirmation]
+         test_surrender_with_confirmation, test_invulnerable_enemy_is_greyed_out_and_cant_be_picked]
 # Run on a second server with short limits (TURN_SECONDS=2, RECONNECT_SECONDS=3) so they finish quickly.
 FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits, test_disconnect_forfeits_to_opponent]
 

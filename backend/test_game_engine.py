@@ -119,7 +119,8 @@ def test_general_invulnerability_blocks_damage():
     game = make_game()
     b = game['players']['p2']['team'][0]
     ge.add_status(b, {'type': 'invulnerable', 'duration': 10, 'tag': 'buff'})
-    skill = {"id": "s", "name": "s", "cost": {}, "target_type": "enemy",
+    # A team skill (single-target skills can't pick an invulnerable enemy at all since Step 28).
+    skill = {"id": "s", "name": "s", "cost": {}, "target_type": "enemy_team",
              "effects": [{"type": "damage", "value": 20}], "cooldown": 0}
     run_skill_via_queue(game, skill)
     check("invulnerable target takes no damage", b['health'] == 100, b['health'])
@@ -129,12 +130,13 @@ def test_class_specific_invulnerability():
     game = make_game()
     b = game['players']['p2']['team'][0]
     ge.add_status(b, {'type': 'physical_invulnerable', 'duration': 10, 'tag': 'buff'})
-    physical_skill = {"id": "s1", "name": "s1", "cost": {}, "target_type": "enemy", "classes": ["physical"],
+    # Team skills: a single-target physical skill can't pick this enemy at all (Step 28).
+    physical_skill = {"id": "s1", "name": "s1", "cost": {}, "target_type": "enemy_team", "classes": ["physical"],
                        "effects": [{"type": "damage", "value": 20}], "cooldown": 0}
     run_skill_via_queue(game, physical_skill)
     check("physical_invulnerable blocks a physical-classed skill", b['health'] == 100, b['health'])
 
-    chakra_skill = {"id": "s2", "name": "s2", "cost": {}, "target_type": "enemy", "classes": ["chakra"],
+    chakra_skill = {"id": "s2", "name": "s2", "cost": {}, "target_type": "enemy_team", "classes": ["chakra"],
                      "effects": [{"type": "damage", "value": 20}], "cooldown": 0}
     game['turn'] = 'p1'
     run_skill_via_queue(game, chakra_skill)
@@ -575,8 +577,13 @@ def test_goku_saiyan_saga_kit():
     game2['turn'] = 'p2'
     b2['skills'] = [{'id': 'poke', 'name': 'poke', 'cost': {}, 'target_type': 'enemy',
                       'effects': [{'type': 'damage', 'value': 20}], 'cooldown': 0, 'currentCooldown': 0}]
-    play(game2, 'p2', 'B', 'poke', 'p1', 0)
-    check("Afterimage Technique blocks the incoming attack", a2['health'] == 100, a2['health'])
+    try:
+        play(game2, 'p2', 'B', 'poke', 'p1', 0)
+        refused = False
+    except ge.GameError:
+        refused = True
+    check("Afterimage Technique makes Goku untargetable (the attack can't even be queued)",
+          refused and a2['health'] == 100, (refused, a2['health']))
 
 
 def test_tien_best_friend_primes_tri_beam():
@@ -1065,7 +1072,11 @@ def test_view_for_strips_skill_mechanics():
               not any(k == 'effects' or k.startswith('base_') for s in skills for k in s))
         live = [s for p in game['players'].values() for c in p['team'] for s in c['skills']]
         check(f"{role}'s view keeps every field the frontend reads",
-              all({k: v for k, v in l.items() if k in frontend_fields} == v for l, v in zip(live, skills)))
+              all({k: v for k, v in l.items() if k in frontend_fields}
+                  == {k: v for k, v in v.items() if k != 'ignores_invulnerable'} for l, v in zip(live, skills)))
+        flagged = sorted(s['id'] for s in skills if s.get('ignores_invulnerable'))
+        check(f"{role}'s view flags exactly the skills that go through invulnerability (primed Tri-Beam)",
+              flagged == ['tri_beam'], flagged)
     check("the live game state still has every skill's effects",
           all('effects' in s for p in game['players'].values() for c in p['team'] for s in c['skills']))
 
@@ -1252,6 +1263,86 @@ def test_mutual_ko_is_a_draw():
     view = ge.view_for(_draw_game(), 'p1')
     check("both players' views carry the draw result", view['winner'] == ge.DRAW
           and ge.view_for(_draw_game(), 'p2')['winner'] == ge.DRAW)
+
+
+def test_invulnerable_is_untargetable():
+    """ENG-4 (decided 2026-11-20): invulnerable = untargetable, except skills that
+    go through invulnerability. Refused when queued: no Ki, no cooldown wasted."""
+    def attacker(game, effects, classes=None, target_type='enemy'):
+        skill = {"id": "s", "name": "Blast", "cost": {}, "target_type": target_type, "cooldown": 2,
+                 "currentCooldown": 0, "effects": effects}
+        if classes:
+            skill['classes'] = classes
+        game['players']['p1']['team'][0]['skills'] = [skill]
+        return skill
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    skill = attacker(game, [{"type": "damage", "value": 20}])
+    try:
+        ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+        refused = None
+    except ge.GameError as e:
+        refused = str(e)
+    check("a normal skill can't target an invulnerable enemy, with a clear message",
+          refused == "B is invulnerable and can't be targeted by Blast!", refused)
+    check("...so nothing is queued and no cooldown is spent",
+          game['pending_moves'] == [] and skill['currentCooldown'] == 0, (game['pending_moves'], skill['currentCooldown']))
+
+    for etype in ge.IGNORES_INVULNERABILITY:
+        game = make_game()
+        b = game['players']['p2']['team'][0]
+        ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+        attacker(game, [{"type": etype, "value": 20}])
+        ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+        check(f"a skill with {etype} (goes through invulnerability) can still target it", len(game['pending_moves']) == 1)
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'physical_invulnerable', 'duration': 2, 'tag': 'buff'})
+    attacker(game, [{"type": "damage", "value": 20}], classes=['physical'])
+    try:
+        ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+        phys = None
+    except ge.GameError as e:
+        phys = str(e)
+    check("class invulnerability: a physical skill can't target a physically invulnerable enemy", phys is not None)
+    game['players']['p1']['team'][0]['skills'][0]['classes'] = ['chakra']
+    ge.queue_move(game, 'p1', 'A', 's', 'p2', 0)
+    check("...but a Ki (chakra) skill still can", len(game['pending_moves']) == 1)
+
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    ge.add_status(game['players']['p1']['team'][1], {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    attacker(game, [{"type": "heal", "value": 10}], target_type='ally')
+    ge.queue_move(game, 'p1', 'A', 's', 'p1', 1)
+    check("an invulnerable ALLY can still be targeted by helpful skills", len(game['pending_moves']) == 1)
+
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    b, c = game['players']['p2']['team']
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "t", "name": "t", "cost": {}, "target_type": "enemy_team", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 10}]})
+    check("team skills still work and simply skip the invulnerable enemy", (b['health'], c['health']) == (100, 90),
+          (b['health'], c['health']))
+
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    b, c = game['players']['p2']['team']
+    ge.add_status(b, {'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "r", "name": "r", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "random_multi_damage", "value": 10, "count": 2}]}, target_index=1)
+    check("random-target hits never pick an untargetable enemy (all hits land on the targetable one)",
+          (b['health'], c['health']) == (100, 90), (b['health'], c['health']))
+
+    skill = {"id": "x", "effects": [{"type": "affliction_damage", "value": 1}], "base_effects": []}
+    shown = ge.strip_skill_internals({'skills': [skill]})['skills'][0]
+    check("the client gets an ignores_invulnerable display flag instead of the effects",
+          shown == {"id": "x", "ignores_invulnerable": True}, shown)
+    plain = ge.strip_skill_internals({'skills': [{"id": "y", "effects": [{"type": "damage", "value": 1}]}]})
+    check("...and no flag at all for ordinary skills (no payload growth)", plain['skills'][0] == {"id": "y"}, plain)
 
 
 def _draw_game():

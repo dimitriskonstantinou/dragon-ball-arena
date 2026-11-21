@@ -417,6 +417,22 @@ else:
     game['players']['p1']['resources'] = resources_for_cost(skill['cost'])
     game['turn'] = 'p1'
 
+    # --- Step 28 regression (ENG-4): an invulnerable ("Untargetable") enemy could be
+    # targeted, wasting the attacker's Ki and cooldown. ---
+    if skill.get('target_type', 'enemy') == 'enemy' and not appmod.game_engine.skill_ignores_invulnerability(skill):
+        guarded = game['players']['p2']['team'][0]
+        guarded['status'].append({'type': 'invulnerable', 'duration': 2, 'tag': 'buff'})
+        p1_client.get_received()
+        p1_client.emit('queue-skill', {'charId': actor['id'], 'skillId': skill['id'],
+                                       'targetPlayerKey': 'p2', 'targetIndex': 0})
+        refusal = [e['args'][0] for e in p1_client.get_received() if e['name'] == 'error-msg']
+        check("targeting an invulnerable enemy over Socket.IO is refused with a readable message",
+              refusal == [f"{guarded['name']} is invulnerable and can't be targeted by {skill['name']}!"], refusal)
+        check("...and nothing is queued", game['pending_moves'] == [], game['pending_moves'])
+        guarded['status'] = [s for s in guarded['status'] if s['type'] != 'invulnerable']
+    else:
+        check("(setup) the first skill is a plain single-target attack", False, skill.get('target_type'))
+
     p1_client.get_received()
     p2_client.get_received()
     p1_client.emit('queue-skill', {

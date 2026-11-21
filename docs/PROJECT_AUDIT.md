@@ -95,7 +95,7 @@ If the wiped team's owner has the turn, they can simply never commit; with no tu
 leave, and leaving counts as a loss.
 **Fix:** call `check_winner` after `tick_statuses` in `start_turn`; app ends the game when `start_turn` produces a winner. Safe now: yes. Depends on: —.
 
-**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw* — ✅ FIXED in Step 27 (`check_winner` returns `game_engine.DRAW`; "DRAW!" for both players; saved as `matches.is_draw` with no winner, counted in `user_stats.total_draws`, ends both streaks; third real migration). Tested via start-of-turn ticks, a reflected hit, a timeout, and Tien's real Tri-Beam.
+**ENG-2 — MEDIUM — Mutual KO is always awarded to p2 (verified)** — *decided 2026-11-20: draw; **changed by the user 2026-11-21: no draws -- the team wiped out first (in resolution order) loses** (Step 29 replaces the draw)* — Step 27 (`check_winner` returns `game_engine.DRAW`; "DRAW!" for both players; saved as `matches.is_draw` with no winner, counted in `user_stats.total_draws`, ends both streaks; third real migration). Tested via start-of-turn ticks, a reflected hit, a timeout, and Tien's real Tri-Beam.
 *Where:* `check_winner` checks p1's team first. Tien (10 HP) killing Raditz with Tri-Beam (15 self-damage) → winner `p2`
 although p1 acted. Also reachable with Kaioken self-damage and reflect.
 **Fix:** needs a rule decision: draw, or "the acting player wins". Then encode it in `check_winner`. Safe now: after the decision.
@@ -105,7 +105,7 @@ although p1 acted. Also reachable with Kaioken self-damage and reflect.
 No current character grants dodge/counter/reflect, so this is latent until one does.
 **Fix:** resolve reactive defenses once per skill application. Safe now: yes, with tests. Depends on: decision on intended semantics (proposed: one dodge = whole skill).
 
-**ENG-4 — MEDIUM — Invulnerable characters can still be targeted (verified)** — *decided: untargetable, except skills that ignore invulnerability*
+**ENG-4 — MEDIUM — Invulnerable characters can still be targeted (verified)** — *decided: untargetable, except skills that ignore invulnerability* — ✅ FIXED in Step 28 (`resolve_target` refuses with "X is invulnerable and can't be targeted by Y!", so no Ki/cooldown is wasted; skills with `affliction_damage`/`damage_ignore_invuln`/`delayed_damage` in their *current* effects still can; class invulnerability respected; helpful skills on allies unaffected; random-target hits skip untargetable enemies; the client greys those portraits out via an `ignores_invulnerable` display flag).
 *Where:* `resolve_target`. The attacker's Ki and cooldown are spent for nothing. Every "Afterimage/Block" text says "Untargetable".
 **Fix (decision):** either reject targeting invulnerable enemies (Naruto-Arena-like, needs a UI cue), or change the text to "immune". Recommended: untargetable, except skills that explicitly ignore invulnerability (Spirit Ball, affliction).
 
@@ -124,7 +124,7 @@ Every new mechanic grows the chain, and the content test keeps its own hand-copi
 **ENG-8 — LOW — Duplicate code / dead paths (by reading)**
 Primed-skill restore is written twice (`unprime_skill` and `tick_statuses`); the legacy single-`effect` fallback and `aoe_damage` are unused by content.
 
-**ENG-9 — LOW — Move order rule is invisible to players (by reading)**
+**ENG-9 — LOW — Move order rule is invisible to players (by reading)** — *decided 2026-11-21 (user): a "timeline" in the Ki selector shows the queued skills' icons in cast order and lets the player drag them into a different order before committing, like the original game (Phase 6).*
 Moves resolve in queue order, and re-queuing a character moves its skill to the end. This is a real tactical rule (e.g. remove defense before piercing) that the UI never shows.
 
 ### 4.2 Backend & multiplayer
@@ -210,7 +210,7 @@ malformed payloads, opponent cancelling your move, duplicate-character teams, se
 "… | 1 Eng, 1 Rand" duplicates `cost`, and it already drifted once (Kaioken, fixed in Step 6). The UI draws cost boxes from `cost` anyway.
 **Fix:** strip cost suffixes from descriptions.
 
-**CON-2 — MEDIUM — Afterimage/Block text overpromises (by reading)**
+**CON-2 — MEDIUM — Afterimage/Block text overpromises (by reading)** — ✅ FIXED in Step 28 (Afterimage is now really untargetable; its text names the exception: "Untargetable & immune to harm for 1 turn, except skills that ignore invulnerability").
 "Untargetable/immune to all damage & harmful effects", yet Special Beam Cannon (delayed/affliction) and Spirit Ball (ignores invulnerability) go through it, and it doesn't make anyone untargetable. Tied to ENG-4.
 
 **CON-3 — LOW — Skill `classes` are tagged inconsistently (by reading)**

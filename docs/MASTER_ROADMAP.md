@@ -43,7 +43,8 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 |---|---|---|
 | ✅ 1.8 ENG-1: `check_winner` after turn-start ticks — *Step 11* | No | Done: probe #22 fixed; engine + smoke regression tests |
 | ✅ 1.9 ENG-2: mutual KO = **draw** (decided) — *Step 27* | Needed a draws column (migration) | Done: draw shown to both, saved with no winner, `total_draws` counted, streaks end; 4 paths tested |
-| 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) | — | Rule + text + UI cue + tests consistent |
+| 1.9b ENG-2 (**changed 2026-11-21 by the user: no draws**): the team wiped out **first** loses, in resolution order (moves in queue order, effects in listed order, start-of-turn ticks in the order they were cast); the match ends at that moment -- *Step 29* | Replaces Step 27's draw (unmerged; its migration never ran on a real DB) | Tri-Beam kill + recoil = Tien's player wins; reflected first hit = attacker loses; tick order by cast time; no draw anywhere |
+| ✅ 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) — *Step 28* | — | Done: refused at queue time (no Ki/cooldown lost); greyed out in the UI (browser test); text fixed |
 | 1.11 ENG-3: reactive defenses apply **per skill** (decided) | — | Knee Attack fully dodged by one dodge |
 | 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
 | ✅ **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | **Done in Steps 12a + 12b**; 12c (socket payloads) later |
@@ -132,7 +133,9 @@ dead code removed (FE-6), **server-equivalent affordability math** (FE-3).
 
 **Depends on:** Phase 2 (events, timer, surrender), Phase 5.
 **Tasks:** icon skills + detail panel with inline disabled reasons, valid-target highlighting, auto-target self, auto-pay with
-"adjust", queue-order display (ENG-9), battle log from server events, floating numbers, turn banner, timer bar, Ki symbols (colorblind).
+"adjust", **queue-order timeline (ENG-9, decided 2026-11-21 by the user)**: the Ki selector shows the queued skills' icons
+in cast order and the player drags them into another order before committing (server: `commit-turn` carries the order,
+validated as a permutation of the queue), battle log from server events, floating numbers, turn banner, timer bar, Ki symbols (colorblind).
 **Measurable:** clicks per typical turn 11 → ≤ 6; board fits 1366×768; opponent actions 100% visible; keyboard-only turn possible.
 
 ## Phase 7 — Lobby, team builder & roster (UI_PLAN UI-5)
@@ -165,14 +168,15 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.10 / Step 28: invulnerable = untargetable (ENG-4 + CON-2, rule decided 2026-11-20).** Afterimage/Block say
-"Untargetable", but today an invulnerable enemy can still be targeted: the attacker's Ki and cooldown are spent for
-nothing. Plan: `resolve_target` (server) refuses invulnerable targets with a clear message, except skills that
-explicitly ignore invulnerability (Spirit Ball, affliction); team/AoE skills skip invulnerable characters; the client
-greys out those portraits (UI cue); skill texts made consistent; tests for each case. Then 1.11 (reactive defenses
-per skill) and 1.12 (seeded RNG), which finish Phase 1 -- DEPLOY_PLAN Stage 0 wants Phases 1–3 done before anyone
-else plays.
-*(Step 27 done: a mutual KO is a draw -- ENG-2.)*
+**1.9b / Step 29: no draws -- the team wiped out first loses (ENG-2, changed by the user 2026-11-21).** Everything
+resolves in order: moves in queue order, a skill's effects in their listed order, start-of-turn ticks in the order the
+effects were cast. The match ends the moment one team is fully down; nothing after that applies. So Tien's Tri-Beam
+(damage, then recoil) killing the last enemy wins for Tien's player; a reflected first hit that kills the attacker
+loses for the attacker. Plan: `check_winner` after every HP change inside a move and inside the tick loop (stop
+resolving once decided); statuses remember when they were cast so ticks run oldest first; remove the draw (result,
+message, badge) and replace Step 27's migration with one that drops `is_draw`/`total_draws` (they never held real
+data); tests for each path. Then 1.11 (reactive defenses per skill) and 1.12 (seeded RNG), which finish Phase 1.
+*(Step 28 done: invulnerable = untargetable -- ENG-4, CON-2.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

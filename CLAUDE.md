@@ -179,7 +179,11 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - `start_turn` checks the winner right after ticking statuses; anything that can kill must be followed by `check_winner`.
 - `game['winner']` is `'p1'`, `'p2'` or `game_engine.DRAW` (both teams down at the same moment, Step 27). A draw is
   saved as `matches.is_draw` with `winner_id` NULL; `UserStats.record_result('win'|'loss'|'draw')`.
-- Known engine gaps (audit): ENG-3 dodge per effect, ENG-4 invulnerable targetable, ENG-7 unseeded RNG
+- **Invulnerable = untargetable (Step 28):** `resolve_target` refuses an enemy that `is_invulnerable` to the skill's
+  classes unless `skill_ignores_invulnerability(skill)` (an effect in `IGNORES_INVULNERABILITY`, read from the skill's
+  *current* effects -- priming changes them). The client gets `ignores_invulnerable: true` (only when true) from
+  `strip_skill_internals` and greys out untargetable portraits; the server stays the authority.
+- Known engine gaps (audit): ENG-2 draws must go (Step 29), ENG-3 dodge per effect, ENG-7 unseeded RNG
   (rules decided, see below).
 
 ### Adding an effect type
@@ -293,8 +297,11 @@ migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end
   Pydantic validation + generated JSON Schema, shared skills referenced) are the single source of truth.
   **Done (Steps 12a + 12b):** gameplay reads the in-memory catalog (never the DB); the `characters` table is an id
   registry for FKs, synced at startup, never deleted from; the lobby gets display fields only.
-- **Rules decided (2026-11-20, delegated to Claude):** mutual KO = draw; invulnerable = untargetable except skills
-  that explicitly ignore invulnerability; dodge/counter/reflect apply per skill, not per effect.
+- **Rules decided (2026-11-20, delegated to Claude):** invulnerable = untargetable except skills that explicitly
+  ignore invulnerability (done, Step 28); dodge/counter/reflect apply per skill, not per effect.
+- **No draws (user, 2026-11-21; replaces "mutual KO = draw"):** the team wiped out **first** in resolution order loses
+  (moves in queue order, effects in listed order, ticks in cast order) and the match ends at that moment (Step 29).
+  Players will order their queued skills on a "timeline" in the Ki selector before committing (Phase 6, ENG-9).
 - **Tech stack (2026-11-20):** keep Flask + Flask-SocketIO + the Socket.IO protocol (no FastAPI); Pydantic for
   content (later also socket payload) validation; SQLite dev / PostgreSQL prod + Flask-Migrate; live match state
   in memory, the DB only for durable data (accounts, results, history), never written per turn; Playwright

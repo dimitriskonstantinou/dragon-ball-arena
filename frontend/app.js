@@ -501,6 +501,7 @@ function onSkillClicked(charId, skillId, btnElement, event) {
     if (type === 'enemy' || type === 'enemy_team') {
         updateInstruction(type === 'enemy_team' ? "SELECT ANY ENEMY (hits the whole team)" : "SELECT AN ENEMY");
         document.getElementById('enemy-team').classList.add('targeting-mode');
+        if (type === 'enemy') markUntargetable(selectedSkillObj);
     } else if (type === 'ally' || type === 'ally_team') {
         updateInstruction(type === 'ally_team' ? "SELECT ANY ALLY (affects the whole team)" : "SELECT AN ALLY");
         document.getElementById('my-team').classList.add('targeting-mode');
@@ -510,10 +511,34 @@ function onSkillClicked(charId, skillId, btnElement, event) {
     }
 }
 
+// Mirrors game_engine.is_targetable_by (the server decides; this is the UI cue):
+// an invulnerable enemy can't be picked unless the skill goes through invulnerability.
+function isUntargetable(target, skill) {
+    if (skill.ignores_invulnerable) return false;
+    const types = (target.status || []).map(s => s.type);
+    return types.includes('invulnerable') || (skill.classes || []).some(c => types.includes(`${c}_invulnerable`));
+}
+
+function enemyTeam() {
+    return currentGameState.players[myRole === 'p1' ? 'p2' : 'p1'].team;
+}
+
+function markUntargetable(skill) {
+    const cards = document.getElementById('enemy-team').children;
+    enemyTeam().forEach((target, i) => {
+        if (cards[i]) cards[i].classList.toggle('untargetable', target.health > 0 && isUntargetable(target, skill));
+    });
+}
+
 function onEnemyClicked(targetIndex) {
     if (!selectedSkillId || !selectedSkillObj) return;
     const type = selectedSkillObj.target_type || 'enemy';
     if (type !== 'enemy' && type !== 'enemy_team') return;
+    const target = enemyTeam()[targetIndex];
+    if (type === 'enemy' && target && isUntargetable(target, selectedSkillObj)) {
+        updateInstruction(`${target.name.toUpperCase()} IS INVULNERABLE -- PICK ANOTHER TARGET`);
+        return;   // keep the skill selected
+    }
 
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
     socket.emit('queue-skill', {
@@ -546,6 +571,7 @@ function resetTargeting() {
     document.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('selected'));
     document.getElementById('enemy-team').classList.remove('targeting-mode');
     document.getElementById('my-team').classList.remove('targeting-mode');
+    document.querySelectorAll('.char-card.untargetable').forEach(c => c.classList.remove('untargetable'));
     updateInstruction("");
 }
 
