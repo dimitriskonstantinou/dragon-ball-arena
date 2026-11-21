@@ -216,7 +216,8 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
   name and their license next to them, taken from the official npm tarball and checked against npm's integrity
   hash; the smoke test pins the sha256 and the server/client compatibility (JS client 4.x <-> python-socketio 5.x),
   and the browser tests fail on any request that doesn't go to our own server. To upgrade: same procedure, new
-  versioned file, update the pin.
+  versioned file, update the pin. `.gitattributes` marks `frontend/vendor/**` as `-text`: without it, Windows
+  `core.autocrlf` rewrites line endings on checkout and the file no longer matches its verified build.
 - Browser tests (`test_browser_e2e.py`) drive the UI like a player: only enabled buttons, real dice selection,
   portrait clicks. Expected console noise is listed and counted in `KNOWN_CONSOLE_NOISE`; anything else fails.
 - The client renders state and sends intents; it is never a source of truth for rules. Its affordability math must
