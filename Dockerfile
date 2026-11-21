@@ -1,5 +1,5 @@
 # Production image (DEPLOY_PLAN Stage 3). Build and run:
-#   docker build -t dragon-ball-arena .
+#   docker build --build-arg APP_VERSION=$(git rev-parse --short HEAD) -t dragon-ball-arena .
 #   docker run -p 8000:8000 -e ENV=production -e SECRET_KEY=... -e ALLOWED_ORIGINS=https://your.site \
 #              -e DATABASE_URL=postgresql+psycopg://user:pass@host/db -e TRUSTED_PROXIES=1 dragon-ball-arena
 # All settings are environment variables (backend/config.py); nothing secret is baked into the image.
@@ -23,11 +23,13 @@ RUN useradd --create-home --uid 10001 arena
 USER arena
 WORKDIR /app/backend
 
-# gevent: one process serves thousands of websocket connections. EXACTLY ONE worker (-w 1):
-# live matches are kept in memory and can't be shared between processes.
+# Server settings (gevent, EXACTLY ONE worker, logging): backend/gunicorn.conf.py.
+# APP_VERSION (the git commit) appears in the startup log line, so every deploy is visible in the logs.
+ARG APP_VERSION=unknown
 ENV SOCKETIO_ASYNC_MODE=gevent \
-    PORT=8000
+    PORT=8000 \
+    APP_VERSION=${APP_VERSION}
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT', '8000'), timeout=4)"
-CMD ["sh", "-c", "exec gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:${PORT} --graceful-timeout 20 app:app"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

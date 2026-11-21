@@ -1,4 +1,4 @@
-from flask import Flask, request, send_from_directory, session, jsonify
+from flask import Flask, g, request, send_from_directory, session, jsonify
 from flask_migrate import Migrate, stamp, upgrade
 from flask_socketio import SocketIO, emit, join_room
 import sqlalchemy as sa
@@ -15,16 +15,26 @@ import time
 import uuid
 from contextlib import contextmanager
 
+import atexit
+import platform
+
 import config
 import content_loader
 import game_engine
+import logging_setup
 import rate_limit
 from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
 from sqlalchemy.exc import IntegrityError
 
-log = logging.getLogger(__name__)
-LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s: %(message)s'
+log = logging.getLogger(__name__)                # startup, database, unexpected errors
+http_log = logging.getLogger('arena.http')        # one line per HTTP request
+auth_log = logging.getLogger('arena.auth')        # accounts + security events
+sock_log = logging.getLogger('arena.socket')      # game connections
+match_log = logging.getLogger('arena.match')      # matchmaking, turns, results
+stats_log = logging.getLogger('arena.stats')      # periodic health numbers
+STARTED = time.monotonic()
+STATS_EVERY_SECONDS = 60
 
 # Exit code 3 = gunicorn's "worker failed to boot": gunicorn then STOPS with this message
 # instead of restarting the worker forever (a misconfigured deploy must fail loudly).
@@ -37,17 +47,9 @@ except config.ConfigError as e:
     raise SystemExit(CONFIG_ERROR_EXIT_CODE)
 
 
-def configure_logging(level):
-    """One log format for every way the app runs (python app.py, gunicorn,
-    flask CLI, tests), set up before anything logs (incl. the migrations run at
-    import below). A host that already configured logging (e.g. gunicorn
-    --log-config) is left alone."""
-    root = logging.getLogger()
-    if not root.handlers:
-        logging.basicConfig(level=level, format=LOG_FORMAT)
-
-
-configure_logging(settings.log_level)
+# One format for every way the app runs, set up before anything logs (incl. the
+# migrations run at import below). See logging_setup.py for what goes where.
+logging_setup.configure(settings.log_level, settings.log_format)
 
 app = Flask(__name__)
 if settings.trusted_proxies:
@@ -74,6 +76,7 @@ migrate = Migrate(app, db, directory=MIGRATIONS_DIR, render_as_batch=True)  # ba
 # None = same origin only (development); deployments must list their https origins (config.py).
 socketio = SocketIO(app, async_mode=settings.socketio_async_mode,
                     cors_allowed_origins=list(settings.allowed_origins) or None)
+logging_setup.unify_library_loggers()   # engineio/socketio just added their own output handlers
 
 GAMES = {}
 MATCHMAKING_QUEUE = []
@@ -106,13 +109,28 @@ def now():
     return time.time()
 
 
-def report_error(e, event):
-    """GameErrors are rule violations -- tell the player. Anything else is a
-    bug: log the full traceback and don't leak internals to the client."""
+def who():
+    """'user=.. room=.. role=.. sid=..' for the connection handling this event (log context)."""
+    sid = request.sid
+    room_id = SID_ROOM_MAP.get(sid)
+    game = GAMES.get(room_id)
+    role = next((r for r in ('p1', 'p2') if game and game['players'][r]['id'] == sid), None)
+    if role:
+        user_id = game['players'][role]['user_id']
+    else:
+        with USER_SIDS_LOCK:
+            user_id = next((u for u, sids in USER_SIDS.items() if sid in sids), None)
+    return f"user={user_id} room={room_id} role={role} sid={sid[:6]}"
+
+
+def report_error(e, event, data=None):
+    """GameErrors are rule violations -- tell the player (logged at DEBUG). Anything
+    else is a bug: log the full traceback WITH its context and don't leak internals."""
     if isinstance(e, GameError):
+        sock_log.debug("Refused %s: %s -- %s", event, who(), e)
         emit('error-msg', str(e), to=request.sid)
     else:
-        log.exception("Unhandled error in %s", event)
+        log.exception("Unhandled error in %s: %s payload=%s", event, who(), logging_setup.short(data))
         emit('error-msg', SERVER_ERROR_MSG, to=request.sid)
 
 
@@ -195,6 +213,22 @@ def ensure_db_ready():
 ensure_db_ready()
 
 
+def log_shutdown():
+    try:
+        log.info("Server stopping: version=%s uptime=%ds live_matches=%d (in-memory matches end with the process)",
+                 settings.app_version, time.monotonic() - STARTED, len(GAMES))
+    except Exception:
+        pass   # interpreter shutdown: logging may already be gone
+
+
+log.info("Server starting: version=%s env=%s python=%s async_mode=%s database=%s roster=%d characters "
+         "turn=%ss reconnect=%ss proxies=%d log=%s/%s", settings.app_version, settings.env,
+         platform.python_version(), settings.socketio_async_mode, logging_setup.safe_database_url(settings.database_url),
+         len(CATALOG), settings.turn_seconds, settings.reconnect_seconds, settings.trusted_proxies,
+         settings.log_level, settings.log_format)
+atexit.register(log_shutdown)
+
+
 def current_user():
     """The logged-in account, or None. A cookie issued before the account's
     last logout (older session_version) no longer counts (SEC-4)."""
@@ -203,6 +237,10 @@ def current_user():
         return None
     user = db.session.get(User, uid)
     if user is None or session.get('sv') != user.session_version:
+        if not g.get('stale_cookie_logged'):
+            g.stale_cookie_logged = True
+            auth_log.info("Rejected a login cookie from before a logout-everywhere: user=%s ip=%s", uid,
+                          request.remote_addr)
         return None
     return user
 
@@ -316,14 +354,16 @@ def check_turn_timers():
             try:
                 strikes = game_engine.timeout_turn(game)
             except Exception:
-                log.exception("Turn timeout failed: room=%s", room_id)
+                log.exception("Turn timeout failed: room=%s turn=%s", room_id, timed_out)
                 continue
+            match_log.info("Turn timed out: room=%s role=%s user=%s strikes=%d/%d", room_id, timed_out,
+                           game['players'][timed_out]['user_id'], strikes, game_engine.TIMEOUTS_TO_FORFEIT)
             if game.get('winner'):
-                reason = None
+                reason, cause = None, 'ko'
                 if strikes >= game_engine.TIMEOUTS_TO_FORFEIT:
-                    reason = (f"{timed_out.upper()} RAN OUT OF TIME {strikes} TURNS IN A ROW AND FORFEITS. "
-                              f"{game['winner'].upper()} WINS!")
-                end_game(room_id, game['winner'], reason=reason)
+                    reason, cause = (f"{timed_out.upper()} RAN OUT OF TIME {strikes} TURNS IN A ROW AND FORFEITS. "
+                                     f"{game['winner'].upper()} WINS!"), 'timeouts'
+                end_game(room_id, game['winner'], reason=reason, cause=cause)
             else:
                 start_turn_clock(game)
                 socketio.emit('message', f"{timed_out.upper()} ran out of time -- turn passed "
@@ -349,28 +389,43 @@ def check_disconnect_timers():
                 continue
             loser = min(gone, key=lambda r: game['players'][r]['disconnected_at'])  # first to leave
             winner = 'p2' if loser == 'p1' else 'p1'
-            end_game(room_id, winner, reason=f"{loser.upper()} DIDN'T COME BACK IN TIME. {winner.upper()} WINS!")
+            end_game(room_id, winner, reason=f"{loser.upper()} DIDN'T COME BACK IN TIME. {winner.upper()} WINS!",
+                     cause='disconnect')
+
+
+def log_stats():
+    """One line of health numbers (every STATS_EVERY_SECONDS from the ticker)."""
+    with USER_SIDS_LOCK:
+        players, sockets = len(USER_SIDS), sum(len(s) for s in USER_SIDS.values())
+    stats_log.info("Stats: live_matches=%d queued=%d players_online=%d sockets=%d waiting_to_reconnect=%d "
+                   "uptime=%ds", len(GAMES), len(MATCHMAKING_QUEUE), players, sockets, len(DISCONNECTED_USERS),
+                   time.monotonic() - STARTED)
 
 
 def turn_timer_loop():
+    last_stats = time.monotonic()
     while True:
         socketio.sleep(TIMER_TICK_SECONDS)
         try:
             with app.app_context():
                 check_turn_timers()
                 check_disconnect_timers()
+            if time.monotonic() - last_stats >= STATS_EVERY_SECONDS:
+                last_stats = time.monotonic()
+                log_stats()
         except Exception:
             log.exception("Turn timer loop error")
 
 
 def ensure_turn_timer():
-    """Starts the single ticker on the first match (caller holds MATCHMAKING_LOCK)."""
+    """Starts the single ticker (turn timer, reconnect forfeits, stats) on the first
+    connection or match (caller holds MATCHMAKING_LOCK)."""
     global _timer_started
     if TURN_TIMER_THREAD and not _timer_started:
         _timer_started = True
         socketio.start_background_task(turn_timer_loop)
 
-def end_game(room_id, winner, reason=None):
+def end_game(room_id, winner, reason=None, cause='ko'):
     """Finishes a match exactly once: records the result, sends both players
     the final state + message, then forgets the room entirely (GAMES entry,
     sid mappings, Socket.IO room) so finished matches don't pile up in memory.
@@ -382,6 +437,14 @@ def end_game(room_id, winner, reason=None):
     if not game:
         return
     ROOM_LOCKS.pop(room_id, None)  # threads still waiting on it re-check GAMES and back off
+    loser = 'p2' if winner == 'p1' else 'p1'
+    try:
+        duration = (datetime.now(timezone.utc) - datetime.fromisoformat(game['started_at'])).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        duration = -1
+    match_log.info("Match ended: room=%s cause=%s winner=%s(user=%s) loser=%s(user=%s) turns=%s duration=%ds",
+                   room_id, cause, winner, game['players'][winner].get('user_id'), loser,
+                   game['players'][loser].get('user_id'), game.get('turn_count'), duration)
     game['winner'] = winner
     for p_key in ('p1', 'p2'):
         SID_ROOM_MAP.pop(game['players'][p_key]['id'], None)
@@ -404,6 +467,26 @@ def end_game(room_id, winner, reason=None):
     message = reason or f"GAME OVER! {winner.upper()} WINS!"
     socketio.emit('message', message, to=room_id)
     socketio.close_room(room_id)
+
+
+# --- request log ---------------------------------------------------------------
+
+@app.before_request
+def start_request_timer():
+    g.request_started = time.perf_counter()
+
+
+@app.after_request
+def log_request(response):
+    """One line per request: API calls at INFO, static files and /healthz at DEBUG
+    (the host polls /healthz). Socket.IO traffic is logged per event, not here."""
+    elapsed = (time.perf_counter() - g.get('request_started', time.perf_counter())) * 1000
+    level = logging.INFO if request.path.startswith('/api/') else logging.DEBUG
+    if response.status_code >= 500:
+        level = logging.ERROR
+    http_log.log(level, "%s %s %d %.1fms ip=%s user=%s", request.method, request.path, response.status_code,
+                 elapsed, request.remote_addr, session.get('user_id'))
+    return response
 
 
 # --- static file / photo serving --------------------------------------------
@@ -453,6 +536,7 @@ register_limiter = rate_limit.SlidingWindowLimiter(settings.register_limit, sett
 
 
 def too_many(what, wait):
+    auth_log.warning("Rate limit hit: too many %s ip=%s retry_after=%ss", what, request.remote_addr, wait)
     response = jsonify({'error': f"Too many {what}. Try again in {wait} seconds.", 'retry_after': wait})
     response.status_code = 429
     response.headers['Retry-After'] = str(wait)
@@ -466,6 +550,11 @@ USERNAME_RE = re.compile(r'[A-Za-z0-9_-]{3,20}')
 EMAIL_RE = re.compile(r'[^@\s]+@[^@\s]+\.[^@\s.]+')
 
 
+def refuse_registration(reason, message, status):
+    auth_log.info("Registration refused: reason=%s ip=%s", reason, request.remote_addr)
+    return jsonify({'error': message}), status
+
+
 @app.route('/api/register', methods=['POST'])
 def register():
     wait = register_limiter.retry_after(request.remote_addr)
@@ -477,18 +566,18 @@ def register():
     password = data.get('password') or ''
 
     if not username or not email or not password:
-        return jsonify({'error': 'username, email and password are required'}), 400
+        return refuse_registration('missing_fields', 'username, email and password are required', 400)
     if not (3 <= len(username) <= 20):
-        return jsonify({'error': 'username must be 3-20 characters'}), 400
+        return refuse_registration('username_length', 'username must be 3-20 characters', 400)
     if not USERNAME_RE.fullmatch(username):
-        return jsonify({'error': 'username may only contain letters, digits, _ and -'}), 400
+        return refuse_registration('username_characters', 'username may only contain letters, digits, _ and -', 400)
     if len(email) > 255 or not EMAIL_RE.fullmatch(email):
-        return jsonify({'error': 'please enter a valid email address'}), 400
+        return refuse_registration('invalid_email', 'please enter a valid email address', 400)
     if len(password) < 6:
-        return jsonify({'error': 'password must be at least 6 characters'}), 400
+        return refuse_registration('short_password', 'password must be at least 6 characters', 400)
     taken = account_conflict(username, email)
     if taken:
-        return jsonify({'error': taken}), 409
+        return refuse_registration(taken.replace(' ', '_'), taken, 409)
 
     user = User(username=username, username_key=User.key_for(username), email=email,
                 password_hash=generate_password_hash(password))
@@ -505,8 +594,10 @@ def register():
         # Someone registered the same name/email between our check and this
         # write (two requests at once): the unique index decided. Say so cleanly.
         db.session.rollback()
-        return jsonify({'error': account_conflict(username, email) or 'username already taken'}), 409
+        taken = account_conflict(username, email) or 'username already taken'
+        return refuse_registration(taken.replace(' ', '_') + '_simultaneous', taken, 409)
     register_limiter.hit(request.remote_addr)
+    auth_log.info("Account created: user=%s name=%s ip=%s", user.id, user.username, request.remote_addr)
 
     start_session(user)
     return jsonify(user.to_dict()), 201
@@ -532,9 +623,15 @@ def login():
     user = User.query.filter_by(username_key=User.key_for(username)).first()
     if not user or not check_password_hash(user.password_hash, password):
         login_limiter.hit(request.remote_addr)
+        if user:
+            auth_log.warning("Login failed: wrong password user=%s ip=%s", user.id, request.remote_addr)
+        else:
+            auth_log.warning("Login failed: unknown account name=%s ip=%s", logging_setup.short(username, 40),
+                             request.remote_addr)
         return jsonify({'error': 'invalid username or password'}), 401
 
     start_session(user)
+    auth_log.info("Login: user=%s ip=%s", user.id, request.remote_addr)
     return jsonify(user.to_dict())
 
 @app.route('/api/logout', methods=['POST'])
@@ -551,6 +648,8 @@ def logout():
             sids = list(USER_SIDS.get(user.id, ()))
         for sid in sids:
             socketio.server.disconnect(sid)
+        auth_log.info("Logout (every device): user=%s closed_connections=%d ip=%s", user.id, len(sids),
+                      request.remote_addr)
     session.clear()
     return jsonify({'ok': True})
 
@@ -568,10 +667,14 @@ def me():
 def handle_connect():
     user = current_user()
     if not user:
+        sock_log.debug("Connection without a login: sid=%s ip=%s", request.sid[:6], request.remote_addr)
         emit('auth-required')
         return
     with USER_SIDS_LOCK:
         USER_SIDS.setdefault(user.id, set()).add(request.sid)
+    sock_log.info("Connected: user=%s sid=%s ip=%s", user.id, request.sid[:6], request.remote_addr)
+    with MATCHMAKING_LOCK:
+        ensure_turn_timer()   # the ticker also writes the periodic stats line
     # Display fields only: skill mechanics stay server-side (same rule as view_for).
     char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user).values()]
     emit('character-list', char_list)
@@ -597,6 +700,7 @@ def rejoin_match(user):
         DISCONNECTED_USERS.pop(user.id, None)
         SID_ROOM_MAP[request.sid] = room_id
         join_room(room_id)
+        match_log.info("Player rejoined: room=%s role=%s user=%s", room_id, role, user.id)
         emit('game-start', {'roomId': room_id, 'role': role})
         socketio.emit('message', f"{role.upper()} RECONNECTED.", to=room_id)
         broadcast_state(game)
@@ -605,12 +709,16 @@ def rejoin_match(user):
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
+    left = None
     with USER_SIDS_LOCK:
         for user_id, sids in list(USER_SIDS.items()):
             if sid in sids:
+                left = user_id
                 sids.discard(sid)
                 if not sids:
                     del USER_SIDS[user_id]
+    if left is not None:
+        sock_log.info("Disconnected: user=%s sid=%s", left, sid[:6])
 
     with MATCHMAKING_LOCK:
         MATCHMAKING_QUEUE[:] = [p for p in MATCHMAKING_QUEUE if p['id'] != sid]  # in place: keep the same list object
@@ -631,6 +739,8 @@ def handle_disconnect():
         # come back (rejoin_match); check_disconnect_timers forfeits it after that.
         game['players'][role]['disconnected_at'] = now()
         DISCONNECTED_USERS[game['players'][role]['user_id']] = room_id
+        match_log.info("Player left mid-match: room=%s role=%s user=%s grace=%ss", room_id, role,
+                       game['players'][role]['user_id'], RECONNECT_SECONDS)
         socketio.emit('message', f"{role.upper()} DISCONNECTED -- waiting up to {RECONNECT_SECONDS}s "
                                  f"for them to come back.", to=room_id)
         broadcast_state(game)
@@ -715,11 +825,13 @@ def handle_find_match(selected_char_ids):
                 raise GameError("This account is already in a match in another tab!")
 
             MATCHMAKING_QUEUE.append({'id': sid, 'user_id': user.id, 'username': user.username, 'team': my_team})
+            match_log.info("Searching: user=%s team=%s queue=%d", user.id, ','.join(selected_char_ids),
+                           len(MATCHMAKING_QUEUE))
             emit('match-status', "Searching for opponent...")
             if len(MATCHMAKING_QUEUE) >= 2:
                 start_match(MATCHMAKING_QUEUE.pop(0), MATCHMAKING_QUEUE.pop(0))
     except Exception as e:
-        report_error(e, 'find-match')
+        report_error(e, 'find-match', selected_char_ids)
 
 
 def start_match(p1, p2):
@@ -741,7 +853,9 @@ def start_match(p1, p2):
     }
     # Server-only (never sent): with this seed + the moves, the match can be replayed exactly.
     seed = game_engine.seed_match(game)
-    log.info("Match started: room=%s p1_user=%s p2_user=%s rng_seed=%s", room_id, p1['user_id'], p2['user_id'], seed)
+    match_log.info("Match started: room=%s p1=%s(user=%s) team=%s p2=%s(user=%s) team=%s rng_seed=%s", room_id,
+                   p1['username'], p1['user_id'], ','.join(c['id'] for c in p1['team']), p2['username'], p2['user_id'],
+                   ','.join(c['id'] for c in p2['team']), seed)
     lock = ROOM_LOCKS[room_id] = threading.RLock()  # exists before any event can find the room
     with lock:
         GAMES[room_id] = game
@@ -774,13 +888,15 @@ def handle_queue(data):
             result = game_engine.queue_move(game, role, data['charId'], data['skillId'],
                                             data['targetPlayerKey'], data['targetIndex'])
             if result and result.get('countered'):
+                match_log.info("Counter-trap fired: room=%s role=%s char=%s damage=%s", room_id, role,
+                               data['charId'], result['countered'])
                 socketio.emit('message', result['message'], to=room_id)
             if game.get('winner'):
                 end_game(room_id, game['winner'])
             else:
                 broadcast_state(game)
     except Exception as e:
-        report_error(e, 'queue-skill')
+        report_error(e, 'queue-skill', data)
 
 @socketio.on('cancel-skill')
 def handle_cancel(data):
@@ -790,7 +906,7 @@ def handle_cancel(data):
             game_engine.cancel_move(game, role, data['charId'])
             broadcast_state(game)
     except Exception as e:
-        report_error(e, 'cancel-skill')
+        report_error(e, 'cancel-skill', data)
 
 @socketio.on('commit-turn')
 def handle_commit(data):
@@ -799,14 +915,19 @@ def handle_commit(data):
         with locked_match() as (room_id, game, role):
             if role != game['turn']:
                 raise GameError("Not your turn!")
+            moves = ' '.join(f"{m['charId']}:{m['skillId']}>{m['targetPid']}{m['targetIndex']}"
+                             for m in game['pending_moves']) or '-'
             game_engine.resolve_turn(game, data['paymentList'])
+            match_log.info("Turn: room=%s turn=%s role=%s user=%s moves=[%s] ki_paid=%d", room_id,
+                           game.get('turn_count'), role, game['players'][role]['user_id'], moves,
+                           len(data['paymentList']))
             if game.get('winner'):
                 end_game(room_id, game['winner'])
             else:
                 start_turn_clock(game)
                 broadcast_state(game)
     except Exception as e:
-        report_error(e, 'commit-turn')
+        report_error(e, 'commit-turn', data)
 
 @socketio.on('surrender')
 def handle_surrender(data=None):
@@ -816,7 +937,7 @@ def handle_surrender(data=None):
         with locked_match() as (room_id, game, role):
             game_engine.surrender(game, role)
             end_game(room_id, game['winner'],
-                     reason=f"{role.upper()} SURRENDERED. {game['winner'].upper()} WINS!")
+                     reason=f"{role.upper()} SURRENDERED. {game['winner'].upper()} WINS!", cause='surrender')
     except Exception as e:
         report_error(e, 'surrender')
 
@@ -824,5 +945,5 @@ if __name__ == '__main__':
     # Local development runner only -- production runs under gunicorn (see
     # docs/DEPLOY_PLAN.md). allow_unsafe_werkzeug lets it also start without
     # a terminal attached (e.g. from the browser tests).
-    log.info("Starting in %s mode on port %d", settings.env, settings.port)
+    log.info("Development server listening on port %d (production runs gunicorn: see the Dockerfile)", settings.port)
     socketio.run(app, host='0.0.0.0', port=settings.port, allow_unsafe_werkzeug=True)

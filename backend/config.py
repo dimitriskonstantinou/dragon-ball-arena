@@ -20,6 +20,9 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   REGISTER_LIMIT / REGISTER_WINDOW_SECONDS     new accounts allowed per client IP per window (default 5 / 3600)
   SESSION_DAYS       a login expires after this many days without any visit (default 30, 1..365)
   LOG_LEVEL          DEBUG | INFO (default) | WARNING | ERROR
+  LOG_FORMAT         text (default) | json (one JSON object per line, for hosted log services)
+  APP_VERSION        which build is running, shown in the startup log line (the Docker image sets it to the
+                     git commit at build time; default 'dev'). Letters, digits and . _ - + only.
   SOCKETIO_ASYNC_MODE  threading (default: python app.py, tests) | gevent (production: gunicorn -k gevent,
                      set by the Dockerfile). Explicit, because Flask-SocketIO would otherwise switch to gevent
                      by itself as soon as the package is installed.
@@ -64,6 +67,8 @@ class Settings:
     session_days: int
     log_level: str
     socketio_async_mode: str
+    log_format: str
+    app_version: str
 
     @property
     def is_production_like(self):
@@ -160,6 +165,8 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
         trusted_proxies=_int(environ, 'TRUSTED_PROXIES', 0, 0, 5),
         session_days=_int(environ, 'SESSION_DAYS', 30, 1, 365),
         log_level=_log_level(environ),
+        log_format=_log_format(environ),
+        app_version=_app_version(environ),
         socketio_async_mode=_async_mode(environ),
     )
 
@@ -176,6 +183,30 @@ def _async_mode(environ):
 
 
 LOG_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+
+
+LOG_FORMATS = ('text', 'json')
+
+
+def _log_format(environ):
+    fmt = (environ.get('LOG_FORMAT') or 'text').strip().lower()
+    if fmt not in LOG_FORMATS:
+        raise ConfigError(f"LOG_FORMAT must be one of {', '.join(LOG_FORMATS)}, got {environ.get('LOG_FORMAT')!r}")
+    return fmt
+
+
+def _app_version(environ):
+    version = (environ.get('APP_VERSION') or 'dev').strip()
+    if not re.fullmatch(r'[A-Za-z0-9._+-]{1,64}', version):
+        raise ConfigError(f"APP_VERSION must be 1-64 letters, digits or . _ - +, got {environ.get('APP_VERSION')!r}")
+    return version
+
+
+def log_settings(environ=None):
+    """(level, format) on their own -- for gunicorn.conf.py, which configures logging
+    before the app (and the rest of the settings) is loaded."""
+    environ = os.environ if environ is None else environ
+    return _log_level(environ), _log_format(environ)
 
 
 def _log_level(environ):

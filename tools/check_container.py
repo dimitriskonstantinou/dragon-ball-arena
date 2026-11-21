@@ -14,7 +14,9 @@ databases in the throwaway PostgreSQL container that tests.py uses -- checks:
 Prints PASS/FAIL lines like the other suites; exit code 1 on any failure. Containers and
 databases it creates are removed afterwards (the image `dragon-ball-arena:test` is kept).
 """
+import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -85,7 +87,9 @@ def main():
 
     print("build:", flush=True)
     start = time.perf_counter()
-    build = docker('build', '-t', IMAGE, ROOT, timeout=1200)
+    version = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True,
+                             text=True).stdout.strip() or 'unknown'
+    build = docker('build', '--build-arg', f'APP_VERSION={version}', '-t', IMAGE, ROOT, timeout=1200)
     check(f"the image builds ({time.perf_counter() - start:.0f}s)", build.returncode == 0, build.stderr[-600:])
     if build.returncode:
         sys.exit(1)
@@ -108,7 +112,7 @@ def main():
         databases.append(prod_db)
         key = secrets.token_hex(32)
         prod_env = {'ENV': 'production', 'SECRET_KEY': key, 'ALLOWED_ORIGINS': 'https://arena.example',
-                    'TRUSTED_PROXIES': '1', 'DATABASE_URL': pg_url_for(prod_db)}
+                    'TRUSTED_PROXIES': '1', 'DATABASE_URL': pg_url_for(prod_db), 'LOG_FORMAT': 'json'}
         run_container('dba-check-prod', 18100, prod_env)
         containers.append('dba-check-prod')
         up = wait_healthy(18100)
@@ -116,6 +120,8 @@ def main():
         check("starts under gunicorn with the gevent worker", up and 'Using worker: gevent' in logs, logs[-600:])
         check("...builds the schema on PostgreSQL by running the migrations at startup",
               'PostgresqlImpl' in logs and 'Running upgrade' in logs, logs[-400:])
+        check(f"...and logs which build is running (version={version}) -- every deploy is visible in the logs",
+              f'Server starting: version={version} env=production' in logs, logs[-400:])
         status, _, body = http('http://127.0.0.1:18100/healthz')
         check("/healthz answers 200 {status: ok}", status == 200 and '"ok"' in body, (status, body))
         check("the game page and the self-hosted socket.io client are served",
@@ -138,6 +144,20 @@ def main():
                 break
             time.sleep(1)
         check("Docker's own HEALTHCHECK reports the container healthy", health == 'healthy', health)
+        logs = docker('logs', 'dba-check-prod').stdout + docker('logs', 'dba-check-prod').stderr
+        lines = [line for line in logs.splitlines() if line.strip()]
+        not_json = []
+        for line in lines:
+            try:
+                json.loads(line)
+            except ValueError:
+                not_json.append(line)
+        check(f"with LOG_FORMAT=json every log line ({len(lines)}, gunicorn's included) is one JSON object",
+              lines and not not_json, not_json[:3])
+        check("...including the request log and the account events",
+              '"arena.http"' in logs and 'Account created: user=' in logs, logs[-500:])
+        check("...and no log line contains the database password or the secret key",
+              'dbatest' not in logs and key not in logs, '(a secret is in the logs)')
 
         print("refuses to start insecurely:", flush=True)
         for missing in ('SECRET_KEY', 'DATABASE_URL'):
@@ -155,7 +175,7 @@ def main():
             check(f"production without {missing} stops with a clear configuration error (no restart loop)",
                   state.startswith('exited') and not state.endswith(' 0')
                   and f'Configuration error: {missing} is required' in out
-                  and out.count('Booting worker') == 1, (state, out[-300:]))
+                  and out.count('Booting worker') <= 1, (state, out[-300:]))
 
         print("backend suites on the image's Python 3.12:", flush=True)
         suites = docker('run', '--rm', '-v', f'{ROOT}:/src:ro', '-w', '/src/backend',
@@ -182,6 +202,11 @@ def main():
             containers.append(f'dba-check-{label}')
         ready = wait_healthy(18101) and wait_healthy(18102)
         check("(both game containers are up)", ready)
+        text_logs = docker('logs', 'dba-check-main').stdout + docker('logs', 'dba-check-main').stderr
+        first = [line for line in text_logs.splitlines() if line.strip()][:3]
+        check("gunicorn's own lines use the app's log format (UTC time, level, logger)",
+              first and all(re.match(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z (INFO|WARNING|DEBUG) \S+: ', line)
+                            for line in first), first)
         e2e = subprocess.run([sys.executable, 'test_browser_e2e.py'], cwd=os.path.join(ROOT, 'backend'),
                              env=dict(os.environ, E2E_URL='http://127.0.0.1:18101', E2E_FAST_URL='http://127.0.0.1:18102'),
                              capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=900)

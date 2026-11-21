@@ -5,6 +5,7 @@ Unit checks use fake environments and a temporary dev-key file; the startup
 checks launch real interpreters importing app.py (temporary database, so the
 real backend/game.db is never touched).
 """
+import json
 import os
 import re
 import subprocess
@@ -106,6 +107,16 @@ def test_number_settings_are_validated():
     check("logins expire after 30 days without a visit by default", s.session_days == 30, s.session_days)
     check("logging defaults to INFO", s.log_level == 'INFO', s.log_level)
     check("Socket.IO runs in threading mode by default (dev server, tests)", s.socketio_async_mode == 'threading')
+    check("logs are plain text by default, version 'dev'", (s.log_format, s.app_version) == ('text', 'dev'),
+          (s.log_format, s.app_version))
+    s, err = load({'LOG_FORMAT': 'JSON', 'APP_VERSION': 'a1b2c3d'})
+    check("LOG_FORMAT=json and an APP_VERSION (git commit) are accepted",
+          err is None and (s.log_format, s.app_version) == ('json', 'a1b2c3d'), (s, err))
+    for name, bad in (('LOG_FORMAT', 'xml'), ('APP_VERSION', 'v1; rm -rf /'), ('APP_VERSION', 'x' * 65)):
+        _, err = load({name: bad})
+        check(f"{name}={bad[:15]!r} is rejected", err and f'{name} must' in err, err)
+    check("log_settings() reads level + format on their own (for gunicorn.conf.py)",
+          config.log_settings({'LOG_LEVEL': 'warning', 'LOG_FORMAT': 'json'}) == ('WARNING', 'json'))
     s, err = load({'SOCKETIO_ASYNC_MODE': ' Gevent '})
     check("SOCKETIO_ASYNC_MODE=gevent is accepted (production under gunicorn)",
           err is None and s.socketio_async_mode == 'gevent', (s, err))
@@ -173,10 +184,25 @@ def test_real_server_startup():
           proc.returncode == 0 and 'started True' in proc.stdout, (proc.returncode, proc.stderr[-300:]))
     check("...with HTTPS-only, SameSite=Lax, HttpOnly login cookies and only the listed origin",
           "cookie True Lax True origins ['https://dragonballarena.com']" in proc.stdout, proc.stdout)
-    proc = start_app({})
-    check("a real start logs in one format (time, level, logger, message) without any setup by the runner",
-          re.search(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} INFO alembic\.runtime\.migration: ', proc.stderr, re.M)
+    proc = start_app({'APP_VERSION': 'abc1234'})
+    check("a real start logs in one format (UTC time, level, logger, message) without any setup by the runner",
+          re.search(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z INFO alembic\.runtime\.migration: ', proc.stderr, re.M)
           is not None, proc.stderr[-400:])
+    check("...and announces which build started, where and how (every deploy is visible in the logs)",
+          re.search(r'INFO app: Server starting: version=abc1234 env=development python=\S+ async_mode=threading '
+                    r'database=sqlite:cfg\.db roster=\d+ characters', proc.stderr) is not None, proc.stderr[-500:])
+    proc = start_app({'LOG_FORMAT': 'json'})
+    lines = [line for line in proc.stderr.splitlines() if line.strip()]
+    parsed = []
+    for line in lines:
+        try:
+            parsed.append(json.loads(line))
+        except ValueError:
+            parsed.append(None)
+    check("LOG_FORMAT=json: every line of a real start is one JSON object (ts, level, logger, msg)",
+          proc.returncode == 0 and lines and all(p and {'ts', 'level', 'logger', 'msg'} <= set(p) for p in parsed),
+          lines[:3])
+    check("...including the startup line", any(p and p['msg'].startswith('Server starting:') for p in parsed))
     proc = start_app({'LOG_LEVEL': 'WARNING'})
     check("...and LOG_LEVEL=WARNING keeps routine INFO lines out of the logs",
           proc.returncode == 0 and ' INFO ' not in proc.stderr, proc.stderr[-400:])

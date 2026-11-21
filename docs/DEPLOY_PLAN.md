@@ -231,6 +231,9 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 - **Check:** `https://yourdomain` loads, socket connects over `wss://`, cookie shows `Secure`.
 
 ### Stage 8 — Monitoring, backups, operations
+*(Logs are ready since Step 35: set `LOG_FORMAT=json` on the host and ship stderr to a log service; useful searches:
+`Server starting` = every deploy with its `version`; `ERROR` = bugs with context + traceback; `Login failed` /
+`Rate limit hit` = attacks; `Match ended` = results with cause; `arena.stats` = load every 60 s.)*
 1. **Sentry** (free tier) for backend exceptions + frontend JS errors.
 2. **Uptime monitor** (e.g. UptimeRobot / Better Stack) on `/healthz`, alert to your phone or email.
 3. App metrics in logs every minute: connected sockets, active matches, queue length. Optional `/admin/stats`

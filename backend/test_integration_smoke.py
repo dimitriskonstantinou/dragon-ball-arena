@@ -34,6 +34,24 @@ import uuid
 os.environ.setdefault('REGISTER_LIMIT', '100000')
 
 import app as appmod
+import logging
+
+
+class LogCapture(logging.Handler):
+    """Keeps every log line of this whole run (Step 35 checks what was logged -- and that no secret was)."""
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.lines = []
+
+    def emit(self, record):
+        text = record.getMessage()
+        if record.exc_info:
+            text += '\n' + logging.Formatter().formatException(record.exc_info)
+        self.lines.append(f"{record.levelname} {record.name}: {text}")
+
+
+LOGS = LogCapture()
+logging.getLogger().addHandler(LOGS)
 
 # The turn timer is driven by hand below (with a shifted clock), so the real
 # background ticker must not fire at random moments during the test.
@@ -1120,6 +1138,56 @@ else:
     check("...and leaves no reconnect bookkeeping behind", appmod.DISCONNECTED_USERS == {}, appmod.DISCONNECTED_USERS)
     for c in (quit1, quit2, stay):
         c.disconnect()
+
+# --- Step 35: logging. Everything above ran with a capture on the root logger: the events
+# needed to investigate bugs, matches and attacks must be there -- and no secret may be. ---
+appmod.log_stats()
+appmod.app.test_client().post('/api/login', json={'username': f'nobody_{suffix}', 'password': 'x'},
+                                  environ_base={'REMOTE_ADDR': '198.51.100.99'})
+logged = '\n'.join(LOGS.lines)
+EXPECTED_LOG_EVENTS = {
+    "account created": "INFO arena.auth: Account created: user=",
+    "registration refused (with a reason)": "INFO arena.auth: Registration refused: reason=",
+    "successful login": "INFO arena.auth: Login: user=",
+    "failed login, wrong password": "WARNING arena.auth: Login failed: wrong password user=",
+    "failed login, unknown account": "WARNING arena.auth: Login failed: unknown account name=",
+    "rate limit hit": "WARNING arena.auth: Rate limit hit: too many",
+    "logout everywhere": "INFO arena.auth: Logout (every device): user=",
+    "an old cookie rejected after logout": "INFO arena.auth: Rejected a login cookie from before a logout-everywhere",
+    "HTTP request with status + timing": "INFO arena.http: POST /api/register 201 ",
+    "game connection": "INFO arena.socket: Connected: user=",
+    "disconnection": "INFO arena.socket: Disconnected: user=",
+    "matchmaking": "INFO arena.match: Searching: user=",
+    "match start with teams + seed": "INFO arena.match: Match started: room=",
+    "each committed turn with its moves": "INFO arena.match: Turn: room=",
+    "a timed-out turn": "INFO arena.match: Turn timed out: room=",
+    "a counter-trap": "INFO arena.match: Counter-trap fired: room=",
+    "a player leaving mid-match": "INFO arena.match: Player left mid-match: room=",
+    "a player rejoining": "INFO arena.match: Player rejoined: room=",
+    "match end by KO": "cause=ko winner=",
+    "match end by surrender": "cause=surrender winner=",
+    "match end by timeouts": "cause=timeouts winner=",
+    "match end by disconnect": "cause=disconnect winner=",
+    "a bug, with its context and traceback": "ERROR app: Unhandled error in queue-skill: user=",
+    "periodic health numbers": "INFO arena.stats: Stats: live_matches=",
+}
+missing = [what for what, needle in EXPECTED_LOG_EVENTS.items() if needle not in logged]
+check(f"all {len(EXPECTED_LOG_EVENTS)} kinds of events are logged (accounts, security, requests, connections, "
+      f"matches, turns, ends, bugs, stats)", missing == [], missing)
+check("a logged bug carries its traceback", 'Traceback (most recent call last)' in logged)
+check("a match start records the seed needed to replay it",
+      any('Match started:' in l and 'rng_seed=' in l and 'team=' in l for l in LOGS.lines))
+session_cookie = flask_client1.get_cookie('session')
+secrets_in_logs = {
+    'a password': 'testpass123' in logged,
+    'the SECRET_KEY': appmod.settings.secret_key in logged,
+    'a login cookie': bool(session_cookie) and session_cookie.value in logged,
+    'an email address': '@test.local' in logged,
+}
+check(f"no secret or personal data in {len(LOGS.lines)} log lines (passwords, SECRET_KEY, cookies, emails)",
+      not any(secrets_in_logs.values()), [k for k, v in secrets_in_logs.items() if v])
+check("rule violations are logged at DEBUG, not as errors (no false alarms)",
+      not any(l.startswith(('ERROR', 'WARNING')) and 'Refused ' in l for l in LOGS.lines))
 
 print()
 if FAILURES:

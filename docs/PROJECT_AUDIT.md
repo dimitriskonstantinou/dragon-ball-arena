@@ -163,7 +163,7 @@ Fixed with a lock per match (`locked_match()`, re-checks the match after waiting
 **BE-7 — LOW — Messages use roles, not names (by reading)**
 "GAME OVER! P1 WINS!" while players never see which role they are.
 
-**BE-8 — LOW — Logging is only configured under `__main__`; `print()` still used (by reading).** — ✅ FIXED in Step 26 (`configure_logging()` at import, one format `time level logger: message` for every runner, `LOG_LEVEL` in `config.py`; a host's own logging config is left alone). The server has no `print()` left; `seed_db.py` keeps one as CLI output.
+**BE-8 — LOW — Logging is only configured under `__main__`; `print()` still used (by reading).** — ✅ FIXED in Step 26, **extended in Step 35** (asked by the user: logs for bugs, deploys and everything else -- 9 log calls → every request, account/security event, connection, match/turn/end, error with context, periodic stats, startup with version; one format for app + gunicorn + libraries, text or JSON; secrets/emails provably never logged) (`configure_logging()` at import, one format `time level logger: message` for every runner, `LOG_LEVEL` in `config.py`; a host's own logging config is left alone). The server has no `print()` left; `seed_db.py` keeps one as CLI output.
 
 **BE-9 — IMPROVEMENT — `app.py` mixes auth, static serving, matchmaking and match handlers (414 lines)**
 Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the timer/reconnect work lands.

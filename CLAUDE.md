@@ -42,6 +42,8 @@ backend/
   test_browser_e2e.py       Playwright: real server + 2 headless browsers play a full match through the UI
   requirements.txt / requirements-dev.txt   runtime / test tools (playwright, coverage, pyflakes)
   requirements-server.txt   production web server (gunicorn + gevent; Docker image only -- gunicorn doesn't run on Windows)
+  gunicorn.conf.py          gunicorn settings (gevent, 1 worker, logging) -- top-level names ARE gunicorn settings
+  logging_setup.py          one log format (text/json, UTC) for app + gunicorn + libraries; safe_database_url, short
   photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
   game.db                   Local SQLite (gitignored; holds real local accounts)
 frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
@@ -167,8 +169,19 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   A failed save is logged ("Could not save match result: room=... winner=... p1_user=... p2_user=...") and
   rolled back, and never stops the players from seeing the end.
 - One account, one seat: `find-match` rejects accounts already queued or in an unfinished match.
-- Use `log` (logging), not `print`, in new code. Logging is set up once at import (`configure_logging`, level from
-  `LOG_LEVEL`, format `time level logger: message`); a host that configured logging itself is left alone.
+- **Logging (Step 35) -- every new feature logs its events.** Never `print`. Set up once at import
+  (`logging_setup.configure`; `LOG_LEVEL`, `LOG_FORMAT=text|json`, UTC timestamps); gunicorn and engineio/socketio
+  log through the same handler (one format, no duplicate lines). Loggers: `arena.http` (one line per request:
+  method, path, status, ms, ip, user -- API at INFO, static + `/healthz` at DEBUG), `arena.auth` (accounts,
+  logins, failures, rate limits, logouts, rejected old cookies), `arena.socket` (connects/disconnects; rule
+  violations at DEBUG), `arena.match` (searching, match start with teams + `rng_seed`, every committed turn with
+  its moves, timeouts, counter-traps, leave/rejoin, `Match ended: ... cause=ko|surrender|timeouts|disconnect`),
+  `arena.stats` (every 60 s: live matches, queue, players online), `app` (startup line with `APP_VERSION` = the
+  deploy, shutdown, database, **unexpected errors with `who()` context + payload + traceback**). Style: one line,
+  `Event: key=value ...`, ids not names where possible, untrusted input through `logging_setup.short()`.
+  **Never log** passwords, cookies, `SECRET_KEY`, database passwords (`safe_database_url`), emails, full socket
+  ids (first 6 chars only) -- the smoke test captures a whole run and fails on any of them, and its list of
+  expected events fails if one stops being logged (add new event kinds there).
 
 ### Socket.IO API (client ↔ server contract; document changes here)
 
@@ -299,7 +312,7 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - No secrets in code. **All settings come from `config.py`** (`config.load()` at app import): `ENV`
   (development | staging | production), `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `PORT`, `TURN_SECONDS`,
   `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, `LOGIN_FAILURE_LIMIT`/`LOGIN_WINDOW_SECONDS`,
-  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `SESSION_DAYS`, `LOG_LEVEL`,
+  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `SESSION_DAYS`, `LOG_LEVEL`, `LOG_FORMAT`, `APP_VERSION`,
   `SOCKETIO_ASYNC_MODE` (threading | gevent; the image sets gevent). Staging/production also require `DATABASE_URL`.
   A configuration error exits with code 3 (gunicorn then stops instead of restarting the worker forever). Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
   `test_config.py`. Staging/production refuse to start without a strong `SECRET_KEY`; development generates a random
