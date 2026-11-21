@@ -163,7 +163,7 @@ Fixed with a lock per match (`locked_match()`, re-checks the match after waiting
 **BE-7 — LOW — Messages use roles, not names (by reading)**
 "GAME OVER! P1 WINS!" while players never see which role they are.
 
-**BE-8 — LOW — Logging is only configured under `__main__`; `print()` still used (by reading).**
+**BE-8 — LOW — Logging is only configured under `__main__`; `print()` still used (by reading).** — ✅ FIXED in Step 26 (`configure_logging()` at import, one format `time level logger: message` for every runner, `LOG_LEVEL` in `config.py`; a host's own logging config is left alone). The server has no `print()` left; `seed_db.py` keeps one as CLI output.
 
 **BE-9 — IMPROVEMENT — `app.py` mixes auth, static serving, matchmaking and match handlers (414 lines)**
 Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the timer/reconnect work lands.
@@ -291,8 +291,9 @@ players it means the game can't load at all if that third-party server is slow o
 ### 4.9 Deployment
 
 Nothing deployable exists yet, which is expected. Plan: [DEPLOY_PLAN.md](DEPLOY_PLAN.md). Blockers found in code:
-SEC-1, SEC-2, DB-1, BE-1, BE-2, BE-3, dev server only, absolute image URLs built from `request.host_url` (mixed
-content behind an HTTPS proxy), socket.io from CDN, no health endpoint, no CI, no monitoring.
+SEC-1, SEC-2, DB-1, BE-1, BE-2, BE-3, dev server only, ~~absolute image URLs built from `request.host_url` (mixed
+content behind an HTTPS proxy)~~ (✅ Step 26: site-relative `/photos/...`), ~~socket.io from CDN~~ (✅ Step 21),
+~~no health endpoint~~ (✅ Step 26: `GET /healthz`), no CI, no monitoring.
 **Cost:** none incurred yet. **Scalability:** single process by design (in-memory games); measured CPU cost is tiny
 (0.5 ms/turn, 0.23 ms per player view), so one instance should go far. Real capacity is unmeasured until the load test (DEPLOY_PLAN Stage 5).
 

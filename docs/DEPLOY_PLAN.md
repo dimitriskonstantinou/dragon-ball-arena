@@ -150,10 +150,12 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 2. ✅ *(Step 20)* Cookies: `HttpOnly` + `SameSite=Lax` always, `Secure` automatically in staging/production.
 3. ✅ *(Step 22)* Behind a proxy: set `TRUSTED_PROXIES` (1 behind Render/one load balancer, 2 with Cloudflare in front
    as well) so ProxyFix reads the real client IP/scheme. **Without it the rate limits treat every player as one IP.**
-4. **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS proxies the
-   absolute URL can come out as `http://` and browsers block it (mixed content).
-5. `GET /healthz` → `{"ok": true}` plus a cheap DB check (used by the host + uptime monitor).
-6. Logging: Python `logging` to stdout (hosts collect stdout); replace `print()`; log tracebacks for non-`GameError`s.
+4. ✅ *(Step 26)* **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS
+   proxies the absolute URL can come out as `http://` and browsers block it (mixed content).
+5. ✅ *(Step 26)* `GET /healthz` → 200 `{"status": "ok"}` when the DB answers, 503 `{"status": "unavailable"}` when
+   not; `Cache-Control: no-store`; no login, reveals nothing else (used by the host + uptime monitor).
+6. ✅ *(Step 26)* Logging: Python `logging` to stderr (hosts collect stdout/stderr) in one format, level from
+   `LOG_LEVEL`; tracebacks for non-`GameError`s (Step 14).
 7. Move the `if __name__ == '__main__'` dev runner to dev-only; prod uses gunicorn.
 8. `.env.example` documenting every variable (never commit a real `.env`; add it to `.gitignore`).
 - **Check:** app starts with `ENV=production` + env vars set, fails clearly without `SECRET_KEY`; tests green.

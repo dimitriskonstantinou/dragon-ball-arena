@@ -23,14 +23,25 @@ from models import db, User, UserStats, Character, UserCharacter, Match
 from sqlalchemy.exc import IntegrityError
 
 log = logging.getLogger(__name__)
-if __name__ == '__main__':
-    # Before anything logs (incl. the migrations run at import below).
-    logging.basicConfig(level=logging.INFO)
+LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s: %(message)s'
 
 try:
     settings = config.load()
 except config.ConfigError as e:
     raise SystemExit(f"Configuration error: {e}")
+
+
+def configure_logging(level):
+    """One log format for every way the app runs (python app.py, gunicorn,
+    flask CLI, tests), set up before anything logs (incl. the migrations run at
+    import below). A host that already configured logging (e.g. gunicorn
+    --log-config) is left alone."""
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(level=level, format=LOG_FORMAT)
+
+
+configure_logging(settings.log_level)
 
 app = Flask(__name__)
 if settings.trusted_proxies:
@@ -205,10 +216,14 @@ def unlocked_character_ids(user):
     return list(CATALOG)
 
 
-def characters_for_user(user, base_url):
+PHOTOS_URL = '/photos/'   # site-relative: the same domain as the page, whatever it is
+
+
+def characters_for_user(user):
     """Fresh copies of this account's characters, ready for a match, with
-    image paths turned into absolute URLs for however the client reached this
-    server. Never modifies the shared catalog."""
+    image paths turned into site-relative URLs (/photos/...): they work under
+    any domain and behind a proxy, and never echo the request's Host header.
+    Never modifies the shared catalog."""
     result = {}
 
     def skill_urls(effects):
@@ -216,16 +231,16 @@ def characters_for_user(user, base_url):
         # the same URL as regular skill images, or the browser 404s on them.
         for effect in effects:
             if effect.get('primed_image'):
-                effect['primed_image'] = base_url + 'photos/skills/' + effect['primed_image']
+                effect['primed_image'] = PHOTOS_URL + 'skills/' + effect['primed_image']
             skill_urls(effect.get('primed_effects', []))
 
     for cid in unlocked_character_ids(user):
         char_dict = copy.deepcopy(CATALOG[cid])
         char_dict['defense'] = 0
-        char_dict['image'] = base_url + 'photos/' + char_dict['image']
+        char_dict['image'] = PHOTOS_URL + char_dict['image']
         for skill in char_dict['skills']:
             if skill.get('image'):
-                skill['image'] = base_url + 'photos/skills/' + skill['image']
+                skill['image'] = PHOTOS_URL + 'skills/' + skill['image']
             skill_urls(skill['effects'])
         result[cid] = char_dict
     return result
@@ -384,6 +399,27 @@ def end_game(room_id, winner, reason=None):
 
 # --- static file / photo serving --------------------------------------------
 
+@app.route('/healthz')
+def healthz():
+    """For the host's health checks: 200 when the database answers (the
+    content is validated before the server starts at all), else 503. Says
+    nothing about the setup -- anyone can call it."""
+    try:
+        db.session.execute(sa.select(1))
+        ok = True
+    except Exception:
+        log.exception("Health check: database unreachable")
+        try:
+            db.session.rollback()
+        except Exception:
+            pass   # the connection is gone; still answer 503, not 500
+        ok = False
+    response = jsonify({'status': 'ok' if ok else 'unavailable'})
+    response.status_code = 200 if ok else 503
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.route('/photos/<path:filename>')
 def serve_image(filename):
     return send_from_directory('photos', filename)
@@ -528,7 +564,7 @@ def handle_connect():
     with USER_SIDS_LOCK:
         USER_SIDS.setdefault(user.id, set()).add(request.sid)
     # Display fields only: skill mechanics stay server-side (same rule as view_for).
-    char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user, request.host_url).values()]
+    char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user).values()]
     emit('character-list', char_list)
     rejoin_match(user)
 
@@ -650,7 +686,7 @@ def handle_find_match(selected_char_ids):
         if len(set(selected_char_ids)) != 3:
             raise GameError("Pick 3 different characters!")
 
-        available_chars = characters_for_user(user, request.host_url)
+        available_chars = characters_for_user(user)
         my_team = [copy.deepcopy(available_chars[c]) for c in selected_char_ids if c in available_chars]
         if len(my_team) != 3:
             raise GameError("One or more selected characters aren't unlocked on this account!")

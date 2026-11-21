@@ -6,6 +6,7 @@ checks launch real interpreters importing app.py (temporary database, so the
 real backend/game.db is never touched).
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,11 @@ def test_number_settings_are_validated():
           (s.login_failure_limit, s.login_window_seconds, s.register_limit, s.register_window_seconds,
            s.trusted_proxies) == (5, 300, 5, 3600, 0))
     check("logins expire after 30 days without a visit by default", s.session_days == 30, s.session_days)
+    check("logging defaults to INFO", s.log_level == 'INFO', s.log_level)
+    s, err = load({'LOG_LEVEL': ' warning '})
+    check("LOG_LEVEL is case/space tolerant", err is None and s.log_level == 'WARNING', (s, err))
+    _, err = load({'LOG_LEVEL': 'LOUD'})
+    check("an unknown LOG_LEVEL is rejected with the allowed values", err and 'LOG_LEVEL must be one of' in err, err)
     for name, bad in (('TURN_SECONDS', 'abc'), ('TURN_SECONDS', '0'), ('TURN_SECONDS', '601'),
                       ('RECONNECT_SECONDS', '-1'), ('PORT', '70000'), ('PORT', '5.5'),
                       ('LOGIN_FAILURE_LIMIT', '0'), ('REGISTER_WINDOW_SECONDS', 'hour'), ('TRUSTED_PROXIES', '9'),
@@ -155,6 +161,13 @@ def test_real_server_startup():
           proc.returncode == 0 and 'started True' in proc.stdout, (proc.returncode, proc.stderr[-300:]))
     check("...with HTTPS-only, SameSite=Lax, HttpOnly login cookies and only the listed origin",
           "cookie True Lax True origins ['https://dragonballarena.com']" in proc.stdout, proc.stdout)
+    proc = start_app({})
+    check("a real start logs in one format (time, level, logger, message) without any setup by the runner",
+          re.search(r'^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} INFO alembic\.runtime\.migration: ', proc.stderr, re.M)
+          is not None, proc.stderr[-400:])
+    proc = start_app({'LOG_LEVEL': 'WARNING'})
+    check("...and LOG_LEVEL=WARNING keeps routine INFO lines out of the logs",
+          proc.returncode == 0 and ' INFO ' not in proc.stderr, proc.stderr[-400:])
     proc = start_app({'TURN_SECONDS': 'soon'})
     check("a bad number setting stops the real server with a clear message",
           proc.returncode != 0 and 'TURN_SECONDS must be a whole number' in proc.stderr, proc.stderr[-300:])

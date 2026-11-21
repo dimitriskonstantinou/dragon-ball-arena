@@ -135,7 +135,8 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   A failed save is logged ("Could not save match result: room=... winner=... p1_user=... p2_user=...") and
   rolled back, and never stops the players from seeing the end.
 - One account, one seat: `find-match` rejects accounts already queued or in an unfinished match.
-- Use `log` (logging), not `print`, in new code.
+- Use `log` (logging), not `print`, in new code. Logging is set up once at import (`configure_logging`, level from
+  `LOG_LEVEL`, format `time level logger: message`); a host that configured logging itself is left alone.
 
 ### Socket.IO API (client ↔ server contract; document changes here)
 
@@ -158,7 +159,10 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 | `error-msg` | `GameError` text or generic server error |
 
 HTTP: `POST /api/register {username,email,password}`, `POST /api/login` (both: 429 when rate-limited),
-`POST /api/logout` (logs the account out on every device), `GET /api/me` (401 when not logged in).
+`POST /api/logout` (logs the account out on every device), `GET /api/me` (401 when not logged in),
+`GET /healthz` (200 `{"status":"ok"}` / 503 `{"status":"unavailable"}` when the DB doesn't answer; for the host).
+Image URLs sent to clients are site-relative (`/photos/...`, `app.PHOTOS_URL`); never build URLs from the request's
+Host (`request.host_url`): behind a proxy it's the internal address, and clients control it.
 
 ### Game engine (`game_engine.py`)
 - **Pure functions over plain dicts.** No Flask/DB imports; that's what makes it fast (~0.5 ms/turn) and testable.
@@ -244,7 +248,7 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login` (both: 4
 - No secrets in code. **All settings come from `config.py`** (`config.load()` at app import): `ENV`
   (development | staging | production), `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `PORT`, `TURN_SECONDS`,
   `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, `LOGIN_FAILURE_LIMIT`/`LOGIN_WINDOW_SECONDS`,
-  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`. Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
+  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `SESSION_DAYS`, `LOG_LEVEL`. Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
   `test_config.py`. Staging/production refuse to start without a strong `SECRET_KEY`; development generates a random
   key once into `backend/.dev_secret_key` (git-ignored; delete it to log every local session out).
 - **Origins & cookies (Step 20):** Socket.IO accepts only `ALLOWED_ORIGINS` (development default: same origin;

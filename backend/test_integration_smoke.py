@@ -109,15 +109,46 @@ def all_image_urls(char):
 
 with appmod.app.app_context():
     user1 = appmod.User.query.filter_by(username=f'p1_{suffix}').first()
-    server_side = appmod.characters_for_user(user1, 'http://localhost/')
+    server_side = appmod.characters_for_user(user1)
 
 # Regression: primed_image (e.g. Yamcha's Spirit Ball icon) used to be sent as a
 # bare filename, so the browser 404'd on it (found by the Playwright test).
 # Checked on the server-side team data, which still carries the effects.
 urls = [u for c in server_side.values() for u in all_image_urls(c)]
-relative = [u for u in urls if not u.startswith('http')]
-check("every image URL in match teams is absolute, including primed skill images",
-      relative == [] and any('SpiritBall' in u for u in urls) == ('yamcha_saiyan_saga' in server_side), relative)
+not_site_relative = [u for u in urls if not u.startswith('/photos/')]
+check("every image URL in match teams is a site-relative /photos/ URL, including primed skill images",
+      not_site_relative == [] and any('SpiritBall' in u for u in urls) == ('yamcha_saiyan_saga' in server_side),
+      not_site_relative)
+missing = [u for u in sorted(set(urls)) if flask_client1.get(u).status_code != 200]
+check(f"...and every one of them ({len(set(urls))}) is actually served", missing == [], missing)
+
+# --- Step 26 regression: image URLs were built from the request's Host header, so
+# behind a proxy they pointed at its internal address (broken images) and any
+# client could make the server echo a host name of its choice. No health check. ---
+proxied = appmod.app.test_client()   # the browser's view: logged in on the address the proxy forwards
+register(proxied, f'px_{suffix}', f'px_{suffix}@test.local')
+proxied.post('/api/login', json={'username': f'px_{suffix}', 'password': 'testpass123'}, base_url='http://127.0.0.1:8000')
+behind_proxy = appmod.socketio.test_client(appmod.app, flask_test_client=proxied, headers={'Host': '127.0.0.1:8000'})
+listed = [c for e in behind_proxy.get_received() if e['name'] == 'character-list' for c in e['args'][0]]
+behind_proxy.disconnect()
+check("the lobby's image URLs don't depend on the Host header a request arrived with",
+      listed and all(c['image'].startswith('/photos/') and '8000' not in c['image'] for c in listed),
+      [c['image'] for c in listed[:2]])
+health = appmod.app.test_client().get('/healthz')
+check("/healthz answers 200 {'status': 'ok'} without a login, never cached, revealing nothing else",
+      health.status_code == 200 and health.get_json() == {'status': 'ok'}
+      and health.headers.get('Cache-Control') == 'no-store', (health.status_code, health.get_data(as_text=True)))
+real_execute = appmod.db.session.execute
+def database_down(*a, **k):
+    raise RuntimeError('simulated database outage')
+appmod.db.session.execute = database_down
+try:
+    sick = appmod.app.test_client().get('/healthz')
+finally:
+    appmod.db.session.execute = real_execute
+check("...and 503 'unavailable' when the database doesn't answer (so the host can restart/alert)",
+      sick.status_code == 503 and sick.get_json() == {'status': 'unavailable'}, sick.status_code)
+check("...and the app works normally again afterwards", appmod.app.test_client().get('/healthz').status_code == 200)
 
 # --- Step 22 regression: unlimited password guessing and account creation from one IP.
 # Limiters with the real defaults (5 failed logins / 5 min, 5 accounts / hour) are swapped in. ---
@@ -314,7 +345,7 @@ try:
     with appmod.app.app_context():
         appmod.sync_character_registry(reduced)
         still_registered = appmod.db.session.get(appmod.Character, removed_id) is not None
-        offered = appmod.characters_for_user(user1, 'http://localhost/')
+        offered = appmod.characters_for_user(user1)
 finally:
     appmod.CATALOG = real_catalog
 check("a character removed from content stays in the registry (never deleted)", still_registered)
@@ -326,7 +357,7 @@ with appmod.app.app_context():
         appmod.UserCharacter.character_id != removed_id).delete()
     appmod.db.session.commit()
     check("an older account still gets characters added after it registered",
-          list(appmod.characters_for_user(user1, 'http://localhost/')) == list(catalog))
+          list(appmod.characters_for_user(user1)) == list(catalog))
 
 # Connecting no longer reads the characters table (roster comes from memory).
 from sqlalchemy import event
@@ -370,8 +401,8 @@ else:
     check("initial update-state received", update is not None)
     state = update['args'][0]
     any_char = state['players'][role1]['team'][0]
-    check("character image URL is absolute and host-derived (not a stale hardcoded value)",
-          any_char['image'].startswith('http') and '/photos/' in any_char['image'], any_char['image'])
+    check("character image URL in the match state is site-relative (works under any domain / behind a proxy)",
+          any_char['image'].startswith('/photos/characters/'), any_char['image'])
 
     p1_client = client1 if role1 == 'p1' else client2
     p2_client = client2 if role1 == 'p1' else client1

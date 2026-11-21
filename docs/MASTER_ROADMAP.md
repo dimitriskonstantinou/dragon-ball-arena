@@ -99,7 +99,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | ✅ 3.3 Login/register rate limits — *Step 22* | SEC-3 | Done: 6th failed login / 6th account per IP → 429; proxy-aware via `TRUSTED_PROXIES` |
 | ✅ 3.4 Session versioning + lifetime — *Step 24* | SEC-4 | Done: a copied cookie dies at logout; open sockets closed; 30-day expiry; first real migration |
 | ✅ 3.5 Case-insensitive usernames, email check, IntegrityError handled — *Step 25* | SEC-5 | Done: look-alike names 409, bad emails 400, simultaneous registration 500 → 409; second real migration |
-| 3.6 Relative image URLs, `/healthz`, logging config, ~~self-hosted socket.io~~ (✅ *Step 21*) | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
+| ✅ 3.6 Relative image URLs, `/healthz`, logging config, self-hosted socket.io (*Step 21*) — *Step 26* | DEPLOY Stage 1, SEC-8, BE-8 | Done: Host header no longer in any URL (smoke + probe); `/healthz` 200/503; one log format + `LOG_LEVEL`. Real proxy not tried yet (DEV site) |
 
 ## Phase 4 — Content system & cleanup
 
@@ -165,13 +165,14 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.6 / Step 26: ready to run behind a proxy (finishes Phase 3).** Character/skill image URLs are absolute
-(built from the request's host), which breaks behind a proxy or a different domain; there is no health-check endpoint
-for the host to probe; and logging is only configured when running `python app.py` (under gunicorn nothing would be
-logged in a known format). Plan: relative image URLs (smaller payload too), `GET /healthz` (DB reachable + content
-loaded, no secrets), logging configured in one place with the level from `config.py`. That finishes Phase 3 and
-unblocks the DEV site (DEPLOY_PLAN Stage 1).
-*(Step 25 done: case-insensitive usernames, email check, clean "taken" on races -- SEC-5.)*
+**1.9 / Step 27: a mutual KO is a draw (ENG-2, rule decided 2026-11-20).** When the last characters of both teams
+fall in the same turn (e.g. a reflected or damage-over-time hit), the engine currently names whoever it checks first
+as the winner. Plan: `check_winner` returns a draw, both players see "Draw", the result is saved with no winner and
+counted in a new `draws` stat (a migration -- the reason this waited for Step 23), streaks handled, tests for each
+path that can end a turn (commit, start-of-turn ticks, timeout). Then the other decided rules (1.10 invulnerable =
+untargetable, 1.11 reactive defenses per skill, 1.12 seeded RNG), which finish Phase 1 -- DEPLOY_PLAN Stage 0 wants
+Phases 1–3 done before anyone else plays.
+*(Step 26 done: relative image URLs, `/healthz`, logging config -- **Phase 3 complete**.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

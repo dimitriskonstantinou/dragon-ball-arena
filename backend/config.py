@@ -18,6 +18,7 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   LOGIN_FAILURE_LIMIT / LOGIN_WINDOW_SECONDS   failed logins allowed per client IP per window (default 5 / 300)
   REGISTER_LIMIT / REGISTER_WINDOW_SECONDS     new accounts allowed per client IP per window (default 5 / 3600)
   SESSION_DAYS       a login expires after this many days without any visit (default 30, 1..365)
+  LOG_LEVEL          DEBUG | INFO (default) | WARNING | ERROR
   TRUSTED_PROXIES    how many reverse proxies sit in front of the app (default 0). Set it (e.g. 1 on Render)
                      so the real client IP is read from X-Forwarded-For -- otherwise every player shares the
                      proxy's IP and one attacker could rate-limit everybody.
@@ -57,6 +58,7 @@ class Settings:
     register_window_seconds: int
     trusted_proxies: int
     session_days: int
+    log_level: str
 
     @property
     def is_production_like(self):
@@ -147,4 +149,15 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
         register_window_seconds=_int(environ, 'REGISTER_WINDOW_SECONDS', 3600, 1, 86_400),
         trusted_proxies=_int(environ, 'TRUSTED_PROXIES', 0, 0, 5),
         session_days=_int(environ, 'SESSION_DAYS', 30, 1, 365),
+        log_level=_log_level(environ),
     )
+
+
+LOG_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+
+
+def _log_level(environ):
+    level = (environ.get('LOG_LEVEL') or 'INFO').strip().upper()
+    if level not in LOG_LEVELS:
+        raise ConfigError(f"LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {environ.get('LOG_LEVEL')!r}")
+    return level
