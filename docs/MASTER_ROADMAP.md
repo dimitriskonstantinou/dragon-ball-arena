@@ -171,16 +171,16 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 **Going online (user's choice after Step 32): DEPLOY_PLAN Stages 2 → 3 → 4, then the DEV site.**
 
-**Stage 3 / Step 34: production server + container.** `python app.py` is the development server (Werkzeug,
-`allow_unsafe_werkzeug`); online it must run under gunicorn with the gevent worker -- **exactly 1 worker**, since
-matches live in memory -- in a Docker image (`python:3.12-slim`, the production Python version; non-root user;
-`.dockerignore` keeps `game.db`, secrets and `.git` out). Plan: pin gunicorn + gevent (pip-audit), a `wsgi`
-entry point, `Dockerfile` + `.dockerignore`, then prove it: build the image, run it against the Postgres container
-with production settings, and play a full match through it in the browser test (real websockets, `101 Switching
-Protocols`), plus `/healthz` and the turn timer under gevent. Image optimisation (AST-1) and cache headers stay
-separate steps. Then Stage 4: GitHub Actions running `python tests.py`.
-*(Step 33 done: PostgreSQL verified -- migrations, release step and the whole smoke suite pass on Postgres 16.
-Step 32: Phase 1 complete.)*
+**Step 35 (asked by the user with Step 34): logging everywhere -- bugs, deploys, matches, security.** Today only
+errors and a few events are logged, in two formats (gunicorn's and the app's), with no request log and nothing that
+says which version is running. Plan: one consistent format for gunicorn + the app (optionally JSON for a hosted log
+service), a startup line with version (git commit) / environment / settings summary (never secrets), request logs
+with timing, match lifecycle (created, each turn's outcome, end + reason + duration), account events (register,
+login success/failure, logout, rate-limit hits -- never passwords or cookies), every error with context (room, user,
+event), periodic health numbers (live matches, connected players), and a check that no secret ever reaches a log.
+Then DEPLOY_PLAN Stage 4: GitHub Actions running `python tests.py` (+ `--container`).
+*(Step 34 done: production server + Docker image -- gunicorn + gevent, verified end to end in containers.
+Step 33: PostgreSQL. Step 32: Phase 1 complete.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

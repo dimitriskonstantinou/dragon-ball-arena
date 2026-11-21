@@ -1,6 +1,6 @@
 {
-  "updated": "2026-11-21 19:15",
-  "git": "45698e9",
+  "updated": "2026-11-21 22:50",
+  "git": "89f55ca",
   "suites": {
     "engine": {
       "pass": 229,
@@ -11,7 +11,7 @@
       "skipped": 0
     },
     "config": {
-      "pass": 53,
+      "pass": 58,
       "skipped": 0
     },
     "rate_limit": {
@@ -41,13 +41,17 @@
     "smoke_postgres": {
       "pass": 158,
       "skipped": 0
+    },
+    "container": {
+      "pass": 22,
+      "skipped": 0
     }
   },
   "probe_confirmed": [
     "reflect ignores attacker's invulnerability/defense"
   ],
   "payload_bytes": 8606,
-  "turn_ms": 0.269,
+  "turn_ms": 0.294,
   "coverage": 92.0,
   "lint_issues": 3
 }

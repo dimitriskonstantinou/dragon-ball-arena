@@ -390,30 +390,39 @@ def test_invulnerable_enemy_is_greyed_out_and_cant_be_picked(browser, url):
     """ENG-4 (Step 28): after Afterimage, that character is untargetable -- greyed out
     while choosing a single-target attack; clicking it explains why and queues nothing."""
     errors = []
-    ctx1, p1, _ = new_player(browser, url, errors, 'mu')
-    ctx2, p2, _ = new_player(browser, url, errors, 'nu')
-    find_match(p1, [0, 1, 2])
-    find_match(p2, [2, 3, 4])
-    for p in (p1, p2):
-        p.wait_for_selector('#game-screen', state='visible')
-        p.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
-    first, second = (p1, p2) if is_my_turn(p1) else (p2, p1)
+    # The second player needs an AFFORDABLE single-target attack, which depends on their random Ki dice.
+    # If the dice don't allow it, start a fresh match (a real bug fails every attempt; bad dice don't repeat).
+    picked, attempts = None, 0
+    while picked is None and attempts < 5:
+        attempts += 1
+        ctx1, p1, _ = new_player(browser, url, errors, f'mu{attempts}')
+        ctx2, p2, _ = new_player(browser, url, errors, f'nu{attempts}')
+        find_match(p1, [0, 1, 2])
+        find_match(p2, [2, 3, 4])
+        for p in (p1, p2):
+            p.wait_for_selector('#game-screen', state='visible')
+            p.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+        first, second = (p1, p2) if is_my_turn(p1) else (p2, p1)
 
-    first.locator('#my-team .char-card').nth(0).locator('.skill-btn:not([disabled])', has_text='Untargetable').click()
-    first.locator('#my-team .char-card').nth(0).locator('.char-img').click(position={'x': 12, 'y': 100})
-    first.wait_for_selector('#my-team .char-card >> nth=0 >> .cancel-btn')
-    end_turn(first)
-    second.wait_for_selector('#end-turn', state='visible')
-    second.wait_for_function("document.querySelectorAll('#enemy-team .char-card')[0].querySelector('.status-badge, [class*=status]')")
+        first.locator('#my-team .char-card').nth(0).locator('.skill-btn:not([disabled])', has_text='Untargetable').click()
+        first.locator('#my-team .char-card').nth(0).locator('.char-img').click(position={'x': 12, 'y': 100})
+        first.wait_for_selector('#my-team .char-card >> nth=0 >> .cancel-btn')
+        end_turn(first)
+        second.wait_for_selector('#end-turn', state='visible')
+        second.wait_for_function(
+            "document.querySelectorAll('#enemy-team .char-card')[0].querySelector('.status-badge, [class*=status]')")
 
-    picked = None
-    buttons = second.locator('#my-team .skill-btn:not([disabled])', has_text='Dmg')
-    for j in range(buttons.count()):
-        buttons.nth(j).click()
-        guarded_class = second.locator('#enemy-team .char-card').nth(0).get_attribute('class') or ''
-        if second.locator('#instruction').inner_text() == 'SELECT AN ENEMY' and 'untargetable' in guarded_class:
-            picked = buttons.nth(j).inner_text().splitlines()[0]
-            break
+        buttons = second.locator('#my-team .skill-btn:not([disabled])', has_text='Dmg')
+        for j in range(buttons.count()):
+            buttons.nth(j).click()
+            guarded_class = second.locator('#enemy-team .char-card').nth(0).get_attribute('class') or ''
+            if second.locator('#instruction').inner_text() == 'SELECT AN ENEMY' and 'untargetable' in guarded_class:
+                picked = buttons.nth(j).inner_text().splitlines()[0]
+                break
+        if picked is None:
+            ctx1.close()
+            ctx2.close()
+    print(f"    (needed {attempts} match(es) to get an affordable single-target attack -- random Ki dice)")
     check("choosing a single-target attack greys out the invulnerable enemy", picked is not None, picked)
     guarded = second.locator('#enemy-team .char-card').nth(0)
     second.wait_for_timeout(400)   # .char-card fades with a 0.2 s transition
@@ -443,9 +452,19 @@ FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits, test_disconnect_for
 
 if __name__ == '__main__':
     tmp = tempfile.mkdtemp(prefix='dba_e2e_')
-    proc, url, log = start_server(tmp)
-    fast_proc, fast_url, fast_log = start_server(tmp, name='fast_timer_server', TURN_SECONDS='2',
-                                                 RECONNECT_SECONDS='3')
+    # Normally the tests start their own dev servers. E2E_URL / E2E_FAST_URL point them at servers that
+    # are already running instead -- e.g. the production Docker image (the fast one must have
+    # TURN_SECONDS=2 RECONNECT_SECONDS=3 and both REGISTER_LIMIT raised, as start_server does).
+    servers = []
+    url, fast_url = os.environ.get('E2E_URL'), os.environ.get('E2E_FAST_URL')
+    if not url:
+        proc, url, log = start_server(tmp)
+        servers.append((proc, log))
+    if not fast_url:
+        fast_proc, fast_url, fast_log = start_server(tmp, name='fast_timer_server', TURN_SECONDS='2',
+                                                     RECONNECT_SECONDS='3')
+        servers.append((fast_proc, fast_log))
+    print(f"servers: {url} and {fast_url} ({'external' if not servers else 'started here'})")
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
@@ -468,7 +487,7 @@ if __name__ == '__main__':
                 OPEN_PAGES.clear()
             browser.close()
     finally:
-        for server, server_log in ((proc, log), (fast_proc, fast_log)):
+        for server, server_log in servers:
             server.terminate()
             server.wait(timeout=10)
             server_log.close()

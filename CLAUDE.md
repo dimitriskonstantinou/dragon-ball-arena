@@ -41,12 +41,15 @@ backend/
   test_integration_smoke.py Full stack in-process: HTTP + Socket.IO + DB
   test_browser_e2e.py       Playwright: real server + 2 headless browsers play a full match through the UI
   requirements.txt / requirements-dev.txt   runtime / test tools (playwright, coverage, pyflakes)
+  requirements-server.txt   production web server (gunicorn + gevent; Docker image only -- gunicorn doesn't run on Windows)
   photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
   game.db                   Local SQLite (gitignored; holds real local accounts)
 frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
 tests.py   ONE command that checks everything + compares with tools/tests_baseline.json (run before/after every change)
+Dockerfile · .dockerignore   production image (python:3.12-slim, gunicorn + gevent, 1 worker, non-root, HEALTHCHECK)
 tools/     measure.py (detailed metrics snapshot) · probe_exploits.py (reproduces known bugs) ·
-           tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates)
+           tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates) ·
+           check_container.py (builds + proves the production image; `tests.py --container`)
 docs/      plans, audit, roadmap, step log, measurements/
 ```
 
@@ -58,6 +61,8 @@ docs/      plans, audit, roadmap, step log, measurements/
 python tests.py --quick                # ~12 s: engine, content, rate limit, smoke (+ runner gates) -- the edit loop
 python tests.py                        # ~90 s: ALL suites incl. browser + PostgreSQL, probe, coverage, lint, payload, speed
 python tests.py --no-postgres          # same without the PostgreSQL suites (they WARN-skip anyway if Docker is off)
+python tests.py --container            # + build and prove the production Docker image (~3 min more): before any
+                                       # change to the Dockerfile/requirements/server setup, and before deploys
 python tests.py --update-baseline      # only after an INTENDED change (new tests, fixed exploit, accepted payload
                                        # growth): writes tools/tests_baseline.json -- commit it, explain it in the report
 ```
@@ -294,7 +299,9 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - No secrets in code. **All settings come from `config.py`** (`config.load()` at app import): `ENV`
   (development | staging | production), `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `PORT`, `TURN_SECONDS`,
   `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, `LOGIN_FAILURE_LIMIT`/`LOGIN_WINDOW_SECONDS`,
-  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `SESSION_DAYS`, `LOG_LEVEL`. Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
+  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `SESSION_DAYS`, `LOG_LEVEL`,
+  `SOCKETIO_ASYNC_MODE` (threading | gevent; the image sets gevent). Staging/production also require `DATABASE_URL`.
+  A configuration error exits with code 3 (gunicorn then stops instead of restarting the worker forever). Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
   `test_config.py`. Staging/production refuse to start without a strong `SECRET_KEY`; development generates a random
   key once into `backend/.dev_secret_key` (git-ignored; delete it to log every local session out).
 - **Origins & cookies (Step 20):** Socket.IO accepts only `ALLOWED_ORIGINS` (development default: same origin;
@@ -328,8 +335,12 @@ User supplies all art (don't auto-source anime stills). Portraits → `photos/ch
 Planned: real extensions + resize via a tool (AST-1).
 
 ### Deployment
-Not deployed yet (Stage 2 PostgreSQL verified in Step 33; next Stage 3). Follow DEPLOY_PLAN: DEV site from `dev`, PROD from `main`, separate DBs/secrets, Postgres +
-migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end live matches until state moves to Redis.
+Not deployed yet (Stage 2 PostgreSQL: Step 33; Stage 3 production image: Step 34). Follow DEPLOY_PLAN: DEV site from
+`dev`, PROD from `main`, separate DBs/secrets, Postgres + migrations, gunicorn + gevent with **one worker** (in-memory
+games), deploys end live matches until state moves to Redis. The image: `docker build -t dragon-ball-arena .`; run with
+`ENV`, `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES` as environment variables (see the Dockerfile).
+Under gevent, background work must use `socketio.sleep` / `socketio.start_background_task` (never `time.sleep` /
+raw threads), or it blocks every match. Docker commands from Git Bash need `MSYS_NO_PATHCONV=1` for container paths.
 
 ## Important decisions (and why)
 - **Server-authoritative engine, per-player views** (Steps 1–9): anti-cheat for online PvP.

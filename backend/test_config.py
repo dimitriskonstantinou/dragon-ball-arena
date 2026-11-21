@@ -16,6 +16,7 @@ import config
 FAILURES = []
 BACKEND = os.path.dirname(os.path.abspath(__file__))
 GOOD_KEY = 'k' * 64
+PG = 'postgresql+psycopg://u:p@db.example/dba'   # load() only parses it; nothing connects
 
 
 def check(name, condition, detail=""):
@@ -61,14 +62,19 @@ def test_production_requires_a_real_secret():
         check(f"{env} with a short SECRET_KEY refuses to start", err and 'at least' in err, err)
         _, err = load({'ENV': env, 'SECRET_KEY': 'dev-secret-key-change-in-production'})
         check(f"{env} with the old public key refuses to start", err and 'publicly known' in err, err)
-        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com', 'DATABASE_URL': PG})
         check(f"{env} with a proper SECRET_KEY starts", err is None and s.secret_key == GOOD_KEY and s.is_production_like,
               err)
     _, err = load({'ENV': 'prod'})
     check("an unknown ENV value is rejected (typos must not silently mean development)", err and 'ENV must be' in err,
           err)
-    s, err = load({'ENV': ' Production ', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+    s, err = load({'ENV': ' Production ', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com',
+                   'DATABASE_URL': PG})
     check("ENV is case/space tolerant", err is None and s.env == 'production', err)
+    for env in ('staging', 'production'):
+        _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+        check(f"{env} without DATABASE_URL refuses to start (no silent SQLite file inside the server)",
+              err and 'DATABASE_URL is required' in err, err)
 
 
 def test_allowed_origins():
@@ -88,7 +94,7 @@ def test_allowed_origins():
         check(f"{env} requires ALLOWED_ORIGINS", err and 'ALLOWED_ORIGINS is required' in err, err)
         _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'http://dragonballarena.com'})
         check(f"{env} requires https origins", err and 'must use https://' in err, err)
-        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com', 'DATABASE_URL': PG})
         check(f"{env} with https origins starts", err is None and s.allowed_origins == ('https://dragonballarena.com',), err)
 
 
@@ -99,6 +105,12 @@ def test_number_settings_are_validated():
            s.trusted_proxies) == (5, 300, 5, 3600, 0))
     check("logins expire after 30 days without a visit by default", s.session_days == 30, s.session_days)
     check("logging defaults to INFO", s.log_level == 'INFO', s.log_level)
+    check("Socket.IO runs in threading mode by default (dev server, tests)", s.socketio_async_mode == 'threading')
+    s, err = load({'SOCKETIO_ASYNC_MODE': ' Gevent '})
+    check("SOCKETIO_ASYNC_MODE=gevent is accepted (production under gunicorn)",
+          err is None and s.socketio_async_mode == 'gevent', (s, err))
+    _, err = load({'SOCKETIO_ASYNC_MODE': 'eventlet'})
+    check("an unsupported SOCKETIO_ASYNC_MODE is rejected", err and 'SOCKETIO_ASYNC_MODE must be one of' in err, err)
     s, err = load({'LOG_LEVEL': ' warning '})
     check("LOG_LEVEL is case/space tolerant", err is None and s.log_level == 'WARNING', (s, err))
     _, err = load({'LOG_LEVEL': 'LOUD'})
@@ -154,7 +166,7 @@ print("other", other.status_code, "attacker", again.status_code)
 def test_real_server_startup():
     proc = start_app({'ENV': 'production'})
     check("a real production start without SECRET_KEY exits with a configuration error (no traceback)",
-          proc.returncode != 0 and 'Configuration error: SECRET_KEY is required' in proc.stderr
+          proc.returncode == 3 and 'Configuration error: SECRET_KEY is required' in proc.stderr
           and 'Traceback' not in proc.stderr, (proc.returncode, proc.stderr[-300:]))
     proc = start_app({'ENV': 'production', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
     check("a real production start with a proper SECRET_KEY and origins works",

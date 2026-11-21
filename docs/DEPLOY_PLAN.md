@@ -175,13 +175,20 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 6. ✅ The whole smoke suite runs against Postgres too (`smoke_postgres` in `tests.py`; CI will do the same).
 - **Check:** ✅ fresh Postgres → upgrade → seed → smoke test passes; re-running seed is a no-op (all automated).
 
-### Stage 3 — Production server & container
-1. Add `gunicorn` + `gevent` (pinned). Start command:
-   `gunicorn -k gevent -w 1 --bind 0.0.0.0:$PORT app:app`
-   **Exactly 1 worker**: in-memory games can't be shared between processes. Confirm the exact worker class
-   against the Flask-SocketIO deployment docs for the pinned versions, and verify websockets in Stage 5.
-2. `Dockerfile` on `python:3.12-slim`: install requirements, copy `backend/` + `frontend/`, non-root user,
-   `CMD` = the gunicorn line. `.dockerignore` excludes `game.db`, `__pycache__`, `.git`.
+### Stage 3 — Production server & container — ✅ *items 1–3 done in Step 34*
+1. ✅ `backend/requirements-server.txt`: gunicorn 27.0.1 + gevent 26.9.0 + packaging 26.3 (pip-audit clean). Start
+   command (in the Dockerfile): `gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:$PORT app:app`.
+   **Exactly 1 worker**: in-memory games can't be shared between processes. Websockets work through
+   `simple-websocket` (python-engineio's gevent driver; no gevent-websocket needed) -- verified: the browser's
+   transport is `websocket`. `SOCKETIO_ASYNC_MODE=gevent` is set by the image (default `threading` everywhere else).
+2. ✅ `Dockerfile` on `python:3.12-slim` (283 MB): dependencies layer first, `backend/` + `frontend/`, non-root user
+   `arena`, Docker `HEALTHCHECK` on `/healthz`. `.dockerignore` keeps out `game.db`, `.dev_secret_key`, `.env`, `.git`,
+   docs, tools and tests. Settings only via environment variables.
+   **Proof (`python tests.py --container` / `tools/check_container.py`, 22 checks):** production settings on
+   PostgreSQL (migrations at start, `/healthz`, Secure/HttpOnly/SameSite cookie, foreign origin refused, Docker
+   health "healthy"); missing `SECRET_KEY`/`DATABASE_URL` stops the container with a clear error (no restart loop);
+   all backend suites pass on the image's Python 3.12; all 39 browser checks play through two containers over real
+   websockets, incl. turn timeouts and disconnect forfeits under gevent.
 3. ✅ *(Step 21)* The socket.io client is served from our own server (`frontend/vendor/socket.io-4.5.4.min.js`,
    versioned filename, so it can get long cache headers in Stage 3).
 4. Optimize images (audit AST-1): ~2 MB → ~200 KB, since every player downloads them.

@@ -5,6 +5,7 @@ One command that checks the whole project, before and after every change.
     python tests.py --quick             # fast loop (~12 s): engine, content, rate limit, smoke, runner gates
     python tests.py --no-browser        # everything except the Playwright browser run
     python tests.py --no-postgres       # everything except the PostgreSQL suites
+    python tests.py --container         # everything + the production Docker image (~4 min more; before deploys)
     python tests.py --update-baseline   # after an INTENDED change: accept the new numbers (explain why in the report)
     python tests.py --save report.md    # also write the report to a file
 
@@ -54,6 +55,7 @@ SUITES = [
     ('browser', 'test_browser_e2e.py', False, False),
     ('postgres', 'test_postgres.py', False, False),
     ('smoke_postgres', 'test_integration_smoke.py', False, False),
+    ('container', os.path.join('..', 'tools', 'check_container.py'), False, False),   # only with --container
 ]
 POSTGRES_SUITES = ('postgres', 'smoke_postgres')
 PG_CONTAINER = 'dba-test-postgres'
@@ -304,6 +306,8 @@ def main():
     ap.add_argument('--quick', action='store_true', help='fast loop: engine, content, rate limit, smoke, gates')
     ap.add_argument('--no-browser', action='store_true', help='skip the Playwright browser run')
     ap.add_argument('--no-postgres', action='store_true', help='skip the PostgreSQL suites')
+    ap.add_argument('--container', action='store_true',
+                    help='also build + check the production Docker image (tools/check_container.py)')
     ap.add_argument('--update-baseline', action='store_true', help='accept the current numbers as the new baseline')
     ap.add_argument('--save', help='also write the report to this file')
     args = ap.parse_args()
@@ -321,6 +325,8 @@ def main():
     names = [s[0] for s in SUITES if s[2]] if args.quick else [s[0] for s in SUITES]
     if args.no_browser and 'browser' in names:
         names.remove('browser')
+    if not args.container and 'container' in names:
+        names.remove('container')
     results = {}
     pg_url = None
     if not args.quick and not args.no_postgres:

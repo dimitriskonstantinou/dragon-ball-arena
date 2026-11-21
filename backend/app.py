@@ -9,6 +9,7 @@ import copy
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -25,10 +26,15 @@ from sqlalchemy.exc import IntegrityError
 log = logging.getLogger(__name__)
 LOG_FORMAT = '%(asctime)s %(levelname)s %(name)s: %(message)s'
 
+# Exit code 3 = gunicorn's "worker failed to boot": gunicorn then STOPS with this message
+# instead of restarting the worker forever (a misconfigured deploy must fail loudly).
+CONFIG_ERROR_EXIT_CODE = 3
+
 try:
     settings = config.load()
 except config.ConfigError as e:
-    raise SystemExit(f"Configuration error: {e}")
+    print(f"Configuration error: {e}", file=sys.stderr, flush=True)
+    raise SystemExit(CONFIG_ERROR_EXIT_CODE)
 
 
 def configure_logging(level):
@@ -66,7 +72,8 @@ db.init_app(app)
 MIGRATIONS_DIR = os.path.join(BASE_DIR, 'migrations')
 migrate = Migrate(app, db, directory=MIGRATIONS_DIR, render_as_batch=True)  # batch: SQLite can't ALTER much
 # None = same origin only (development); deployments must list their https origins (config.py).
-socketio = SocketIO(app, cors_allowed_origins=list(settings.allowed_origins) or None)
+socketio = SocketIO(app, async_mode=settings.socketio_async_mode,
+                    cors_allowed_origins=list(settings.allowed_origins) or None)
 
 GAMES = {}
 MATCHMAKING_QUEUE = []

@@ -10,7 +10,8 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   ALLOWED_ORIGINS    comma-separated origins allowed to open a game connection, e.g.
                      https://dragonballarena.com. Development default: same origin only.
                      REQUIRED (https only) in staging/production; '*' is never accepted.
-  DATABASE_URL       SQLAlchemy URL (default: SQLite file backend/game.db)
+  DATABASE_URL       SQLAlchemy URL (default: SQLite file backend/game.db). REQUIRED in staging/production:
+                     no silent fallback to a SQLite file inside the container (hosts wipe it on redeploy).
   PORT               dev server port (default 5000)
   TURN_SECONDS       turn time limit (default 60, 1..600)
   RECONNECT_SECONDS  grace period to come back after a disconnect (default 30, 0..600)
@@ -19,6 +20,9 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   REGISTER_LIMIT / REGISTER_WINDOW_SECONDS     new accounts allowed per client IP per window (default 5 / 3600)
   SESSION_DAYS       a login expires after this many days without any visit (default 30, 1..365)
   LOG_LEVEL          DEBUG | INFO (default) | WARNING | ERROR
+  SOCKETIO_ASYNC_MODE  threading (default: python app.py, tests) | gevent (production: gunicorn -k gevent,
+                     set by the Dockerfile). Explicit, because Flask-SocketIO would otherwise switch to gevent
+                     by itself as soon as the package is installed.
   TRUSTED_PROXIES    how many reverse proxies sit in front of the app (default 0). Set it (e.g. 1 on Render)
                      so the real client IP is read from X-Forwarded-For -- otherwise every player shares the
                      proxy's IP and one attacker could rate-limit everybody.
@@ -59,6 +63,7 @@ class Settings:
     trusted_proxies: int
     session_days: int
     log_level: str
+    socketio_async_mode: str
 
     @property
     def is_production_like(self):
@@ -134,10 +139,15 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
     elif not secret:
         secret = _dev_secret(dev_secret_file)
 
+    allowed_origins = _origins(environ, env)
+    if env in ('staging', 'production') and not environ.get('DATABASE_URL'):
+        raise ConfigError(f"DATABASE_URL is required when ENV={env} (e.g. postgresql+psycopg://user:pass@host/db); "
+                          f"a SQLite file inside the server would be wiped on every redeploy")
+
     return Settings(
         env=env,
         secret_key=secret,
-        allowed_origins=_origins(environ, env),
+        allowed_origins=allowed_origins,
         database_url=environ.get('DATABASE_URL') or f"sqlite:///{os.path.join(BACKEND_DIR, 'game.db')}",
         port=_int(environ, 'PORT', 5000, 1, 65535),
         turn_seconds=_int(environ, 'TURN_SECONDS', 60, 1, 600),
@@ -150,7 +160,19 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
         trusted_proxies=_int(environ, 'TRUSTED_PROXIES', 0, 0, 5),
         session_days=_int(environ, 'SESSION_DAYS', 30, 1, 365),
         log_level=_log_level(environ),
+        socketio_async_mode=_async_mode(environ),
     )
+
+
+ASYNC_MODES = ('threading', 'gevent')
+
+
+def _async_mode(environ):
+    mode = (environ.get('SOCKETIO_ASYNC_MODE') or 'threading').strip().lower()
+    if mode not in ASYNC_MODES:
+        raise ConfigError(f"SOCKETIO_ASYNC_MODE must be one of {', '.join(ASYNC_MODES)}, "
+                          f"got {environ.get('SOCKETIO_ASYNC_MODE')!r}")
+    return mode
 
 
 LOG_LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')

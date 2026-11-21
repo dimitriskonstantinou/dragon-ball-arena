@@ -172,6 +172,9 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 10,343 B for 5 characters, of which 2,646 B are `effects` the client never reads (Step 7 stripped them only from match updates).
 **Fix:** reuse the same display-field stripping for the lobby list.
 
+**BE-11 — HIGH (deploy) — A misconfigured production container restarted forever instead of failing (verified, Step 34)** — ✅ FIXED in Step 34.
+Under gunicorn a `ConfigError` (e.g. no `SECRET_KEY`) killed the worker with exit code 1, which gunicorn treats as a crash and restarts -- every second, forever, with the server never answering: a silent crash loop instead of a failed deploy. Fix: configuration errors exit with code 3 (gunicorn's "worker failed to boot"), so gunicorn stops with the message as the last log line; `test_config.py` pins the code and `tools/check_container.py` proves the container exits. Same step: staging/production refuse to start without `DATABASE_URL` (no silent SQLite file inside a container), and the image needed `packaging` (imported by gunicorn's gevent worker, not declared by gunicorn).
+
 ### 4.3 Security & fair play
 
 **SEC-1 — HIGH (deploy blocker; CRITICAL once online) — Hardcoded fallback `SECRET_KEY` (verified)** — ✅ FIXED in Step 19 (`config.py`: staging/production refuse to start without a strong key; no key in the code; dev uses a random per-machine key file)
@@ -291,7 +294,7 @@ players it means the game can't load at all if that third-party server is slow o
 ### 4.9 Deployment
 
 Nothing deployable exists yet, which is expected. Plan: [DEPLOY_PLAN.md](DEPLOY_PLAN.md). Blockers found in code:
-SEC-1, SEC-2, DB-1, BE-1, BE-2, BE-3, dev server only, ~~absolute image URLs built from `request.host_url` (mixed
+SEC-1, SEC-2, DB-1, BE-1, BE-2, BE-3, ~~dev server only~~ (✅ Step 34: gunicorn + gevent Docker image), ~~absolute image URLs built from `request.host_url` (mixed
 content behind an HTTPS proxy)~~ (✅ Step 26: site-relative `/photos/...`), ~~socket.io from CDN~~ (✅ Step 21),
 ~~no health endpoint~~ (✅ Step 26: `GET /healthz`), no CI, no monitoring.
 **Cost:** none incurred yet. **Scalability:** single process by design (in-memory games); measured CPU cost is tiny
