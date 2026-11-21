@@ -143,7 +143,7 @@ responsive breakpoints, accessibility pass. **Measurable:** Lighthouse accessibi
 ## Phase 8 — Deployment (DEPLOY_PLAN Stages 1–9)
 
 DEV (staging) online first, PROD after Phases 1–3 are done and DEV has been played on.
-Key items: Postgres + Flask-Migrate (DB-1/DB-2), gunicorn + gevent, Docker, CI (TST-2), load test (capacity is currently
+Key items: Postgres (DB-2; Flask-Migrate/DB-1 ✅ Step 23), gunicorn + gevent, Docker, CI (TST-2), load test (capacity is currently
 unmeasured), domain/HTTPS, Sentry + uptime, backups, restart warnings.
 **Measurable:** load test p95 < 200 ms at 2× expected peak; restore test passed; alerts fire.
 
@@ -165,12 +165,13 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.4 / Step 23: sessions that can be revoked and expire (SEC-4).** A login cookie is valid forever and can't be
+**3.4 / Step 24: sessions that can be revoked and expire (SEC-4).** A login cookie is valid forever and can't be
 taken back: "log out" only clears it in that one browser, so a stolen cookie keeps working, and there is no way to
 "log out everywhere" (or after a password change). Plan: a per-account session version stored in the DB and inside
 the cookie (bumped on logout-everywhere / password change, so old cookies stop working), plus a session lifetime
-(e.g. 30 days) in `config.py`. Needs one new DB column -- with no migrations yet (DB-1) that has to be added
-carefully to existing databases. Then the rest of 3.5 (case-insensitive usernames, email check) and 3.6.
+(e.g. 30 days) in `config.py`. The new column goes in as the **first real migration** (Step 23 set them up), tested
+for upgrade + downgrade and on an adopted copy of the real database. Then the rest of 3.5 and 3.6.
+*(Step 23 done: Flask-Migrate migrations, DB-1.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

@@ -1,5 +1,7 @@
 from flask import Flask, request, send_from_directory, session, jsonify
+from flask_migrate import Migrate, stamp, upgrade
 from flask_socketio import SocketIO, emit, join_room
+import sqlalchemy as sa
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timezone
@@ -19,6 +21,9 @@ from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
 
 log = logging.getLogger(__name__)
+if __name__ == '__main__':
+    # Before anything logs (incl. the migrations run at import below).
+    logging.basicConfig(level=logging.INFO)
 
 try:
     settings = config.load()
@@ -42,6 +47,8 @@ app.config['SESSION_COOKIE_SECURE'] = settings.is_production_like
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+MIGRATIONS_DIR = os.path.join(BASE_DIR, 'migrations')
+migrate = Migrate(app, db, directory=MIGRATIONS_DIR, render_as_batch=True)  # batch: SQLite can't ALTER much
 # None = same origin only (development); deployments must list their https origins (config.py).
 socketio = SocketIO(app, cors_allowed_origins=list(settings.allowed_origins) or None)
 
@@ -112,11 +119,34 @@ def sync_character_registry(catalog=None):
     return added, updated
 
 
+# The first migration: exactly the tables db.create_all() made before Step 23.
+BASELINE_REVISION = 'def555b6f5cf'
+BASELINE_TABLES = {'users', 'user_stats', 'characters', 'user_characters', 'missions',
+                   'user_mission_progress', 'matches'}
+
+
+def upgrade_database():
+    """Brings the schema to the latest migration (backend/migrations). A
+    database made before migrations existed (tables, but no alembic_version)
+    is adopted first: if it has every baseline table it's stamped at the
+    baseline -- its tables are exactly what that migration creates -- and then
+    upgraded like any other. Nothing in it is changed or deleted by adoption."""
+    tables = set(sa.inspect(db.engine).get_table_names())
+    if tables and 'alembic_version' not in tables:
+        missing = BASELINE_TABLES - tables
+        if missing:
+            raise RuntimeError(f"Database has tables but no migration history, and is missing {sorted(missing)}; "
+                               f"refusing to guess its schema. Inspect it by hand.")
+        log.info("Adopting a pre-migration database at the baseline revision %s", BASELINE_REVISION)
+        stamp(directory=MIGRATIONS_DIR, revision=BASELINE_REVISION)
+    upgrade(directory=MIGRATIONS_DIR)
+
+
 def ensure_db_ready():
-    """Creates missing tables and syncs the character registry. No manual
-    reseed is ever needed after editing content files."""
+    """Migrates the schema to the latest version and syncs the character
+    registry. No manual reseed is ever needed after editing content files."""
     with app.app_context():
-        db.create_all()
+        upgrade_database()
         added, updated = sync_character_registry()
         if added or updated:
             log.info("Character registry synced: %d added, %d updated", added, updated)
@@ -667,6 +697,5 @@ if __name__ == '__main__':
     # Local development runner only -- production runs under gunicorn (see
     # docs/DEPLOY_PLAN.md). allow_unsafe_werkzeug lets it also start without
     # a terminal attached (e.g. from the browser tests).
-    logging.basicConfig(level=logging.INFO)
     log.info("Starting in %s mode on port %d", settings.env, settings.port)
     socketio.run(app, host='0.0.0.0', port=settings.port, allow_unsafe_werkzeug=True)

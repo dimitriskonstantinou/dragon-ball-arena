@@ -32,7 +32,9 @@ backend/
   content_schema.py         Pydantic models of the content format (validation only, no game logic)
   content_loader.py         load_catalog() validates + resolves; catalog() = the roster, loaded once per process
   models.py                 SQLAlchemy models
-  seed_db.py                Manual registry sync (the server already syncs at startup; rarely needed)
+  seed_db.py                Manual migrate + registry sync (the server already does both at startup; rarely needed)
+  migrations/               Flask-Migrate/Alembic: env.py, versions/<rev>_*.py (schema history; never edit applied ones)
+  test_migrations.py        Fresh/adopted/partial DBs, downgrade/upgrade round trip, models == migrations guard
   test_game_engine.py       Engine unit + per-character kit tests (no DB)
   test_content.py           Content: real roster loads, schema current, invalid cases, every skill castable
   test_integration_smoke.py Full stack in-process: HTTP + Socket.IO + DB
@@ -57,7 +59,10 @@ python test_content.py                 # content validation
 DATABASE_URL=sqlite:///<temp>/smoke.db python test_integration_smoke.py   # ALWAYS set a temp DB (default = real game.db)
 python test_browser_e2e.py             # ~15 s; own server + temp DB
 python content_schema.py               # after changing content_schema.py: regenerate content/*.schema.json
-python seed_db.py                      # rarely needed: the server syncs the registry on start
+python seed_db.py                      # rarely needed: the server migrates + syncs the registry on start
+python test_migrations.py              # schema history checks (~5 s, separate processes)
+DATABASE_URL=sqlite:///<temp>/m.db flask --app app db migrate -m "what changed"   # after changing models.py
+DATABASE_URL=sqlite:///<temp>/m.db flask --app app db check                        # models == migrations?
 python ../tools/measure.py --save ../docs/measurements/<date>-<step>-before.md   # or from repo root: python tools/measure.py
 python ../tools/probe_exploits.py      # CONFIRMED = bug still present; uses a temp DB
 ```
@@ -205,8 +210,16 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
 - Unlocks: `app.unlocked_character_ids()` = every active character (TEMP policy until missions; no DB query).
   `UserCharacter` rows are still written on register for the future mission system.
 - SQLAlchemy ORM only, no raw SQL. The registry sync touches only `characters`. Mission tables are intentional,
-  unused groundwork (don't delete). No migrations yet: adding Flask-Migrate is required before the first schema
-  change that must survive (DB-1).
+  unused groundwork (don't delete).
+- **Migrations (Step 23):** the schema is owned by `backend/migrations/` (Flask-Migrate/Alembic, `render_as_batch`
+  for SQLite). Never `db.create_all()`. The server runs `upgrade_database()` at startup (no-op ~5 ms when current);
+  a database made before migrations (tables, no `alembic_version`) is adopted by stamping the baseline
+  `def555b6f5cf` when all baseline tables exist, and refused otherwise. **Every model change:** edit `models.py` ->
+  `flask --app app db migrate -m "..."` against a temp DB -> read and fix the generated file (Alembic misses renames,
+  some type changes, data moves) -> make `downgrade()` correct -> `python test_migrations.py` (its models == migrations
+  guard fails if you forget) -> commit model + migration together. Never edit a migration that has been applied
+  anywhere; add a new one. `migrations/env.py` only configures logging when nothing else has (CLI) and never
+  disables existing loggers.
 
 ### Frontend
 - Today: vanilla JS, one file. **Frontend phase (decided 2026-11-20): React + TypeScript + Vite + React Router**,

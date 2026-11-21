@@ -1,0 +1,145 @@
+"""
+Database migration tests (Flask-Migrate / Alembic, backend/migrations/).
+Run with: python test_migrations.py
+
+Every scenario runs in its own interpreter on its own temporary SQLite file
+(the app binds its database at import), so the real backend/game.db is never
+touched. The most important check: migrations and models describe exactly the
+same schema -- it fails if a model changes without a migration.
+"""
+import os
+import subprocess
+import sys
+import tempfile
+
+FAILURES = []
+BACKEND = os.path.dirname(os.path.abspath(__file__))
+
+PRELUDE = '''
+import sqlite3, sys
+sys.path.insert(0, ".")
+from alembic.autogenerate import compare_metadata
+from alembic.migration import MigrationContext
+def schema_diff(appmod):
+    with appmod.app.app_context():
+        with appmod.db.engine.connect() as conn:
+            return compare_metadata(MigrationContext.configure(conn), appmod.db.metadata)
+def version(path):
+    con = sqlite3.connect(path)
+    try:
+        return [r[0] for r in con.execute("select version_num from alembic_version")]
+    finally:
+        con.close()
+'''
+
+LEGACY_DB = '''
+# A database made the pre-Step-23 way: db.create_all() with models only, plus data.
+from flask import Flask
+from models import db, User, UserStats
+legacy = Flask("legacy")
+legacy.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + DB
+db.init_app(legacy)
+with legacy.app_context():
+    db.create_all()
+    db.session.add(User(id=1, username="old_player", email="old@x.io", password_hash="hash-kept"))
+    db.session.add(UserStats(user_id=1, total_matches=7, total_wins=4, total_losses=3))
+    db.session.commit()
+'''
+
+
+def check(name, condition, detail=""):
+    if condition:
+        print(f"  PASS: {name}")
+    else:
+        FAILURES.append(name)
+        print(f"  FAIL: {name}  {detail}")
+
+
+def run(code):
+    """Runs `code` in a fresh interpreter with DB = a new temp SQLite path; returns (rc, stdout, stderr)."""
+    db_path = os.path.join(tempfile.mkdtemp(), 'mig.db').replace('\\', '/')
+    env = {k: v for k, v in os.environ.items() if k not in ('ENV', 'SECRET_KEY', 'ALLOWED_ORIGINS')}
+    env.update(DATABASE_URL='sqlite:///' + db_path, TURN_TIMER_THREAD='0')
+    proc = subprocess.run([sys.executable, '-c', f'DB = {db_path!r}\n' + PRELUDE + code], cwd=BACKEND, env=env,
+                          capture_output=True, text=True, timeout=180)
+    return proc.returncode, proc.stdout.strip(), proc.stderr
+
+
+def test_fresh_database_matches_the_models():
+    rc, out, err = run('''
+import app as appmod
+from alembic.script import ScriptDirectory
+with appmod.app.app_context():
+    head = ScriptDirectory.from_config(appmod.migrate.get_config(appmod.MIGRATIONS_DIR)).get_current_head()
+print("version", version(DB) == [head], "diff", schema_diff(appmod) == [])
+import sqlalchemy as sa
+appmod.db.metadata.tables["users"].append_column(sa.Column("nickname", sa.String(20)))   # a model change...
+print("drift_detected", any("nickname" in str(d) for d in schema_diff(appmod)))          # ...without a migration
+''')
+    check("a fresh database is created by the migrations and is at the latest revision",
+          rc == 0 and 'version True' in out, (rc, out, err[-400:]))
+    check("migrations and models describe exactly the same schema (fails if a model changes without a migration)",
+          rc == 0 and 'diff True' in out, (out, err[-400:]))
+    check("...and that guard really notices a model change that has no migration", 'drift_detected True' in out, out)
+
+
+def test_pre_migration_database_is_adopted_with_its_data():
+    rc, out, err = run(LEGACY_DB + '''
+import app as appmod
+from alembic.script import ScriptDirectory
+with appmod.app.app_context():
+    head = ScriptDirectory.from_config(appmod.migrate.get_config(appmod.MIGRATIONS_DIR)).get_current_head()
+con = sqlite3.connect(DB)
+user = con.execute("select username, email, password_hash from users where id = 1").fetchone()
+stats = con.execute("select total_matches, total_wins, total_losses from user_stats where user_id = 1").fetchone()
+con.close()
+print("adopted", version(DB) == [head])
+print("user", user == ("old_player", "old@x.io", "hash-kept"), "stats", stats == (7, 4, 3))
+print("diff", schema_diff(appmod) == [])
+''')
+    check("a database made before migrations existed is adopted and brought to the latest revision",
+          rc == 0 and 'adopted True' in out, (rc, out, err[-400:]))
+    check("...keeping its accounts and stats untouched", 'user True stats True' in out, out)
+    check("...and ends up with exactly the models' schema", 'diff True' in out, out)
+
+
+def test_partial_legacy_database_is_refused():
+    rc, out, err = run('''
+con = sqlite3.connect(DB)
+con.execute("create table users (id integer primary key)")
+con.commit(); con.close()
+import app
+''')
+    check("a database with some tables but no migration history and missing tables is refused, not guessed at",
+          rc != 0 and 'refusing to guess its schema' in err, (rc, err[-300:]))
+
+
+def test_downgrade_and_upgrade_round_trip():
+    rc, out, err = run('''
+import app as appmod
+from flask_migrate import downgrade, upgrade
+with appmod.app.app_context():
+    downgrade(directory=appmod.MIGRATIONS_DIR, revision="base")
+    con = sqlite3.connect(DB)
+    left = [r[0] for r in con.execute("select name from sqlite_master where type='table' and name != 'alembic_version'")]
+    con.close()
+    upgrade(directory=appmod.MIGRATIONS_DIR)
+    upgrade(directory=appmod.MIGRATIONS_DIR)   # second run is a no-op
+print("empty_after_downgrade", left == [], "diff", schema_diff(appmod) == [])
+''')
+    check("every migration can be undone (downgrade to base removes all tables)",
+          rc == 0 and 'empty_after_downgrade True' in out, (rc, out, err[-400:]))
+    check("...and re-applied, twice, ending at the models' schema", 'diff True' in out, out)
+
+
+TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
+
+if __name__ == '__main__':
+    for t in TESTS:
+        print(f"{t.__name__}:")
+        t()
+    print()
+    if FAILURES:
+        print(f"{len(FAILURES)} FAILURE(S): {FAILURES}")
+        raise SystemExit(1)
+    print(f"All {len(TESTS)} test functions passed.")

@@ -269,7 +269,7 @@ players it means the game can't load at all if that third-party server is slow o
 
 ### 4.6 Database
 
-**DB-1 — HIGH (deploy blocker) — No migrations** (`db.create_all()` never alters tables). The first schema change after launch breaks production. Fix: Flask-Migrate.
+**DB-1 — HIGH (deploy blocker) — No migrations** (`db.create_all()` never alters tables). The first schema change after launch breaks production. Fix: Flask-Migrate. — ✅ FIXED in Step 23 (Flask-Migrate/Alembic; baseline migration = the old schema; pre-migration databases adopted automatically, rehearsed on a copy of the real game.db: every row identical, zero schema diff)
 **DB-2 — MEDIUM — SQLite unsuitable for hosted production** (ephemeral disks, single writer). Postgres planned (DEPLOY_PLAN).
 **DB-3 — LOW — `matches` has no index on player ids**; needed once match history is shown.
 **DB-4 — LOW — Throwaway test accounts in the real `game.db` (verified):** 2 of 4 users are `@test.local` from early smoke runs. Harmless locally; never ship this file.

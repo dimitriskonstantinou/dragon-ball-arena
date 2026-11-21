@@ -159,11 +159,12 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 - **Check:** app starts with `ENV=production` + env vars set, fails clearly without `SECRET_KEY`; tests green.
 
 ### Stage 2 — PostgreSQL + migrations
-1. Add `psycopg[binary]` and `Flask-Migrate` to `requirements.txt` (pinned).
+1. Add `psycopg[binary]` to `requirements.txt` (pinned). (✅ Flask-Migrate/Alembic: Step 23.)
 2. Run Postgres locally (Docker: `docker run -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16`) and point
    `DATABASE_URL` at it.
-3. `flask db init` → `flask db migrate -m "initial"` → review the generated migration → `flask db upgrade`.
-   From now on **every model change = a migration**; remove `db.create_all()` from app startup.
+3. ✅ *(Step 23)* Migrations exist (`backend/migrations/`, baseline `def555b6f5cf`); the server upgrades the schema on
+   start and `create_all` is gone. Still to do here: run `test_migrations.py` against Postgres too (it uses SQLite
+   today; the migrations are written in batch mode so they also work on SQLite).
 4. Release step: `flask db upgrade && python seed_db.py` (registers characters before the new version takes
    traffic; the server also syncs on start). Content is authored in `backend/content/`.
 5. Case-insensitive unique usernames (functional index on `lower(username)`).

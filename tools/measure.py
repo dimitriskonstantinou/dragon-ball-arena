@@ -60,6 +60,7 @@ def section_tests(tmp_db_url, browser):
               ('content', 'test_content.py', None),
               ('config', 'test_config.py', None),
               ('rate_limit', 'test_rate_limit.py', None),
+              ('migrations', 'test_migrations.py', None),
               ('smoke', 'test_integration_smoke.py', {'DATABASE_URL': tmp_db_url})]
     if not browser:
         out('| browser | skipped (--no-browser) | | | |')
@@ -91,7 +92,7 @@ def section_coverage(tmp_db_url):
     if os.path.exists(data_file):
         os.remove(data_file)
     base = [sys.executable, '-m', 'coverage', 'run', f'--data-file={data_file}', '--source=.',
-            '--omit=test_*']
+            '--omit=test_*,migrations/*']  # generated Alembic files; covered by test_migrations.py
     run(base + ['test_game_engine.py'])
     run(base[:4] + ['-a'] + base[4:] + ['test_content.py'])
     run(base[:4] + ['-a'] + base[4:] + ['test_config.py'])
