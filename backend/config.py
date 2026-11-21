@@ -7,6 +7,9 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   SECRET_KEY         signs login cookies. REQUIRED in staging/production (>= 32 chars).
                      In development a random key is generated once and kept in
                      backend/.dev_secret_key (git-ignored) -- there is no key in the code.
+  ALLOWED_ORIGINS    comma-separated origins allowed to open a game connection, e.g.
+                     https://dragonballarena.com. Development default: same origin only.
+                     REQUIRED (https only) in staging/production; '*' is never accepted.
   DATABASE_URL       SQLAlchemy URL (default: SQLite file backend/game.db)
   PORT               dev server port (default 5000)
   TURN_SECONDS       turn time limit (default 60, 1..600)
@@ -14,6 +17,7 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   TURN_TIMER_THREAD  0 disables the background ticker (tests drive it by hand)
 """
 import os
+import re
 import secrets
 from dataclasses import dataclass
 
@@ -24,6 +28,7 @@ MIN_SECRET_LENGTH = 32
 # Publicly known keys (this one was the old hardcoded fallback) -- never accepted in production.
 KNOWN_INSECURE_KEYS = {'dev-secret-key-change-in-production'}
 GENERATE_HINT = 'generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+ORIGIN_PATTERN = re.compile(r'^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$')
 
 
 class ConfigError(RuntimeError):
@@ -34,6 +39,7 @@ class ConfigError(RuntimeError):
 class Settings:
     env: str
     secret_key: str
+    allowed_origins: tuple   # () = same origin only
     database_url: str
     port: int
     turn_seconds: int
@@ -56,6 +62,28 @@ def _int(environ, name, default, low, high):
     if not low <= value <= high:
         raise ConfigError(f"{name} must be between {low} and {high}, got {value}")
     return value
+
+
+def _origins(environ, env):
+    """Who may open a game connection. The login cookie travels with it, so
+    '*' (any website) is never allowed."""
+    raw = environ.get('ALLOWED_ORIGINS') or ''
+    origins = tuple(o.strip() for o in raw.split(',') if o.strip())
+    for origin in origins:
+        if origin == '*':
+            raise ConfigError("ALLOWED_ORIGINS can't be '*': logins use a cookie, so any website could act as "
+                              "the player. List the site's own origin(s), e.g. https://dragonballarena.com")
+        if not ORIGIN_PATTERN.match(origin):
+            raise ConfigError(f"ALLOWED_ORIGINS entry {origin!r} must look like https://example.com "
+                              f"(scheme + host [+ port], no path or trailing slash)")
+    if env in ('staging', 'production'):
+        if not origins:
+            raise ConfigError(f"ALLOWED_ORIGINS is required when ENV={env} (behind an HTTPS proxy the "
+                              f"same-origin check can't work), e.g. ALLOWED_ORIGINS=https://dragonballarena.com")
+        insecure = [o for o in origins if not o.startswith('https://')]
+        if insecure:
+            raise ConfigError(f"ALLOWED_ORIGINS must use https:// when ENV={env}: {', '.join(insecure)}")
+    return origins
 
 
 def _dev_secret(path):
@@ -95,6 +123,7 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
     return Settings(
         env=env,
         secret_key=secret,
+        allowed_origins=_origins(environ, env),
         database_url=environ.get('DATABASE_URL') or f"sqlite:///{os.path.join(BACKEND_DIR, 'game.db')}",
         port=_int(environ, 'PORT', 5000, 1, 65535),
         turn_seconds=_int(environ, 'TURN_SECONDS', 60, 1, 600),

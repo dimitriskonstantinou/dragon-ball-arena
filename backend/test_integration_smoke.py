@@ -114,6 +114,21 @@ relative = [u for u in urls if not u.startswith('http')]
 check("every image URL in match teams is absolute, including primed skill images",
       relative == [] and any('SpiritBall' in u for u in urls) == ('yamcha_saiyan_saga' in server_side), relative)
 
+# --- Step 20 regression: any website could open a logged-in game connection
+# (cors_allowed_origins="*" + cookie auth), and the login cookie had no SameSite. ---
+web = appmod.app.test_client()
+def handshake(origin):
+    headers = {'Origin': origin} if origin else {}
+    return web.get('/socket.io/?EIO=4&transport=polling', headers=headers).status_code
+check("another website's page can't open a game connection", handshake('https://evil.example') == 400)
+check("...nor a look-alike of this site", handshake('http://localhost.evil.example') == 400)
+check("the game's own page still can (same origin)", handshake('http://localhost') == 200)
+login_cookie = '; '.join(r1.headers.getlist('Set-Cookie'))
+check("the login cookie is HttpOnly and SameSite=Lax (other sites' requests don't carry it)",
+      'HttpOnly' in login_cookie and 'SameSite=Lax' in login_cookie, login_cookie)
+check("...and not Secure in development (local http://localhost logins keep working)",
+      'Secure' not in login_cookie, login_cookie)
+
 # --- Step 12b: the roster comes from the in-memory content catalog ---
 catalog = appmod.CATALOG
 check("character-list offers exactly the active content catalog, in order",

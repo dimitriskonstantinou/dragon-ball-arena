@@ -41,5 +41,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 17 | `feature/step17-reconnect` | Disconnect mid-match = 30 s grace instead of instant forfeit; same account rejoins from any tab (`rejoin_match`); opponent sees connected status | reload-forfeit reproduced → fixed in a real browser; smoke 80→96, browser 21→27; probe 4→3 |
 | 18 | `feature/step18-surrender` | `surrender` event (any turn) + button behind a confirm dialog; loss recorded for the surrendering player | "no way to surrender" reproduced → fixed; engine 177→181, smoke 96→102, browser 27→34; probe 4→3 |
 | 19 | `feature/step19-config-secret-key` | `config.py`: validated env settings; staging/production refuse to start without a strong `SECRET_KEY`; hardcoded key removed (dev: random per-machine key file) | prod start without key: exit 0 → refused; new config suite (25 checks); probe 3→2 |
+| 20 | `feature/step20-origins-cookies` | `ALLOWED_ORIGINS` (same-origin default, https list required when deployed, `*` refused); cookie `SameSite=Lax` (+`Secure` when deployed) | foreign-origin handshake 200 → 400; probe 2→1 (no exploit left); config 25→39, smoke 102→107 |
 
-**Merged into `dev`:** none of steps 1–19 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–20 yet (user merges in order).

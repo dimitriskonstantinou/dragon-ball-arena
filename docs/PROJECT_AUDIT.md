@@ -178,7 +178,7 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 `app.py:23`. If deployed without the env var, anyone knowing the default can sign a session cookie for any `user_id`, which is full account takeover.
 **Fix:** refuse to start without `SECRET_KEY` outside development.
 
-**SEC-2 — HIGH (deploy blocker) — Socket.IO accepts any origin with cookie auth (verified)**
+**SEC-2 — HIGH (deploy blocker) — Socket.IO accepts any origin with cookie auth (verified)** — ✅ FIXED in Step 20 (foreign-origin handshake 200 → 400; `ALLOWED_ORIGINS`, same-origin by default, https-only list required in staging/production; cookie `HttpOnly` + `SameSite=Lax`, `Secure` when deployed)
 `cors_allowed_origins="*"` and no explicit `SameSite`, so a cross-site page can open an authenticated socket in browsers that send the cookie.
 **Fix:** allowed origins from env; `SESSION_COOKIE_SAMESITE='Lax'`, `Secure` in production.
 
@@ -263,7 +263,9 @@ badges cover the portrait's top-right, so "click self" only works on part of the
 **FE-11 — LOW — Normal "logged out" check shows as a browser console error:** `/api/me` answers 401 when logged out.
 **DEV-1 — LOW (dev only) — Werkzeug dev server logs "Invalid frame header" WebSocket errors on reload/logout**
 (teardown only; never observed during play). Production uses gunicorn + gevent.
-**DEV-2 — LOW — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8.
+**DEV-2 — LOW → MEDIUM — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8.
+*Step 20:* the CDN once took >10 s while our own server answered in under a second, failing a browser run. For
+players it means the game can't load at all if that third-party server is slow or down. Fix = self-host (roadmap 3.6).
 
 ### 4.6 Database
 

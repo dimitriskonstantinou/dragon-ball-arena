@@ -30,10 +30,15 @@ FRONTEND_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'frontend'))
 
 app.config['SECRET_KEY'] = settings.secret_key
 app.config['SQLALCHEMY_DATABASE_URI'] = settings.database_url
+# Login cookie: no JS access, not sent with other sites' requests, HTTPS-only once deployed.
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = settings.is_production_like
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# None = same origin only (development); deployments must list their https origins (config.py).
+socketio = SocketIO(app, cors_allowed_origins=list(settings.allowed_origins) or None)
 
 GAMES = {}
 MATCHMAKING_QUEUE = []

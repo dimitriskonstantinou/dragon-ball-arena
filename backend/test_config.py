@@ -60,14 +60,35 @@ def test_production_requires_a_real_secret():
         check(f"{env} with a short SECRET_KEY refuses to start", err and 'at least' in err, err)
         _, err = load({'ENV': env, 'SECRET_KEY': 'dev-secret-key-change-in-production'})
         check(f"{env} with the old public key refuses to start", err and 'publicly known' in err, err)
-        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY})
+        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
         check(f"{env} with a proper SECRET_KEY starts", err is None and s.secret_key == GOOD_KEY and s.is_production_like,
               err)
     _, err = load({'ENV': 'prod'})
     check("an unknown ENV value is rejected (typos must not silently mean development)", err and 'ENV must be' in err,
           err)
-    s, err = load({'ENV': ' Production ', 'SECRET_KEY': GOOD_KEY})
+    s, err = load({'ENV': ' Production ', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
     check("ENV is case/space tolerant", err is None and s.env == 'production', err)
+
+
+def test_allowed_origins():
+    s, err = load({})
+    check("development defaults to same-origin only (no list)", err is None and s.allowed_origins == (), err)
+    s, err = load({'ALLOWED_ORIGINS': ' https://a.example , http://localhost:5000 '})
+    check("a comma-separated list is parsed and trimmed",
+          err is None and s.allowed_origins == ('https://a.example', 'http://localhost:5000'), (s, err))
+    _, err = load({'ALLOWED_ORIGINS': '*'})
+    check("'*' is rejected (logins use a cookie, so any site could act as the player)", err and "can't be '*'" in err, err)
+    for bad in ('dragonballarena.com', 'https://dragonballarena.com/', 'https://dragonballarena.com/play',
+                'ftp://dragonballarena.com'):
+        _, err = load({'ALLOWED_ORIGINS': bad})
+        check(f"malformed origin {bad!r} is rejected", err and 'must look like' in err, err)
+    for env in ('staging', 'production'):
+        _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY})
+        check(f"{env} requires ALLOWED_ORIGINS", err and 'ALLOWED_ORIGINS is required' in err, err)
+        _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'http://dragonballarena.com'})
+        check(f"{env} requires https origins", err and 'must use https://' in err, err)
+        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+        check(f"{env} with https origins starts", err is None and s.allowed_origins == ('https://dragonballarena.com',), err)
 
 
 def test_number_settings_are_validated():
@@ -81,10 +102,13 @@ def test_number_settings_are_validated():
 
 
 def start_app(extra_env):
-    env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV')}
+    env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
     env.update(extra_env, TURN_TIMER_THREAD='0',
                DATABASE_URL='sqlite:///' + os.path.join(tempfile.mkdtemp(), 'cfg.db').replace('\\', '/'))
-    return subprocess.run([sys.executable, '-c', 'import app; print("started", app.app.config["SECRET_KEY"] != "")'],
+    code = ('import app; c = app.app.config; print("started", c["SECRET_KEY"] != ""); '
+            'print("cookie", c["SESSION_COOKIE_SECURE"], c["SESSION_COOKIE_SAMESITE"], c["SESSION_COOKIE_HTTPONLY"], '
+            '"origins", app.socketio.server.eio.cors_allowed_origins)')
+    return subprocess.run([sys.executable, '-c', code],
                           cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120)
 
 
@@ -93,9 +117,11 @@ def test_real_server_startup():
     check("a real production start without SECRET_KEY exits with a configuration error (no traceback)",
           proc.returncode != 0 and 'Configuration error: SECRET_KEY is required' in proc.stderr
           and 'Traceback' not in proc.stderr, (proc.returncode, proc.stderr[-300:]))
-    proc = start_app({'ENV': 'production', 'SECRET_KEY': GOOD_KEY})
-    check("a real production start with a proper SECRET_KEY works", proc.returncode == 0 and 'started True' in proc.stdout,
-          (proc.returncode, proc.stderr[-300:]))
+    proc = start_app({'ENV': 'production', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+    check("a real production start with a proper SECRET_KEY and origins works",
+          proc.returncode == 0 and 'started True' in proc.stdout, (proc.returncode, proc.stderr[-300:]))
+    check("...with HTTPS-only, SameSite=Lax, HttpOnly login cookies and only the listed origin",
+          "cookie True Lax True origins ['https://dragonballarena.com']" in proc.stdout, proc.stdout)
     proc = start_app({'TURN_SECONDS': 'soon'})
     check("a bad number setting stops the real server with a clear message",
           proc.returncode != 0 and 'TURN_SECONDS must be a whole number' in proc.stderr, proc.stderr[-300:])

@@ -95,7 +95,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | Task | Finding | Done when |
 |---|---|---|
 | ✅ 3.1 `config.py`: env-driven settings; refuse to start without `SECRET_KEY` in prod — *Step 19* | SEC-1 | Done: probe item fixed; a real production start without a key exits with a clear message |
-| 3.2 Allowed origins from env; cookie `SameSite=Lax`, `Secure`, `HttpOnly` | SEC-2 | Probe item gone; cross-origin socket refused (test) |
+| ✅ 3.2 Allowed origins from env; cookie `SameSite=Lax`, `Secure`, `HttpOnly` — *Step 20* | SEC-2 | Done: probe item fixed; foreign/look-alike origins refused (smoke); production cookie flags verified in a real start |
 | 3.3 Login/register rate limits | SEC-3 | N failed logins → 429 (test) |
 | 3.4 Session versioning + lifetime | SEC-4 | Logout invalidates old cookies (test) |
 | 3.5 Case-insensitive usernames, email check, IntegrityError handled | SEC-5 | Tests for each |
@@ -165,11 +165,11 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.2 / Step 20: which websites may connect + cookie flags (SEC-2).** The Socket.IO server accepts connections from
-any website (`cors_allowed_origins="*"`) while authenticating with the login cookie, so a malicious page could open a
-logged-in game connection in a victim's browser. Plan: `ALLOWED_ORIGINS` in `config.py` (default: same origin only;
-production must list its domain), session cookies `HttpOnly` + `SameSite=Lax` always and `Secure` in staging/production.
-Then 3.3 rate limits, 3.4 session revocation.
+**3.6a / Step 21: serve the socket.io client from our own server (SEC-8, DEV-2).** Pulled forward: the game page
+can't load at all while cdn.socket.io is slow or down (it already failed a browser run in Step 20), and a third-party
+script with full access to the page is a security risk. Vendor the exact client version into `frontend/` (no build
+step), keep it in sync with the server's python-socketio, drop the test's extra load timeout. Small. Then 3.3 rate
+limits (SEC-3), 3.4 session revocation (SEC-4).
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

@@ -144,9 +144,10 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 ### Stage 1 — Production-ready configuration
 1. ✅ *(Step 19)* `backend/config.py` reads and validates every setting: `ENV` (development|staging|production),
    `SECRET_KEY` (required + strong in staging/production, or the server refuses to start), `DATABASE_URL`, `PORT`,
-   `TURN_SECONDS`, `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`. Still to add: `ALLOWED_ORIGINS` (Step 20). Note: the turn-timer ticker is a background thread in the one server process;
+   `TURN_SECONDS`, `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, and (Step 20) `ALLOWED_ORIGINS` -- required, https only,
+   in staging/production: set it to each site's own URL (e.g. `https://dev.yourdomain`, `https://yourdomain`). Note: the turn-timer ticker is a background thread in the one server process;
    with gevent it becomes a greenlet (`socketio.start_background_task` handles both).
-2. Cookies in prod: `SESSION_COOKIE_SECURE=True`, `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE='Lax'`.
+2. ✅ *(Step 20)* Cookies: `HttpOnly` + `SameSite=Lax` always, `Secure` automatically in staging/production.
 3. Behind a proxy: wrap the app in `werkzeug.middleware.proxy_fix.ProxyFix` so scheme/IP are correct.
 4. **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS proxies the
    absolute URL can come out as `http://` and browsers block it (mixed content).
