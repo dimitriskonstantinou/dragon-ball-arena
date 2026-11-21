@@ -229,13 +229,19 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
 - Never send hidden information to the client (`view_for`). Never trust client-sent identity.
 - No secrets in code. **All settings come from `config.py`** (`config.load()` at app import): `ENV`
   (development | staging | production), `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `PORT`, `TURN_SECONDS`,
-  `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`. Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
+  `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, `LOGIN_FAILURE_LIMIT`/`LOGIN_WINDOW_SECONDS`,
+  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`. Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
   `test_config.py`. Staging/production refuse to start without a strong `SECRET_KEY`; development generates a random
   key once into `backend/.dev_secret_key` (git-ignored; delete it to log every local session out).
 - **Origins & cookies (Step 20):** Socket.IO accepts only `ALLOWED_ORIGINS` (development default: same origin;
   staging/production must list https origins; `*` is always refused -- logins are cookie-based). The session cookie is
   `HttpOnly` + `SameSite=Lax`, and `Secure` in staging/production.
-- Still deploy blockers: rate limits (SEC-3), session revocation (SEC-4).
+- **Rate limits (Step 22):** `rate_limit.SlidingWindowLimiter` (in-memory, thread-safe, bounded) per client IP:
+  failed logins (`login_limiter`) and created accounts (`register_limiter`) -> 429 + `Retry-After`. Behind a proxy
+  set `TRUSTED_PROXIES` (ProxyFix), or every player shares the proxy's IP. Tests that create many accounts from
+  127.0.0.1 raise `REGISTER_LIMIT` for their own process; the smoke test checks the real defaults with swapped-in
+  limiters.
+- Still a deploy blocker: session revocation / lifetime (SEC-4).
 - New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
 
 ### Performance requirements

@@ -26,7 +26,12 @@ collides with previous runs, but it does leave a couple of harmless rows
 behind. That's an acceptable tradeoff for an integration smoke test whose
 whole point is exercising the real stack, not a hermetic unit test.
 """
+import os
 import uuid
+
+# This test creates ~20 accounts from one address (127.0.0.1); the real
+# per-IP registration limit (5/hour) is exercised separately below.
+os.environ.setdefault('REGISTER_LIMIT', '100000')
 
 import app as appmod
 
@@ -113,6 +118,44 @@ urls = [u for c in server_side.values() for u in all_image_urls(c)]
 relative = [u for u in urls if not u.startswith('http')]
 check("every image URL in match teams is absolute, including primed skill images",
       relative == [] and any('SpiritBall' in u for u in urls) == ('yamcha_saiyan_saga' in server_side), relative)
+
+# --- Step 22 regression: unlimited password guessing and account creation from one IP.
+# Limiters with the real defaults (5 failed logins / 5 min, 5 accounts / hour) are swapped in. ---
+import time as _time
+real_login_limiter, real_register_limiter = appmod.login_limiter, appmod.register_limiter
+appmod.login_limiter = type(real_login_limiter)(5, 300, clock=appmod.now)
+appmod.register_limiter = type(real_register_limiter)(5, 3600, clock=appmod.now)
+try:
+    rl = appmod.app.test_client()
+    attacker, bystander = {'REMOTE_ADDR': '203.0.113.10'}, {'REMOTE_ADDR': '203.0.113.11'}
+    target = f'rl_{suffix}'
+    register(rl, target, f'{target}@test.local')
+    codes = [rl.post('/api/login', json={'username': target, 'password': 'wrong'}, environ_base=attacker).status_code
+             for _ in range(6)]
+    check("5 failed logins are answered normally, the 6th is refused (429)", codes == [401] * 5 + [429], codes)
+    locked = rl.post('/api/login', json={'username': target, 'password': 'testpass123'}, environ_base=attacker)
+    check("...while locked out even the correct password is refused (no testing guesses)",
+          locked.status_code == 429 and locked.headers.get('Retry-After', '').isdigit()
+          and 'Try again in' in locked.get_json()['error'], (locked.status_code, locked.get_json()))
+    other = rl.post('/api/login', json={'username': target, 'password': 'testpass123'}, environ_base=bystander)
+    check("...other addresses are unaffected", other.status_code == 200, other.status_code)
+    real_time = _time.time
+    _time.time = lambda: real_time() + 301
+    try:
+        later = rl.post('/api/login', json={'username': target, 'password': 'testpass123'}, environ_base=attacker)
+    finally:
+        _time.time = real_time
+    check("...and the address can log in again once the window has passed", later.status_code == 200, later.status_code)
+
+    spammer = {'REMOTE_ADDR': '203.0.113.12'}
+    invalid = [rl.post('/api/register', json={'username': 'x', 'email': 'bad', 'password': '1'}, environ_base=spammer).status_code
+               for _ in range(3)]
+    created = [rl.post('/api/register', json={'username': f'sp{i}_{suffix}', 'email': f'sp{i}_{suffix}@test.local',
+                                              'password': 'spampass1'}, environ_base=spammer).status_code for i in range(6)]
+    check("rejected registration forms don't count towards the limit", invalid == [400] * 3, invalid)
+    check("5 new accounts per address per hour, the 6th is refused (429)", created == [201] * 5 + [429], created)
+finally:
+    appmod.login_limiter, appmod.register_limiter = real_login_limiter, real_register_limiter
 
 # --- Step 21 regression: the page loaded socket.io from a third-party CDN (the game
 # couldn't load while it was slow/down; foreign code with full page access). ---

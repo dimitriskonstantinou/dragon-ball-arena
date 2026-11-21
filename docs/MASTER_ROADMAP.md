@@ -96,7 +96,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 |---|---|---|
 | ✅ 3.1 `config.py`: env-driven settings; refuse to start without `SECRET_KEY` in prod — *Step 19* | SEC-1 | Done: probe item fixed; a real production start without a key exits with a clear message |
 | ✅ 3.2 Allowed origins from env; cookie `SameSite=Lax`, `Secure`, `HttpOnly` — *Step 20* | SEC-2 | Done: probe item fixed; foreign/look-alike origins refused (smoke); production cookie flags verified in a real start |
-| 3.3 Login/register rate limits | SEC-3 | N failed logins → 429 (test) |
+| ✅ 3.3 Login/register rate limits — *Step 22* | SEC-3 | Done: 6th failed login / 6th account per IP → 429; proxy-aware via `TRUSTED_PROXIES` |
 | 3.4 Session versioning + lifetime | SEC-4 | Logout invalidates old cookies (test) |
 | 3.5 Case-insensitive usernames, email check, IntegrityError handled | SEC-5 | Tests for each |
 | 3.6 Relative image URLs, `/healthz`, logging config, ~~self-hosted socket.io~~ (✅ *Step 21*) | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
@@ -165,12 +165,12 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.3 / Step 22: limit login and registration attempts (SEC-3).** Nothing stops a script from guessing passwords
-at full speed, or from creating thousands of accounts. Plan: per-client-IP limits on `/api/login` (failed attempts)
-and `/api/register` (accounts per hour), answered with HTTP 429 + "try again in N s", in-memory to match the
-single-process design (Redis-backed later with the rest of the shared state), limits in `config.py`. Note for
-deployment: behind a proxy the client IP must come from `X-Forwarded-For` via ProxyFix (DEPLOY_PLAN Stage 1), or
-every player would share the proxy's IP. Then 3.4 session revocation (SEC-4).
+**3.4 / Step 23: sessions that can be revoked and expire (SEC-4).** A login cookie is valid forever and can't be
+taken back: "log out" only clears it in that one browser, so a stolen cookie keeps working, and there is no way to
+"log out everywhere" (or after a password change). Plan: a per-account session version stored in the DB and inside
+the cookie (bumped on logout-everywhere / password change, so old cookies stop working), plus a session lifetime
+(e.g. 30 days) in `config.py`. Needs one new DB column -- with no migrations yet (DB-1) that has to be added
+carefully to existing databases. Then the rest of 3.5 (case-insensitive usernames, email check) and 3.6.
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

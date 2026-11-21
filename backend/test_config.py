@@ -92,8 +92,13 @@ def test_allowed_origins():
 
 
 def test_number_settings_are_validated():
+    s, _ = load({})
+    check("rate-limit defaults: 5 failed logins / 5 min, 5 accounts / hour per IP, no proxy",
+          (s.login_failure_limit, s.login_window_seconds, s.register_limit, s.register_window_seconds,
+           s.trusted_proxies) == (5, 300, 5, 3600, 0))
     for name, bad in (('TURN_SECONDS', 'abc'), ('TURN_SECONDS', '0'), ('TURN_SECONDS', '601'),
-                      ('RECONNECT_SECONDS', '-1'), ('PORT', '70000'), ('PORT', '5.5')):
+                      ('RECONNECT_SECONDS', '-1'), ('PORT', '70000'), ('PORT', '5.5'),
+                      ('LOGIN_FAILURE_LIMIT', '0'), ('REGISTER_WINDOW_SECONDS', 'hour'), ('TRUSTED_PROXIES', '9')):
         _, err = load({name: bad})
         check(f"{name}={bad!r} is rejected with a clear message", err and name in err, err)
     s, err = load({'TURN_SECONDS': '2', 'RECONNECT_SECONDS': '0', 'PORT': '8080', 'TURN_TIMER_THREAD': '0'})
@@ -110,6 +115,32 @@ def start_app(extra_env):
             '"origins", app.socketio.server.eio.cors_allowed_origins)')
     return subprocess.run([sys.executable, '-c', code],
                           cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_trusted_proxies_separate_players_behind_a_proxy():
+    """Behind a proxy every request arrives from the proxy's IP. With TRUSTED_PROXIES=1 the real client IP
+    comes from X-Forwarded-For, so one attacker's failed logins don't lock out everyone else."""
+    code = '''
+import app
+c = app.app.test_client()
+attacker = {"X-Forwarded-For": "203.0.113.50"}
+for _ in range(5):
+    c.post("/api/login", json={"username": "nobody", "password": "x"}, headers=attacker)
+other = c.post("/api/login", json={"username": "nobody", "password": "x"}, headers={"X-Forwarded-For": "203.0.113.51"})
+again = c.post("/api/login", json={"username": "nobody", "password": "x"}, headers=attacker)
+print("other", other.status_code, "attacker", again.status_code)
+'''
+    def run(extra):
+        env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
+        env.update(extra, TURN_TIMER_THREAD='0',
+                   DATABASE_URL='sqlite:///' + os.path.join(tempfile.mkdtemp(), 'px.db').replace('\\', '/'))
+        return subprocess.run([sys.executable, '-c', code], cwd=BACKEND, env=env, capture_output=True, text=True,
+                              timeout=120).stdout.strip()
+    with_proxy, without_proxy = run({'TRUSTED_PROXIES': '1'}), run({})
+    check("with TRUSTED_PROXIES=1 another player behind the same proxy isn't locked out",
+          with_proxy == 'other 401 attacker 429', with_proxy)
+    check("(without it, everyone behind the proxy shares one limit -- why deployments must set it)",
+          without_proxy == 'other 429 attacker 429', without_proxy)
 
 
 def test_real_server_startup():

@@ -52,7 +52,8 @@ def start_server(tmp, name='server', **extra_env):
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
         port = s.getsockname()[1]
-    env = dict(os.environ, PORT=str(port), **extra_env,
+    # ~14 test accounts are registered from 127.0.0.1; the per-IP limit itself is covered by the smoke test.
+    env = dict(os.environ, PORT=str(port), REGISTER_LIMIT='100000', **extra_env,
                DATABASE_URL='sqlite:///' + os.path.join(tmp, f'{name}.db').replace('\\', '/'))
     log = open(os.path.join(tmp, f'{name}.log'), 'w', encoding='utf-8')
     proc = subprocess.Popen([sys.executable, 'app.py'], cwd=BACKEND, env=env, stdout=log, stderr=subprocess.STDOUT,

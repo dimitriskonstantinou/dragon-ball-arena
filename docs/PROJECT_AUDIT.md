@@ -182,7 +182,7 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 `cors_allowed_origins="*"` and no explicit `SameSite`, so a cross-site page can open an authenticated socket in browsers that send the cookie.
 **Fix:** allowed origins from env; `SESSION_COOKIE_SAMESITE='Lax'`, `Secure` in production.
 
-**SEC-3 — MEDIUM — No rate limiting on login/register (by reading).** Enables password guessing and account spam. Fix: per-IP limits (Flask-Limiter or a small in-process counter).
+**SEC-3 — MEDIUM — No rate limiting on login/register (by reading).** Enables password guessing and account spam. Fix: per-IP limits (Flask-Limiter or a small in-process counter). — ✅ FIXED in Step 22 (in-process sliding window, no new dependency: 5 failed logins / 5 min and 5 accounts / hour per IP → 429 + Retry-After; `TRUSTED_PROXIES` for real client IPs behind a proxy). Not covered yet: many IPs guessing one account (per-account limits / CAPTCHA, later if needed).
 
 **SEC-4 — MEDIUM — Sessions can't be revoked or expire (by reading)**
 Signed client-side cookie with only `user_id`; logout just clears that browser. A stolen cookie works forever.

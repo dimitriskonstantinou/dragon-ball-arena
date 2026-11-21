@@ -148,7 +148,8 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
    in staging/production: set it to each site's own URL (e.g. `https://dev.yourdomain`, `https://yourdomain`). Note: the turn-timer ticker is a background thread in the one server process;
    with gevent it becomes a greenlet (`socketio.start_background_task` handles both).
 2. ✅ *(Step 20)* Cookies: `HttpOnly` + `SameSite=Lax` always, `Secure` automatically in staging/production.
-3. Behind a proxy: wrap the app in `werkzeug.middleware.proxy_fix.ProxyFix` so scheme/IP are correct.
+3. ✅ *(Step 22)* Behind a proxy: set `TRUSTED_PROXIES` (1 behind Render/one load balancer, 2 with Cloudflare in front
+   as well) so ProxyFix reads the real client IP/scheme. **Without it the rate limits treat every player as one IP.**
 4. **Image URLs → relative** (`/photos/...`) instead of `request.host_url + ...`. Behind HTTPS proxies the
    absolute URL can come out as `http://` and browsers block it (mixed content).
 5. `GET /healthz` → `{"ok": true}` plus a cheap DB check (used by the host + uptime monitor).
@@ -204,7 +205,7 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 
 ### Stage 6 — Staging deploy
 1. Create the host account, a Postgres instance, and a web service from the GitHub repo (Docker).
-2. Set env vars: `ENV=production`, `SECRET_KEY` (long random), `DATABASE_URL`, `ALLOWED_ORIGINS`.
+2. Set env vars: `ENV=production`, `SECRET_KEY` (long random), `DATABASE_URL`, `ALLOWED_ORIGINS`, `TRUSTED_PROXIES`.
 3. Release command: `flask db upgrade && python seed_db.py`. Health check path: `/healthz`.
 4. Auto-deploy from a `staging` branch.
 5. Play full matches from two different networks (Wi-Fi + phone 4G/5G).

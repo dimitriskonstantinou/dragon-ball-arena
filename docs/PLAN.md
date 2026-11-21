@@ -43,5 +43,6 @@ coverage don't drop, pyflakes doesn't grow.
 | 19 | `feature/step19-config-secret-key` | `config.py`: validated env settings; staging/production refuse to start without a strong `SECRET_KEY`; hardcoded key removed (dev: random per-machine key file) | prod start without key: exit 0 → refused; new config suite (25 checks); probe 3→2 |
 | 20 | `feature/step20-origins-cookies` | `ALLOWED_ORIGINS` (same-origin default, https list required when deployed, `*` refused); cookie `SameSite=Lax` (+`Secure` when deployed) | foreign-origin handshake 200 → 400; probe 2→1 (no exploit left); config 25→39, smoke 102→107 |
 | 21 | `feature/step21-self-host-socketio` | socket.io client served from our own server (npm build, integrity-verified, sha256 pinned); browser tests fail on any third-party request | third-party requests per page load 1 → 0; smoke 107→111; Step 20's extra load timeout removed |
+| 22 | `feature/step22-rate-limits` | Per-IP limits: 5 failed logins / 5 min, 5 accounts / hour → 429; in-memory sliding window (no new dependency); `TRUSTED_PROXIES` (ProxyFix) | unlimited guessing/spam reproduced → 429 after 5; probe 2→1; new rate_limit suite (10), config 39→45, smoke 111→117 |
 
-**Merged into `dev`:** none of steps 1–21 yet (user merges in order).
+**Merged into `dev`:** none of steps 1–22 yet (user merges in order).

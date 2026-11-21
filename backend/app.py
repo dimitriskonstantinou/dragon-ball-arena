@@ -1,5 +1,6 @@
 from flask import Flask, request, send_from_directory, session, jsonify
 from flask_socketio import SocketIO, emit, join_room
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timezone
 import copy
@@ -13,6 +14,7 @@ from contextlib import contextmanager
 import config
 import content_loader
 import game_engine
+import rate_limit
 from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
 
@@ -24,6 +26,9 @@ except config.ConfigError as e:
     raise SystemExit(f"Configuration error: {e}")
 
 app = Flask(__name__)
+if settings.trusted_proxies:
+    # Real client IP / scheme from the proxy's X-Forwarded-* headers (rate limits, Secure cookies).
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=settings.trusted_proxies, x_proto=settings.trusted_proxies)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'frontend'))
@@ -328,8 +333,26 @@ def serve_frontend_asset(filename):
 
 # --- auth (plain HTTP, not Socket.IO) ---------------------------------------
 
+# Per client IP (SEC-3). Failed logins and created accounts count; when over the
+# limit every attempt from that IP is refused until the window has passed.
+login_limiter = rate_limit.SlidingWindowLimiter(settings.login_failure_limit, settings.login_window_seconds,
+                                                clock=lambda: now())
+register_limiter = rate_limit.SlidingWindowLimiter(settings.register_limit, settings.register_window_seconds,
+                                                   clock=lambda: now())
+
+
+def too_many(what, wait):
+    response = jsonify({'error': f"Too many {what}. Try again in {wait} seconds.", 'retry_after': wait})
+    response.status_code = 429
+    response.headers['Retry-After'] = str(wait)
+    return response
+
+
 @app.route('/api/register', methods=['POST'])
 def register():
+    wait = register_limiter.retry_after(request.remote_addr)
+    if wait:
+        return too_many("new accounts from your network", wait)
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
     email = (data.get('email') or '').strip().lower()
@@ -358,18 +381,23 @@ def register():
         db.session.add(UserCharacter(user_id=user.id, character_id=cid))
 
     db.session.commit()
+    register_limiter.hit(request.remote_addr)
 
     session['user_id'] = user.id
     return jsonify(user.to_dict()), 201
 
 @app.route('/api/login', methods=['POST'])
 def login():
+    wait = login_limiter.retry_after(request.remote_addr)
+    if wait:
+        return too_many("failed login attempts", wait)
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
     password = data.get('password') or ''
 
     user = User.query.filter_by(username=username).first()
     if not user or not check_password_hash(user.password_hash, password):
+        login_limiter.hit(request.remote_addr)
         return jsonify({'error': 'invalid username or password'}), 401
 
     session['user_id'] = user.id
