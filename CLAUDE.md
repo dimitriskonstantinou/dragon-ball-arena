@@ -40,7 +40,7 @@ backend/
   requirements.txt / requirements-dev.txt   runtime / test tools (playwright, coverage, pyflakes)
   photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
   game.db                   Local SQLite (gitignored; holds real local accounts)
-frontend/  index.html · app.js (single file) · style.css
+frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
 tools/     measure.py (metrics snapshot) · probe_exploits.py (reproduces known bugs)
 docs/      plans, audit, roadmap, step log, measurements/
 ```
@@ -212,6 +212,11 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
 - Today: vanilla JS, one file. **Frontend phase (decided 2026-11-20): React + TypeScript + Vite + React Router**,
   styled with custom CSS + design tokens. Do **not** add Tailwind, shadcn/ui, TanStack Query or Zustand unless a
   concrete need appears. Keep the Socket.IO client. Until then: no framework migration, only fixes.
+- **No third-party requests (Step 21).** Libraries are vendored into `frontend/vendor/` with the version in the file
+  name and their license next to them, taken from the official npm tarball and checked against npm's integrity
+  hash; the smoke test pins the sha256 and the server/client compatibility (JS client 4.x <-> python-socketio 5.x),
+  and the browser tests fail on any request that doesn't go to our own server. To upgrade: same procedure, new
+  versioned file, update the pin.
 - Browser tests (`test_browser_e2e.py`) drive the UI like a player: only enabled buttons, real dice selection,
   portrait clicks. Expected console noise is listed and counted in `KNOWN_CONSOLE_NOISE`; anything else fails.
 - The client renders state and sends intents; it is never a source of truth for rules. Its affordability math must
@@ -229,7 +234,7 @@ HTTP: `POST /api/register {username,email,password}`, `POST /api/login`, `POST /
 - **Origins & cookies (Step 20):** Socket.IO accepts only `ALLOWED_ORIGINS` (development default: same origin;
   staging/production must list https origins; `*` is always refused -- logins are cookie-based). The session cookie is
   `HttpOnly` + `SameSite=Lax`, and `Secure` in staging/production.
-- Still deploy blockers: rate limits (SEC-3), session revocation (SEC-4); also self-host socket.io (SEC-8).
+- Still deploy blockers: rate limits (SEC-3), session revocation (SEC-4).
 - New user-visible text from users (names, chat) requires the DOM-API frontend first (SEC-7).
 
 ### Performance requirements

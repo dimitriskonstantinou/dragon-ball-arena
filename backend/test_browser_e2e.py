@@ -20,6 +20,7 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -80,10 +81,12 @@ def new_player(browser, url, errors, label):
     page.on('console', lambda m: m.type == 'error' and errors.append(f'{label} console: {m.text}'))
     page.on('framenavigated', lambda f: f == page.main_frame and errors.append(f'{label} --- navigated ---'))
     page.on('dialog', lambda d: answer_dialog(d, label, errors))
+    # Everything must come from our own server (no third-party scripts; Step 21).
+    own_host = urlparse(url).netloc
+    page.on('request', lambda r: urlparse(r.url).netloc not in (own_host, '')
+            and errors.append(f'{label} third-party request: {r.url}'))
     OPEN_PAGES.append((label, page))
-    # The page's 'load' waits for socket.io from cdn.socket.io (third party, audit SEC-8 / roadmap 3.6), which has
-    # been seen to take >10 s; our own server answers at once. Remove this allowance once the client is self-hosted.
-    page.goto(url, timeout=30_000)
+    page.goto(url)
     name = f'{label}_{uuid.uuid4().hex[:6]}'
     # First load fetches socket.io from a CDN (audit SEC-8) and then checks the session -- wait for the form.
     page.wait_for_selector('#login-form a', state='visible', timeout=30_000)

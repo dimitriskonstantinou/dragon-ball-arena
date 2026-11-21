@@ -197,7 +197,7 @@ Usernames are case-sensitive ("Goku" and "goku" can coexist, which allows impers
 **SEC-7 — LOW (becomes HIGH with user text) — Frontend builds HTML from strings (measured)**
 12 `innerHTML` uses, inline `onclick="...'${id}'..."`. Today only authored content flows through it; the first chat, username display or custom name makes it XSS. Fix in the frontend rewrite (DOM APIs / `textContent`).
 
-**SEC-8 — LOW — socket.io client loaded from a third-party CDN without SRI (by reading).** Self-host it.
+**SEC-8 — LOW — socket.io client loaded from a third-party CDN without SRI (by reading).** Self-host it. — ✅ FIXED in Step 21 (vendored npm build, integrity-verified, pinned sha256)
 
 **Cheating vectors checked and closed (Steps 1–9, probe-verified):** free skills, unaffordable queues,
 illegal targets, dead actors, hidden-info leaks (opponent queue, traps, ids, skill internals), spoofed player slot,
@@ -263,7 +263,7 @@ badges cover the portrait's top-right, so "click self" only works on part of the
 **FE-11 — LOW — Normal "logged out" check shows as a browser console error:** `/api/me` answers 401 when logged out.
 **DEV-1 — LOW (dev only) — Werkzeug dev server logs "Invalid frame header" WebSocket errors on reload/logout**
 (teardown only; never observed during play). Production uses gunicorn + gevent.
-**DEV-2 — LOW → MEDIUM — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8.
+**DEV-2 — LOW → MEDIUM — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8. — ✅ FIXED in Step 21 (third-party requests per page load 1 → 0; browser tests now fail on any third-party request)
 *Step 20:* the CDN once took >10 s while our own server answered in under a second, failing a browser run. For
 players it means the game can't load at all if that third-party server is slow or down. Fix = self-host (roadmap 3.6).
 

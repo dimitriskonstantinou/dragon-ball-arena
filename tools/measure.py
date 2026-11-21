@@ -130,7 +130,9 @@ def section_size():
         out(f'| {os.path.relpath(f, ROOT)} | {n} | {b} |')
     out(f'| **total** | **{total_l}** | **{total_b}** |')
     fe = sum(os.path.getsize(f) for f in glob.glob(os.path.join(FRONTEND, '*.*')))
-    out(f'\nFrontend first-load (html+css+js, excl. CDN socket.io): {fe / 1024:.1f} KB\n')
+    vendor = sum(os.path.getsize(f) for f in glob.glob(os.path.join(FRONTEND, 'vendor', '*.js')))
+    out(f'\nFrontend first-load (html+css+js): {fe / 1024:.1f} KB own code'
+        f' + {vendor / 1024:.1f} KB vendored libraries = {(fe + vendor) / 1024:.1f} KB, all from our own server\n')
 
 
 def image_info(path):

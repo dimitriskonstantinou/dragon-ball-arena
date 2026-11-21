@@ -176,7 +176,8 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
    against the Flask-SocketIO deployment docs for the pinned versions, and verify websockets in Stage 5.
 2. `Dockerfile` on `python:3.12-slim`: install requirements, copy `backend/` + `frontend/`, non-root user,
    `CMD` = the gunicorn line. `.dockerignore` excludes `game.db`, `__pycache__`, `.git`.
-3. Serve the socket.io client JS from our own server (not cdn.socket.io), versioned with the backend.
+3. ✅ *(Step 21)* The socket.io client is served from our own server (`frontend/vendor/socket.io-4.5.4.min.js`,
+   versioned filename, so it can get long cache headers in Stage 3).
 4. Optimize images (audit AST-1): ~2 MB → ~200 KB, since every player downloads them.
 5. Static caching headers for `/photos/*` and JS/CSS (with a version query string on deploy).
 - **Check:** `docker build` + `docker run` locally → two browsers play a full match over websockets

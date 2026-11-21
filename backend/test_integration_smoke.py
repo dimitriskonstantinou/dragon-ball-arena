@@ -114,6 +114,29 @@ relative = [u for u in urls if not u.startswith('http')]
 check("every image URL in match teams is absolute, including primed skill images",
       relative == [] and any('SpiritBall' in u for u in urls) == ('yamcha_saiyan_saga' in server_side), relative)
 
+# --- Step 21 regression: the page loaded socket.io from a third-party CDN (the game
+# couldn't load while it was slow/down; foreign code with full page access). ---
+import hashlib
+import re
+from importlib.metadata import version as package_version
+
+VENDOR_CLIENT = 'vendor/socket.io-4.5.4.min.js'
+VENDOR_SHA256 = '18a36a927dac54650b18b903f8f8778219e02e13946e581d9b3e1e4995f7435b'  # npm socket.io-client 4.5.4
+page_client = appmod.app.test_client()
+index_html = page_client.get('/').get_data(as_text=True)
+external_scripts = re.findall(r'<script[^>]+src="(https?:)?//', index_html)
+check("the game page loads no scripts from other servers", external_scripts == [], external_scripts)
+served = page_client.get('/' + VENDOR_CLIENT)
+check("the socket.io client is served by our own server as JavaScript",
+      served.status_code == 200 and 'javascript' in served.content_type and f'src="{VENDOR_CLIENT}"' in index_html,
+      (served.status_code, served.content_type))
+check("...and is byte-for-byte the verified npm build (pinned sha256)",
+      hashlib.sha256(served.get_data()).hexdigest() == VENDOR_SHA256)
+server_major = int(package_version('python-socketio').split('.')[0])
+client_major = int(re.search(r'socket\.io-(\d+)\.', VENDOR_CLIENT).group(1))
+check("the client version is compatible with the server library (JS client 4.x <-> python-socketio 5.x)",
+      (client_major, server_major) == (4, 5), (client_major, server_major))
+
 # --- Step 20 regression: any website could open a logged-in game connection
 # (cors_allowed_origins="*" + cookie auth), and the login cookie had no SameSite. ---
 web = appmod.app.test_client()

@@ -93,6 +93,7 @@ frontend/
   index.html              Page structure (auth screen, lobby, game board)
   style.css                Styling
   app.js                    Client logic (auth, lobby, board rendering, targeting, payment modal)
+  vendor/                   socket.io client 4.5.4 (+ license), served by our own server -- no third-party requests
 ```
 
 ## Accounts & database

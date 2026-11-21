@@ -99,7 +99,7 @@ no DB query for roster data on connect/find-match, all existing checks unchanged
 | 3.3 Login/register rate limits | SEC-3 | N failed logins → 429 (test) |
 | 3.4 Session versioning + lifetime | SEC-4 | Logout invalidates old cookies (test) |
 | 3.5 Case-insensitive usernames, email check, IntegrityError handled | SEC-5 | Tests for each |
-| 3.6 Relative image URLs, `/healthz`, logging config, self-hosted socket.io | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
+| 3.6 Relative image URLs, `/healthz`, logging config, ~~self-hosted socket.io~~ (✅ *Step 21*) | DEPLOY Stage 1, SEC-8 | Works behind a proxy (manual) |
 
 ## Phase 4 — Content system & cleanup
 
@@ -165,11 +165,12 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**3.6a / Step 21: serve the socket.io client from our own server (SEC-8, DEV-2).** Pulled forward: the game page
-can't load at all while cdn.socket.io is slow or down (it already failed a browser run in Step 20), and a third-party
-script with full access to the page is a security risk. Vendor the exact client version into `frontend/` (no build
-step), keep it in sync with the server's python-socketio, drop the test's extra load timeout. Small. Then 3.3 rate
-limits (SEC-3), 3.4 session revocation (SEC-4).
+**3.3 / Step 22: limit login and registration attempts (SEC-3).** Nothing stops a script from guessing passwords
+at full speed, or from creating thousands of accounts. Plan: per-client-IP limits on `/api/login` (failed attempts)
+and `/api/register` (accounts per hour), answered with HTTP 429 + "try again in N s", in-memory to match the
+single-process design (Redis-backed later with the rest of the shared state), limits in `config.py`. Note for
+deployment: behind a proxy the client IP must come from `X-Forwarded-For` via ProxyFix (DEPLOY_PLAN Stage 1), or
+every player would share the proxy's IP. Then 3.4 session revocation (SEC-4).
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.
