@@ -73,7 +73,11 @@ def pg_url_for(database):
 
 def run_container(name, port, env):
     docker('rm', '-f', name)
-    args = ['run', '-d', '--name', name] + (['-p', f'{port}:8000'] if port else [])
+    # host.docker.internal = the machine running Docker (where the test Postgres listens). Docker Desktop
+    # provides it; on Linux (CI runners) it must be mapped explicitly.
+    args = ['run', '-d', '--name', name, '--add-host=host.docker.internal:host-gateway']
+    if port:
+        args += ['-p', f'{port}:8000']
     for k, v in env.items():
         args += ['-e', f'{k}={v}']
     return docker(*args, IMAGE)

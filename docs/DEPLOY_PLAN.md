@@ -196,16 +196,21 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 - **Check:** `docker build` + `docker run` locally → two browsers play a full match over websockets
   (DevTools → Network → WS shows `101 Switching Protocols`).
 
-### Stage 4 — CI (GitHub Actions)
-1. Push the repo to GitHub (private).
-2. Workflow on every push/PR: set up Python 3.12, start a Postgres service container, `pip install -r
-   requirements-dev.txt`, `python -m playwright install --with-deps chromium`, then **`python tests.py`** (Step 30:
-   every suite + probe + coverage + lint + payload, compared with `tools/tests_baseline.json`; exit 1 on any
-   regression), with the smoke test also against that Postgres. (Once the React frontend exists: `npm ci && npm run
-   build` before the browser tests.)
-3. Upload the `tools/measure.py` report as a build artifact, so every PR has before/after numbers.
-4. Protect `main`: merge only when CI is green.
-- **Check:** a PR with a deliberately broken test is blocked.
+### Stage 4 — CI (GitHub Actions) — ✅ *workflow added in Step 36; branch protection = the user's switch*
+1. ✅ The repo is on GitHub.
+2. ✅ `.github/workflows/tests.yml`, on every push, pull request and by hand (`workflow_dispatch`): Ubuntu 24.04,
+   Python 3.12 (pip cache), `pip install -r backend/requirements-dev.txt`, `python -m playwright install --with-deps
+   chromium`, then **`python tests.py --container`** -- every suite incl. PostgreSQL (tests.py starts it in Docker on
+   the runner) and the production image check, compared with `tools/tests_baseline.json`; exit 1 = red run.
+   Read-only token; a newer push to the same branch cancels the older run. (Once the React frontend exists:
+   `npm ci && npm run build` before the browser tests.)
+3. ✅ The `tests.py` report is shown on each run's summary page and kept as the `tests-report` artifact.
+4. **Protect `main` and `dev`** (GitHub → Settings → Branches → Add rule → "Require status checks to pass before
+   merging" → check `tests`; also "Require a pull request before merging" for `main`). Only the repo owner can do it.
+- **Check:** a PR with a deliberately broken test is shown red and blocked (after step 4).
+- Proven locally before the first cloud run: the same install + `tests.py` in a clean `python:3.12` Linux
+  container (all non-Docker suites green, Chromium deps install), and `tests.py --container` on Docker Desktop
+  with the Linux host mapping (`--add-host=host.docker.internal:host-gateway`) the runner needs.
 
 ### Stage 5 — Load test (measure capacity *before* launch)
 1. `tools/loadtest.py`: uses the `python-socketio` client to register N users, pair them into N/2 matches, and

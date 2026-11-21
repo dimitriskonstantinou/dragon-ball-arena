@@ -171,13 +171,15 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 **Going online (user's choice after Step 32): DEPLOY_PLAN Stages 2 → 3 → 4, then the DEV site.**
 
-**Stage 4 / Step 36: CI -- every push is tested automatically (TST-2).** `python tests.py` exists and catches
-regressions, but only when someone runs it. Plan: a GitHub Actions workflow on every push and pull request -- Python
-3.12, install requirements + Playwright Chromium, run `python tests.py` (incl. the PostgreSQL suites via a service
-container and the production image check), upload the report as an artifact; then protect `main` (and `dev`) so a
-red run can't be merged. Check: a deliberately broken push is shown red and blocked.
-*(Step 35 done: logging everywhere -- requests, accounts/security, connections, matches/turns/results, errors with
-context, stats, deploy versions; text or JSON; no secrets. Step 34: production server + Docker image.)*
+**Stage 5 / Step 37: load test -- how many players can one server hold?** Everything is tested for correctness,
+nothing yet for capacity. Plan (DEPLOY_PLAN Stage 5): `tools/loadtest.py` registers N bot accounts, pairs them into
+N/2 matches over real Socket.IO connections and plays random legal turns with human-like pauses, against the
+production Docker image on PostgreSQL. Steps of 100 → 500 → 1,000 → 2,000 players; per step record CPU, RAM,
+p50/p95 time from `commit-turn` to `update-state`, errors and dropped connections, plus RAM over 30 minutes (leaks).
+Result: players per server size, so the DEV/PROD instance can be chosen with 2x headroom. Then Stage 6: pick the host
+and put the DEV site online (the user's account/cost decision).
+*(Step 36 done: CI -- GitHub Actions runs `tests.py --container` on every push. To finish it, the user turns on branch
+protection for `main` and `dev`. Step 35: logging.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

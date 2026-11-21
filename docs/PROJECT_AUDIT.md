@@ -281,7 +281,7 @@ players it means the game can't load at all if that third-party server is slow o
 ### 4.7 Testing
 
 **TST-1 — MEDIUM — The documented smoke command writes to the real `game.db`** unless `DATABASE_URL` is set (source of DB-4). Fix: default to a temp DB.
-**TST-2 — MEDIUM — No CI.** Tests only run when someone remembers. — *Partly addressed in Step 30:* `python tests.py` runs everything in one command and fails on regressions against `tools/tests_baseline.json` (lost tests, new exploits, payload growth, coverage/lint drops, real-DB writes). Still open: running it automatically on every push (DEPLOY_PLAN Stage 4).
+**TST-2 — MEDIUM — No CI.** Tests only run when someone remembers. — *Partly addressed in Step 30:* `python tests.py` runs everything in one command and fails on regressions against `tools/tests_baseline.json` (lost tests, new exploits, payload growth, coverage/lint drops, real-DB writes). ✅ *Step 36:* GitHub Actions runs `python tests.py --container` on every push and pull request (`.github/workflows/tests.yml`). Remaining: the repo owner enables branch protection so a red run can't be merged.
 **TST-3 — MEDIUM — Frontend has no automated tests, and Steps 3/7/8 (state shape and protocol changes) have not been played in a real browser (unverified).** Checked only by reading `app.js`.
 — *✅ Addressed in Step 12a:* `test_browser_e2e.py` (Playwright) plays full matches, sessions and disconnects through the real UI.
 **TST-4 — LOW — `seed_db.py` 0% covered**; 2 lint warnings (empty f-strings in the smoke test).

@@ -49,6 +49,7 @@ backend/
 frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
 tests.py   ONE command that checks everything + compares with tools/tests_baseline.json (run before/after every change)
 Dockerfile · .dockerignore   production image (python:3.12-slim, gunicorn + gevent, 1 worker, non-root, HEALTHCHECK)
+.github/workflows/tests.yml  CI: `python tests.py --container` on every push / pull request (Ubuntu, Python 3.12)
 tools/     measure.py (detailed metrics snapshot) · probe_exploits.py (reproduces known bugs) ·
            tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates) ·
            check_container.py (builds + proves the production image; `tests.py --container`)
@@ -76,7 +77,10 @@ sha256). Engine speed only warns (noisy machine). **PostgreSQL:** whenever Docke
 `test_postgres.py` + the whole smoke suite on PostgreSQL 16 in a throwaway container `dba-test-postgres` (port 55432,
 user/password `dba`/`dbatest`, started on demand and left running; `docker rm -f dba-test-postgres` removes it), each
 suite on a brand-new database. Never point it at a real database. Exit code 1 + a PROBLEM list otherwise. Every step's report
-includes its verdict; a step is not done unless the full run is ALL GREEN.
+includes its verdict; a step is not done unless the full run is ALL GREEN. **CI** (GitHub Actions) runs
+`python tests.py --container` on every push and pull request -- a pushed branch shows green/red in the repo's
+Actions tab; the report is on the run's summary page. Anything a suite needs must work on Linux too (no
+Windows-only paths; Docker containers reach the host via `host.docker.internal`, mapped with `host-gateway`).
 
 Individual tools, from `backend/` unless noted (settings: see `config.py`; the defaults need nothing set):
 
