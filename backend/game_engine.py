@@ -197,14 +197,32 @@ def is_targetable_by(target, skill):
     return skill_ignores_invulnerability(skill) or not is_invulnerable(target, skill.get('classes', []))
 
 
-def is_harmful_blocked(target, skill_classes):
+REACTIVE_DEFENSES = ('dodge', 'counter', 'reflect')   # checked in this order; the first one present is used
+
+
+def react(target, reactions):
+    """How `target` reacts to the skill being applied: 'dodge', 'counter',
+    'reflect' or None. Decided ONCE per skill application per target (ENG-3,
+    decided 2026-11-20: reactive defenses protect against a whole skill, not one
+    effect) -- the first effect that respects reactive defenses uses up the
+    status, and every later effect of the same skill on that target gets the
+    same answer. `reactions` is the per-application memo (_apply_turn makes one
+    per move); None = a one-off hit outside a skill (e.g. a counter-trap)."""
+    if reactions is None:
+        reactions = {}
+    key = id(target)
+    if key not in reactions:
+        reactions[key] = next((r for r in REACTIVE_DEFENSES if consume_status(target, r)), None)
+    return reactions[key]
+
+
+def is_harmful_blocked(target, skill_classes, reactions=None):
     """Shared guard for non-damage harmful effects (stun/silence/dot/etc.):
-    blocked by invulnerability, or consumes a dodge if present."""
+    blocked by invulnerability, or by the target's reaction to this skill
+    (a dodged, countered or reflected skill lands none of its harmful extras)."""
     if is_invulnerable(target, skill_classes):
         return True
-    if consume_status(target, 'dodge'):
-        return True
-    return False
+    return react(target, reactions) is not None
 
 
 def resolve_protection(target, player, opponent):
@@ -228,7 +246,8 @@ def resolve_protection(target, player, opponent):
 # --- core resolution --------------------------------------------------------
 
 def apply_damage(target, amount, actor=None, ignore_defense=False,
-                  ignore_reduction=False, ignore_invuln=False, ignore_reactive=None, skill_classes=None):
+                  ignore_reduction=False, ignore_invuln=False, ignore_reactive=None, skill_classes=None,
+                  reactions=None):
     """ignore_invuln skips the general/class invulnerability check specifically.
     ignore_reactive skips dodge/counter/reflect specifically -- a DIFFERENT
     thing (those are one-shot reactive defenses, not a standing immunity).
@@ -248,13 +267,12 @@ def apply_damage(target, amount, actor=None, ignore_defense=False,
         if is_invulnerable(target, skill_classes):
             return
     if not ignore_reactive:
-        if consume_status(target, 'dodge'):
+        reaction = react(target, reactions)    # once per skill per target (see react)
+        if reaction in ('dodge', 'counter'):
             return
-        if consume_status(target, 'counter'):
-            return
-        if consume_status(target, 'reflect'):
+        if reaction == 'reflect':
             if actor:
-                lose_health(actor, amount)
+                lose_health(actor, amount)     # ENG-5 (open): raw, ignores the attacker's own defenses
             return
 
     dealt_mult = get_mod_multiplier(actor.get('status', []), 'damage_dealt_mod') if actor else 1
@@ -281,7 +299,7 @@ def apply_heal(target, amount, actor=None):
     target['health'] = min(target['maxHealth'], target['health'] + final)
 
 
-def apply_effect(effect, actor, targets, player, opponent, skill_classes):
+def apply_effect(effect, actor, targets, player, opponent, skill_classes, reactions=None):
     etype = effect['type']
 
     # Any effect may set "target": "self" to hit the caster instead of the
@@ -292,19 +310,19 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
     if etype == 'damage':
         for t in effect_targets:
             real_target = resolve_protection(t, player, opponent) or t
-            apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes)
+            apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes, reactions=reactions)
 
     elif etype == 'piercing_damage':
         for t in effect_targets:
             real_target = resolve_protection(t, player, opponent) or t
-            apply_damage(real_target, effect['value'], actor=actor, ignore_reduction=True, skill_classes=skill_classes)
+            apply_damage(real_target, effect['value'], actor=actor, ignore_reduction=True, skill_classes=skill_classes, reactions=reactions)
 
     elif etype == 'affliction_damage':
         for t in effect_targets:
             real_target = resolve_protection(t, player, opponent) or t
             apply_damage(real_target, effect['value'], actor=actor,
                          ignore_defense=True, ignore_reduction=True, ignore_invuln=True,
-                         skill_classes=skill_classes)
+                         skill_classes=skill_classes, reactions=reactions)
 
     elif etype == 'damage_ignore_invuln':
         # Narrower than affliction_damage: bypasses ONLY invulnerability
@@ -314,7 +332,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         for t in effect_targets:
             real_target = resolve_protection(t, player, opponent) or t
             apply_damage(real_target, effect['value'], actor=actor,
-                         ignore_invuln=True, ignore_reactive=False, skill_classes=skill_classes)
+                         ignore_invuln=True, ignore_reactive=False, skill_classes=skill_classes, reactions=reactions)
 
     elif etype == 'self_damage':
         lose_health(actor, effect['value'])
@@ -328,7 +346,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         chosen = random.sample(alive_enemies, min(effect.get('count', 1), len(alive_enemies)))
         for t in chosen:
             real_target = resolve_protection(t, player, opponent) or t
-            apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes)
+            apply_damage(real_target, effect['value'], actor=actor, skill_classes=skill_classes, reactions=reactions)
 
     elif etype == 'delayed_damage':
         # Visible "charging" marker -- deals no damage now. Detonates as a
@@ -345,11 +363,11 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         # regardless of the skill's target_type (kept for existing skills).
         for c in opponent['team']:
             if c['health'] > 0:
-                apply_damage(c, effect['value'], actor=actor, skill_classes=skill_classes)
+                apply_damage(c, effect['value'], actor=actor, skill_classes=skill_classes, reactions=reactions)
 
     elif etype == 'dot':
         for t in effect_targets:
-            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes):
+            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes, reactions):
                 add_status(t, {'type': 'dot', 'value': effect['value'],
                                 'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
@@ -389,17 +407,17 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
 
     elif etype == 'heal_block':
         for t in effect_targets:
-            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes):
+            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes, reactions):
                 add_status(t, {'type': 'heal_block', 'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
     elif etype == 'stun':
         for t in effect_targets:
-            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes):
+            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes, reactions):
                 add_status(t, {'type': 'stun', 'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
     elif etype == 'silence':
         for t in effect_targets:
-            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes):
+            if t['health'] > 0 and not is_harmful_blocked(t, skill_classes, reactions):
                 add_status(t, {'type': 'silence', 'classes': effect.get('classes'),
                                 'duration': effect.get('duration', 1) * 2, 'tag': 'harmful'})
 
@@ -431,7 +449,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes):
         for t in effect_targets:
             if t['health'] <= 0:
                 continue
-            if tag == 'harmful' and is_harmful_blocked(t, skill_classes):
+            if tag == 'harmful' and is_harmful_blocked(t, skill_classes, reactions):
                 continue
             add_status(t, {'type': etype, 'value': effect['value'],
                             'duration': effect.get('duration', 1) * 2, 'tag': tag})
@@ -997,8 +1015,9 @@ def _apply_turn(game_state, player_id, player, opponent, payment_list, resolved_
         if not effects and 'effect' in skill: effects = [skill['effect']]
 
         decided = False
+        reactions = {}   # each target reacts (dodge/counter/reflect) once to this whole skill
         for effect in effects:
-            apply_effect(effect, actor_char, targets, player, opponent, skill_classes)
+            apply_effect(effect, actor_char, targets, player, opponent, skill_classes, reactions)
             if any_team_wiped(game_state):
                 decided = True   # the match ends at this moment: nothing after it applies
                 break

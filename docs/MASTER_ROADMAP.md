@@ -46,7 +46,7 @@ P0 Stability ─▶ P1 Engine integrity ─▶ P2 Match lifecycle ─▶ P3 Secu
 | ✅ 1.9 ENG-2: mutual KO = **draw** (decided) — *Step 27* | Needed a draws column (migration) | Done: draw shown to both, saved with no winner, `total_draws` counted, streaks end; 4 paths tested |
 | ✅ 1.9b ENG-2 (**changed 2026-11-21 by the user: no draws**): the team wiped out **first** loses, in resolution order (moves in queue order, effects in listed order, start-of-turn ticks in the order they were cast); the match ends at that moment — *Step 29* | Replaces Step 27's draw (new migration drops its columns) | Done: Tri-Beam kill = Tien's player wins (recoil never lands); reflected first hit = attacker loses; ticks in cast order; no draw anywhere (engine, DB, UI) |
 | ✅ 1.10 ENG-4 + CON-2: invulnerable = **untargetable** except skills that ignore invulnerability (decided) — *Step 28* | — | Done: refused at queue time (no Ki/cooldown lost); greyed out in the UI (browser test); text fixed |
-| 1.11 ENG-3: reactive defenses apply **per skill** (decided) | — | Knee Attack fully dodged by one dodge |
+| ✅ 1.11 ENG-3: reactive defenses apply **per skill** (decided) — *Step 31* | — | Done: Knee Attack fully dodged by one dodge (real content); 12 tests, 7 of them fail on the old engine |
 | 1.12 ENG-7: per-game seeded RNG stored in state | No | Same seed + same moves → identical end state (test) |
 | ✅ **1.13 Content pipeline** (moved up from Phase 4; decided 2026-11-20) | — | **Done in Steps 12a + 12b**; 12c (socket payloads) later |
 
@@ -169,15 +169,13 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 ## Next task
 
-**1.11 / Step 31: dodge / counter / reflect protect against a whole skill, not one effect (ENG-3, decided
-2026-11-20).** Today each reactive defense stops one *effect*: against Knee Attack (damage + stun) a dodge stops the
-damage but the stun still lands, and a reflect bounces only the first hit of a multi-hit skill. Plan: resolve
-reactive defenses once per skill application on each target (one dodge = the whole skill misses that target; one
-reflect = the whole skill turns back on the attacker; counter as today but per skill), keeping Step 29's rule (the
-team wiped out first loses) intact; update the two Step 29 tests that rely on per-effect reflect; tests for each
-defense x single/multi-effect x single/team skill. Then 1.12 (seeded RNG), which finishes Phase 1.
-*(Step 30 done: `python tests.py` -- one command that runs everything and fails on any regression. Step 29 done:
-no draws -- the team wiped out first loses.)*
+**1.12 / Step 32: per-match seeded randomness (ENG-7) -- the last Phase 1 item.** Dice rolls, Ki removal and
+random-target hits use Python's global, unseeded `random`, so a match can't be replayed and a random bug can't be
+reproduced. Plan: each match gets its own `random.Random(seed)`, with the seed stored server-side in the game state
+(never sent to players -- it would let them predict dice); every random call in the engine uses it; a test proves
+"same seed + same moves = identical end state" and that the seed never reaches a view. That completes Phase 1 --
+together with Phases 2-3 the DEPLOY_PLAN Stage 0 prerequisites are then met except the user's merge into `dev`.
+*(Step 31 done: dodge/counter/reflect protect against a whole skill -- ENG-3.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

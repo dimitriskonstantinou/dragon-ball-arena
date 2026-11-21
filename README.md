@@ -223,7 +223,7 @@ Supported effect types:
 | Damage | `damage`, `piercing_damage` (ignores dmg-reduction buffs), `affliction_damage` (ignores reduction, shields, invuln), `self_damage`, `aoe_damage` (legacy: always hits whole enemy team), `dot` |
 | Healing | `heal`, `hot`, `team_heal`, `heal_block` |
 | Defense | `defense` (shield/destructible defense), `remove_defense`, `invulnerable`, `physical_invulnerable`, `chakra_invulnerable`, `mental_invulnerable` |
-| Reactive | `dodge`, `counter`, `reflect` (one-shot, consumed on trigger) |
+| Reactive | `dodge`, `counter`, `reflect` (one-shot; one answers a **whole skill** on that target: dodge/counter = the skill misses, reflect = all its damage goes back to the attacker and its stun etc. is blocked; affliction ignores them) |
 | Modifiers | `damage_taken_mod`, `damage_dealt_mod`, `heal_received_mod`, `heal_dealt_mod` (all are % duration-based buffs/debuffs) |
 | Control | `stun`, `silence` (optionally scoped to `classes`) |
 | Cleanse | `cleanse` (`scope`: `"harmful"`, `"buff"`, or a specific status type) |

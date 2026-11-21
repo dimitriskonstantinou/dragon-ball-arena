@@ -1399,6 +1399,103 @@ def test_invulnerable_is_untargetable():
     check("...and no flag at all for ordinary skills (no payload growth)", plain['skills'][0] == {"id": "y"}, plain)
 
 
+def test_reactive_defenses_protect_against_a_whole_skill():
+    """ENG-3 (decided 2026-11-20): one dodge / counter / reflect answers a whole
+    skill on that target, not just its first effect."""
+    hit_and_stun = [{"type": "damage", "value": 20}, {"type": "stun", "duration": 1}]
+
+    def stunned(c):
+        return any(s['type'] == 'stun' for s in c['status'])
+
+    for defense in ('dodge', 'counter'):
+        game = make_game()
+        b = game['players']['p2']['team'][0]
+        ge.add_status(b, {'type': defense, 'duration': 10, 'tag': 'buff'})
+        run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                                   "effects": copy.deepcopy(hit_and_stun)})
+        check(f"{defense} stops the WHOLE skill: no damage and no stun", b['health'] == 100 and not stunned(b),
+              (b['health'], b['status']))
+        check(f"...and uses up exactly that one {defense}", not any(s['type'] == defense for s in b['status']))
+
+    game = make_game()
+    a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'reflect', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 20}, {"type": "damage", "value": 15},
+                                           {"type": "stun", "duration": 1}]})
+    check("reflect turns ALL of the skill's damage back on the attacker (20 + 15)", a['health'] == 65, a['health'])
+    check("...the target takes nothing and isn't stunned", b['health'] == 100 and not stunned(b),
+          (b['health'], b['status']))
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "damage", "value": 10}] * 3})
+    check("a 3-hit skill uses up only ONE of two dodges", b['health'] == 100
+          and sum(s['type'] == 'dodge' for s in b['status']) == 1, (b['health'], b['status']))
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    a = game['players']['p1']['team'][0]
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    a['skills'] = [{"id": "s1", "name": "s1", "cost": {}, "target_type": "enemy", "cooldown": 0, "currentCooldown": 0,
+                    "effects": copy.deepcopy(hit_and_stun)}]
+    game['players']['p1']['team'].append(make_char('A2'))
+    game['players']['p1']['team'][1]['skills'] = [{"id": "s2", "name": "s2", "cost": {}, "target_type": "enemy",
+                                                   "cooldown": 0, "currentCooldown": 0,
+                                                   "effects": copy.deepcopy(hit_and_stun)}]
+    ge.queue_move(game, 'p1', 'A', 's1', 'p2', 0)
+    ge.queue_move(game, 'p1', 'A2', 's2', 'p2', 0)
+    ge.resolve_turn(game, [])
+    check("one dodge stops one skill; a second skill in the same turn lands in full",
+          b['health'] == 80 and stunned(b), (b['health'], b['status']))
+
+    game = make_game()
+    game['players']['p2']['team'].append(make_char('C'))
+    b, c = game['players']['p2']['team']
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "t", "name": "t", "cost": {}, "target_type": "enemy_team", "cooldown": 0,
+                               "effects": copy.deepcopy(hit_and_stun)})
+    check("team skill: each target reacts on its own (B dodges all of it, C takes all of it)",
+          (b['health'], stunned(b), c['health'], stunned(c)) == (100, False, 80, True),
+          (b['health'], b['status'], c['health'], c['status']))
+
+    game = make_game()
+    b = game['players']['p2']['team'][0]
+    ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "s", "name": "s", "cost": {}, "target_type": "enemy", "cooldown": 0,
+                               "effects": [{"type": "affliction_damage", "value": 30}, {"type": "stun", "duration": 1}]})
+    check("affliction (ignores reactive defenses) still lands through a dodge; the rest of the skill is dodged",
+          b['health'] == 70 and not stunned(b), (b['health'], b['status']))
+
+    game = make_game()
+    game['players']['p1']['team'].append(make_char('A2'))
+    ally = game['players']['p1']['team'][1]
+    ally['health'] = 50
+    ge.add_status(ally, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+    run_skill_via_queue(game, {"id": "h", "name": "h", "cost": {}, "target_type": "ally", "cooldown": 0,
+                               "effects": [{"type": "heal", "value": 20}]}, target_index=1, target_role='p1')
+    check("helping an ally never uses up the ally's dodge", ally['health'] == 70
+          and any(s['type'] == 'dodge' for s in ally['status']), (ally['health'], ally['status']))
+
+    import content_loader
+    raditz = content_loader.catalog().get('raditz_saiyan_saga')
+    if raditz is None:
+        print("  SKIPPED: raditz_saiyan_saga not in the current roster")
+    else:
+        knee = copy.deepcopy(next(s for s in raditz['skills'] if s['id'] == 'knee_attack'))
+        knee['currentCooldown'] = 0
+        game = make_game()
+        a, b = game['players']['p1']['team'][0], game['players']['p2']['team'][0]
+        a['skills'] = [knee]
+        ge.add_status(b, {'type': 'dodge', 'duration': 10, 'tag': 'buff'})
+        play(game, 'p1', 'A', 'knee_attack', 'p2', 0)
+        check("Raditz's real Knee Attack (damage + stun) is fully dodged by one dodge",
+              b['health'] == 100 and not stunned(b), (b['health'], b['status']))
+
+
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
 
 if __name__ == '__main__':

@@ -1,9 +1,9 @@
 {
-  "updated": "2026-11-21 18:37",
-  "git": "5c2dcbb",
+  "updated": "2026-11-21 18:51",
+  "git": "cf3b11a",
   "suites": {
     "engine": {
-      "pass": 211,
+      "pass": 223,
       "skipped": 0
     },
     "content": {
@@ -39,7 +39,7 @@
     "reflect ignores attacker's invulnerability/defense"
   ],
   "payload_bytes": 8606,
-  "turn_ms": 0.327,
+  "turn_ms": 0.258,
   "coverage": 92.0,
   "lint_issues": 3
 }

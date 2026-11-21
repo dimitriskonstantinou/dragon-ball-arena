@@ -210,8 +210,11 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
   classes unless `skill_ignores_invulnerability(skill)` (an effect in `IGNORES_INVULNERABILITY`, read from the skill's
   *current* effects -- priming changes them). The client gets `ignores_invulnerable: true` (only when true) from
   `strip_skill_internals` and greys out untargetable portraits; the server stays the authority.
-- Known engine gaps (audit): ENG-3 dodge/counter/reflect per effect (Step 31), ENG-7 unseeded RNG
-  (rules decided, see below).
+- **Reactive defenses per skill (Step 31):** `react(target, reactions)` uses up the target's first dodge/counter/
+  reflect once per skill application; `_apply_turn` passes one `reactions` memo per move into `apply_effect`, which
+  hands it to every `apply_damage` / `is_harmful_blocked` call. **New harmful effect types must pass `reactions`
+  through**, or they'd react per effect again. Calls outside a skill (counter-trap damage) pass nothing = one-off.
+- Known engine gaps (audit): ENG-5 reflect semantics (raw, extras not reflected), ENG-7 unseeded RNG (Step 32).
 
 ### Adding an effect type
 1. Branch in `apply_effect` (+ `tick_statuses` if timed). (ENG-6: a registry refactor is planned; then add a function.)
@@ -326,7 +329,7 @@ migrations, gunicorn + gevent with **one worker** (in-memory games), deploys end
   **Done (Steps 12a + 12b):** gameplay reads the in-memory catalog (never the DB); the `characters` table is an id
   registry for FKs, synced at startup, never deleted from; the lobby gets display fields only.
 - **Rules decided (2026-11-20, delegated to Claude):** invulnerable = untargetable except skills that explicitly
-  ignore invulnerability (done, Step 28); dodge/counter/reflect apply per skill, not per effect.
+  ignore invulnerability (done, Step 28); dodge/counter/reflect apply per skill, not per effect (done, Step 31).
 - **No draws (user, 2026-11-21; replaces "mutual KO = draw"):** the team wiped out **first** in resolution order loses
   (moves in queue order, effects in listed order, ticks in cast order) and the match ends at that moment (done, Step 29).
   Players will order their queued skills on a "timeline" in the Ki selector before committing (Phase 6, ENG-9).

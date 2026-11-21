@@ -100,7 +100,7 @@ leave, and leaving counts as a loss.
 although p1 acted. Also reachable with Kaioken self-damage and reflect.
 **Fix:** ~~needs a rule decision~~ decided by the user: resolution order decides (see above).
 
-**ENG-3 — MEDIUM (latent) — Dodge/counter/reflect protect against one *effect*, not one *skill* (verified)** — *decided: per skill*
+**ENG-3 — MEDIUM (latent) — Dodge/counter/reflect protect against one *effect*, not one *skill* (verified)** — *decided: per skill* — ✅ FIXED in Step 31 (`react()` decides each target's reaction once per skill application and `_apply_turn` keeps it for every effect of that skill: dodge/counter = the whole skill misses that target, reflect = all its damage goes back to the attacker and its harmful extras are blocked; effects that ignore reactive defenses (affliction) still land; team skills react per target; helpful skills never use up a defense; counter now also blocks a skill's harmful extras, not only its damage). Reflect's own semantics (raw damage ignoring the attacker's defenses, extras not reflected) stay open as ENG-5.
 *Where:* `apply_damage` / `is_harmful_blocked`. Knee Attack (damage + stun) vs Dodge: the damage was dodged, the stun still landed.
 No current character grants dodge/counter/reflect, so this is latent until one does.
 **Fix:** resolve reactive defenses once per skill application. Safe now: yes, with tests. Depends on: decision on intended semantics (proposed: one dodge = whole skill).
