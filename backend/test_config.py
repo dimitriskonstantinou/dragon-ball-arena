@@ -137,6 +137,20 @@ def test_number_settings_are_validated():
           err is None and (s.turn_seconds, s.reconnect_seconds, s.port, s.turn_timer_thread) == (2, 0, 8080, False), err)
 
 
+def test_logging_helpers():
+    import logging_setup
+    windows = 'sqlite:///C:\\Users\\someone\\Desktop\\Naruto_Arena\\backend\\game.db'
+    check("the startup line shows only the SQLite file name, never a local path (Windows)",
+          logging_setup.safe_database_url(windows) == 'sqlite:game.db', logging_setup.safe_database_url(windows))
+    check("...nor on Linux", logging_setup.safe_database_url('sqlite:////tmp/x/smoke.db') == 'sqlite:smoke.db')
+    pg = logging_setup.safe_database_url('postgresql+psycopg://dba:s3cretpw@db.example:5432/arena')
+    check("...and a PostgreSQL URL keeps user, host, port and database but never the password",
+          pg == 'postgresql+psycopg://dba@db.example:5432/arena' and 's3cretpw' not in pg, pg)
+    source = open(os.path.join(BACKEND, 'app.py'), encoding='utf-8').read()
+    check("the app's logger is named 'app' (not __name__, which is '__main__' under `python app.py`)",
+          "log = logging.getLogger('app')" in source)
+
+
 def start_app(extra_env):
     env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
     env.update(extra_env, TURN_TIMER_THREAD='0',

@@ -52,7 +52,8 @@ Dockerfile · .dockerignore   production image (python:3.12-slim, gunicorn + gev
 .github/workflows/tests.yml  CI: `python tests.py --container` on every push / pull request (Ubuntu, Python 3.12)
 tools/     measure.py (detailed metrics snapshot) · probe_exploits.py (reproduces known bugs) ·
            tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates) ·
-           check_container.py (builds + proves the production image; `tests.py --container`)
+           check_container.py (builds + proves the production image; `tests.py --container`) ·
+           run_loadtest.py + loadtest.py (load test: bots vs the production image, 1 CPU / 1 GB; Docker)
 docs/      plans, audit, roadmap, step log, measurements/
 ```
 
@@ -114,8 +115,10 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from the previous step's branch. Commit code + tests + docs +
-   that step's `docs/measurements/*` together, push, add a row to `docs/PLAN.md`. The user merges into `dev` in order.
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-36 are merged; `dev` and `main` are
+   protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
+   them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
+   `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
 3. **Bugs:** reproduce → add a probe item or failing test → fix → verify → run everything. Ask whether the bug hints
    at a bigger design problem.
 4. **Measure honestly:** explain every metric that moved. If something can't be measured, say so. Passing tests
@@ -345,7 +348,15 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 ### Performance requirements
 Measure first (`measure.py`, ad-hoc timing; for engine timing compare old/new interleaved and take the minimum of
 several rounds -- single runs on this machine vary by 3x). Current (Step 29): ~0.3 ms per turn incl. 18 ticking
-statuses, ~0.29 ms per player view, 8.6 KB per `update-state`. Payload bytes must not grow without reason; skill icons must be sized for display (AST-1).
+statuses, ~0.29 ms per player view, 8.6 KB per `update-state`. **Capacity (Step 37 load test, 1 CPU):** one
+server process is full at ~185-190 turns/s (~5 ms of CPU per turn end to end, PERF-1); p95 < 200 ms holds at 129
+turns/s. 4,000 bots at 10-30 s per action (an assumed human pace): 51% CPU, p95 47 ms, p99 775 ms. **Plan ~2,000
+concurrent players per server.** RAM ~89 MB + 0.11 MB per connection, flat over 30 minutes. `worker_connections`
+(gunicorn, 5000) is a hard cap on connected players (PERF-2). Re-run `python tools/run_loadtest.py` after changes that
+touch the per-turn path (payload, broadcasts, logging, the server stack) and compare with
+`docs/measurements/2026-11-23-step37-loadtest-*.md`. Check "Connected", "Generator CPU" and the ERROR lines before
+trusting a run: a limit in the server's settings or in the bots looks just like a full server.
+Payload bytes must not grow without reason; skill icons must be sized for display (AST-1).
 
 ### Assets
 User supplies all art (don't auto-source anime stills). Portraits → `photos/characters/`, icons → `photos/skills/`.

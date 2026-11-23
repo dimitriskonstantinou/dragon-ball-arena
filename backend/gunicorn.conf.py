@@ -22,6 +22,9 @@ bind = f"0.0.0.0:{settings.port}"
 # live matches are kept in memory and can't be shared between processes.
 worker_class = 'gevent'
 workers = 1
+# Every online player holds one websocket. gunicorn's default (1000) is a hard wall: player 1001 can't
+# connect AND /healthz stops answering, so a host would restart the server and end every match (PERF-2).
+worker_connections = 5000
 graceful_timeout = 20
 # The app logs every request itself (arena.http, with user + timing), so no access log here;
 # gunicorn's own lines use the app's format (logging_setup).

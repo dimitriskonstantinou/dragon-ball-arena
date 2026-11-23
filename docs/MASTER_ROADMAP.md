@@ -171,15 +171,18 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 **Going online (user's choice after Step 32): DEPLOY_PLAN Stages 2 → 3 → 4, then the DEV site.**
 
-**Stage 5 / Step 37: load test -- how many players can one server hold?** Everything is tested for correctness,
-nothing yet for capacity. Plan (DEPLOY_PLAN Stage 5): `tools/loadtest.py` registers N bot accounts, pairs them into
-N/2 matches over real Socket.IO connections and plays random legal turns with human-like pauses, against the
-production Docker image on PostgreSQL. Steps of 100 → 500 → 1,000 → 2,000 players; per step record CPU, RAM,
-p50/p95 time from `commit-turn` to `update-state`, errors and dropped connections, plus RAM over 30 minutes (leaks).
-Result: players per server size, so the DEV/PROD instance can be chosen with 2x headroom. Then Stage 6: pick the host
-and put the DEV site online (the user's account/cost decision).
-*(Step 36 done: CI -- GitHub Actions runs `tests.py --container` on every push. To finish it, the user turns on branch
-protection for `main` and `dev`. Step 35: logging.)*
+**Step 38: fix BE-12 (a disconnect during pairing leaves a broken match and blocks the other player) -- before
+going online.** Found by the load test, reproduced; plan in the audit.
+
+**Then Stage 6 / Step 39: the DEV site online (DEPLOY_PLAN Stage 6) -- needs the user's decisions.** Everything else
+for a first deploy exists and is tested (production image, PostgreSQL, CI, logs, capacity measured). What's missing is
+a host. Plan: the user picks the host (DEPLOY_PLAN recommends Render: Docker deploys from GitHub, managed PostgreSQL,
+HTTPS, websockets; size per Step 37 = 1 dedicated vCPU / 1 GB) and creates the account + payment; Claude
+prepares the service definition (`render.yaml` or equivalent), the environment variables (`ENV=staging`,
+`SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES`, `LOG_FORMAT=json`), deploys from `dev`, and
+verifies it from the outside (`/healthz`, HTTPS, a real match from two browsers, logs).
+*(Step 37 done: load test -- one 1-CPU server is full at ~185-190 turns/s; planning figure ~2,000 concurrent players;
+30-minute soak without a leak. It found PERF-2 (fixed) and BE-12 (open).)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

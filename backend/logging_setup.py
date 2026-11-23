@@ -13,6 +13,7 @@ test captures a whole run's logs and fails if one appears.
 """
 import json
 import logging
+import re
 import sys
 import time
 from urllib.parse import urlsplit
@@ -92,7 +93,8 @@ def safe_database_url(url):
     except ValueError:
         return '?'
     if parts.scheme.startswith('sqlite'):
-        return parts.scheme + ':' + parts.path.rsplit('/', 1)[-1]
+        # File name only -- a full local path (C:\\Users\\<name>\\...) doesn't belong in logs.
+        return parts.scheme + ':' + re.split(r'[\\/]', parts.path)[-1]
     host = parts.hostname or '?'
     port = f':{parts.port}' if parts.port else ''
     return f"{parts.scheme}://{parts.username or ''}{'@' if parts.username else ''}{host}{port}{parts.path}"

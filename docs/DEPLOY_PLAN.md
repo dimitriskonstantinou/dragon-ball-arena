@@ -19,7 +19,7 @@ Companion to [MASTER_ROADMAP.md](MASTER_ROADMAP.md) (Phase 8) and [UI_PLAN.md](U
 | Content files (`backend/content/*.json`) | ✔ | **Keep** as the source of truth (Steps 12a/12b). | Loaded + validated at startup into memory; the DB `characters` table is only an id registry, synced automatically on start. |
 | Python 3.14 locally | | Very new; some async libs (gevent) can lag behind on wheels. | Pin **Python 3.12** in production (Docker image). Run tests on both. |
 
-**Capacity (honest estimate, to be measured in Stage 5):** one small instance (1–2 vCPU, 1–2 GB) with gevent
+**Capacity (first estimate; measured in Step 37, see Stage 5):** one small instance (1–2 vCPU, 1–2 GB) with gevent
 should hold **hundreds to a couple of thousand concurrent players** for a turn-based game. Grow vertically
 (bigger box) first, because it's a config change. Horizontal scaling (Stage 10) is real work, so do it only
 when the load-test numbers say you need it.
@@ -212,14 +212,42 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
   container (all non-Docker suites green, Chromium deps install), and `tests.py --container` on Docker Desktop
   with the Linux host mapping (`--add-host=host.docker.internal:host-gateway`) the runner needs.
 
-### Stage 5 — Load test (measure capacity *before* launch)
-1. `tools/loadtest.py`: uses the `python-socketio` client to register N users, pair them into N/2 matches, and
-   play random legal turns with think-time delays.
-2. Run against the Docker container at 100 → 500 → 1,000 → 2,000 concurrent players.
-3. Record per level: CPU %, RAM, p50/p95 time from `commit-turn` to `update-state`, errors, dropped sockets.
-   Save to `docs/measurements/<date>-loadtest.md`.
-4. Targets: p95 < 200 ms, 0 errors, RAM stable over 30 min (no leak; catches the `GAMES` pruning issue).
-- **Check:** we know the max players per instance size → choose the instance size with 2× headroom.
+### Stage 5 — Load test (measure capacity *before* launch) — ✅ *done in Step 37*
+1. ✅ `tools/loadtest.py` (bots: register, connect over a websocket, get matched, play legal turns with exact Ki
+   payments, 2-4 s per action, surrender after 8-20 turns and search again) + `tools/run_loadtest.py` (runs the
+   production image with production settings on a fresh PostgreSQL, limited to 1 CPU / 1 GB, bots in their own
+   container on the same Docker network, samples CPU/RAM every ~2 s, writes the report, removes everything).
+2. ✅ Measured on 1 CPU / 1 GB (`docs/measurements/2026-11-23-step37-loadtest-{fast,human-pace,soak}.md`). Latency =
+   commit sent -> new state received, p50 / p95 / p99:
+
+   | Bots | Pace | Turns/s | Latency (ms) | CPU avg / max | RAM max |
+   |---|---|---|---|---|---|
+   | 500 | fast (2-4 s per action) | 65 | 4 / 10 / 33 | 38% / 58% | 147 MB |
+   | 1,000 | fast | 129 | 6 / 107 / 266 | 71% / 100% | 217 MB |
+   | 1,500 | fast | 184 | 40 / 353 / 499 | 91% / 98% | 262 MB |
+   | 2,000 | fast | 189 (full: unlimited would be ~260) | 137 / 705 / 1,023 | 94% / 103% | 332 MB |
+   | 2,000 | 10-30 s per action | 48 | 3 / 8 / 82 | 29% / 55% | 315 MB |
+   | 4,000 | 10-30 s per action | 96 | 4 / 47 / 775 | 51% / 95% | 530 MB |
+
+   Every bot connected at every level; 0 drops, 0 lost replies, 0 unanswered commits while measuring.
+   30-minute soak (500 fast bots, 5,054 matches started): RAM 146-147 MB every minute, no leak; 0 ERROR lines.
+   The fast run logged **11 ERROR lines** (while bots left in bulk, so no bot saw them): a real bug, BE-12.
+3. **What it means:**
+   - **One server process is full at ~185-190 turns/s** (about 5 ms of CPU per turn incl. its queue event). The
+     target p95 < 200 ms was met at 129 turns/s and missed at 184.
+   - **4,000 players at 10-30 s per action fit on one CPU (51% on average), but p99 is already 775 ms. Planning
+     figure: ~2,000 concurrent players per server** (29% CPU, p99 82 ms).
+   - Limits of these numbers: the 10-30 s pace is an **assumption** (measure the real one on the DEV site); the CPU
+     is a share of the dev machine's, a cloud vCPU may be slower; players arrived over 90 s (everyone reconnecting
+     at once after a deploy is not tested); no match ended during the human-pace windows (the fast + soak runs
+     cover matches starting and ending).
+   - Above 1,000 players `worker_connections` must be raised (PERF-2; now 5,000).
+   - RAM: ~89 MB idle + ~0.11 MB per connection -> 2,000 players fit in 512 MB, 4,000 need 1 GB.
+   - More CPU cores don't help one server (one gevent process = one core): choose **1 dedicated vCPU / 1 GB**.
+     Beyond that: cut the CPU per turn (PERF-1), then Stage 10 (several processes + Redis).
+   - Registration: 11.6 accounts/s at full speed (password hashing, deliberately slow).
+- **Check:** ✅ we know the players per instance size. Earlier Step 37 runs (2026-11-22) are invalid: they hit
+  PERF-2's connection limit and it was misread as CPU saturation.
 
 ### Stage 6 — Staging deploy
 1. Create the host account, a Postgres instance, and a web service from the GitHub repo (Docker).
