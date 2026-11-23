@@ -141,6 +141,10 @@ def main():
         status = http('http://127.0.0.1:18100/socket.io/?EIO=4&transport=polling',
                       headers={'Origin': 'https://evil.example'})[0]
         check("a game connection from a foreign website is refused", status == 400, status)
+        held = subprocess.run(['docker', 'exec', '-i', 'dba-check-prod', 'python', '-'], input=MANY_WEBSOCKETS,
+                              capture_output=True, text=True, timeout=180, env=NO_PATH_CONVERSION)
+        check("1,200 websockets can be open at once and /healthz still answers (gunicorn's default stops at 1,000)",
+              held.stdout.strip() == 'open=1200 healthz=200', (held.stdout + held.stderr)[-300:])
         health = ''
         for _ in range(45):
             health = docker('inspect', '-f', '{{.State.Health.Status}}', 'dba-check-prod').stdout.strip()
@@ -234,6 +238,28 @@ def main():
         sys.exit(1)
     print("Container checks passed.")
 
+
+# Runs INSIDE the container: opens real websockets (handshake answered with 101), holds them, asks /healthz.
+MANY_WEBSOCKETS = r'''
+import socket, urllib.request
+REQ = (b"GET /socket.io/?EIO=4&transport=websocket HTTP/1.1\r\nHost: 127.0.0.1:8000\r\nUpgrade: websocket\r\n"
+       b"Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+held = []
+for _ in range(1200):
+    try:
+        s = socket.create_connection(("127.0.0.1", 8000), timeout=5)
+        s.sendall(REQ)
+        if not s.recv(64).startswith(b"HTTP/1.1 101"):
+            break
+    except OSError:
+        break
+    held.append(s)
+try:
+    health = urllib.request.urlopen("http://127.0.0.1:8000/healthz", timeout=5).status
+except Exception as e:
+    health = type(e).__name__
+print(f"open={len(held)} healthz={health}")
+'''
 
 WEBSOCKET_PROBE = r'''
 import sys, uuid

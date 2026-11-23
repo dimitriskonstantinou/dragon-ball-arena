@@ -27,7 +27,8 @@ from game_engine import GameError
 from models import db, User, UserStats, Character, UserCharacter, Match
 from sqlalchemy.exc import IntegrityError
 
-log = logging.getLogger(__name__)                # startup, database, unexpected errors
+log = logging.getLogger('app')                   # startup, database, unexpected errors (not __name__: that is
+                                                  # '__main__' under `python app.py`)
 http_log = logging.getLogger('arena.http')        # one line per HTTP request
 auth_log = logging.getLogger('arena.auth')        # accounts + security events
 sock_log = logging.getLogger('arena.socket')      # game connections

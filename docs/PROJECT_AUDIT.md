@@ -175,6 +175,17 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 **BE-11 — HIGH (deploy) — A misconfigured production container restarted forever instead of failing (verified, Step 34)** — ✅ FIXED in Step 34.
 Under gunicorn a `ConfigError` (e.g. no `SECRET_KEY`) killed the worker with exit code 1, which gunicorn treats as a crash and restarts -- every second, forever, with the server never answering: a silent crash loop instead of a failed deploy. Fix: configuration errors exit with code 3 (gunicorn's "worker failed to boot"), so gunicorn stops with the message as the last log line; `test_config.py` pins the code and `tools/check_container.py` proves the container exits. Same step: staging/production refuse to start without `DATABASE_URL` (no silent SQLite file inside a container), and the image needed `packaging` (imported by gunicorn's gevent worker, not declared by gunicorn).
 
+**BE-12 — HIGH — Pairing with a player whose connection is already gone leaves a broken match (verified, Step 37)** — OPEN (next step)
+Found by the load test (11 ERROR lines in `find-match`; the ones the report kept came while bots disconnected in bulk),
+then reproduced in-process. `start_match` registers the match, then `join_room` raises `KeyError` for the dead
+connection: the match stays without a turn or a deadline. The other player gets "Something went wrong" and then "You
+are already in a match!" on every search; in the test the match was still there with the clock moved one hour ahead
+(only a surrender removed it). Two orderings lead there: the connection is gone but `handle_disconnect` hasn't run yet
+(reading the code, its 30 s forfeit should then clean up; not tested), or it ran *before* a late `find-match` added the
+player to the queue (nothing cleans up). The same late `find-match` also leaves a dead entry in the queue.
+**Fix:** check that both connections are alive before creating the match (put the living player back in the queue),
+don't queue a dead connection, undo everything if creating the match fails. Tests: both orderings, for p1 and p2.
+
 ### 4.3 Security & fair play
 
 **SEC-1 — HIGH (deploy blocker; CRITICAL once online) — Hardcoded fallback `SECRET_KEY` (verified)** — ✅ FIXED in Step 19 (`config.py`: staging/production refuse to start without a strong key; no key in the code; dev uses a random per-machine key file)
@@ -269,6 +280,18 @@ badges cover the portrait's top-right, so "click self" only works on part of the
 **DEV-2 — LOW → MEDIUM — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8. — ✅ FIXED in Step 21 (third-party requests per page load 1 → 0; browser tests now fail on any third-party request)
 *Step 20:* the CDN once took >10 s while our own server answered in under a second, failing a browser run. For
 players it means the game can't load at all if that third-party server is slow or down. Fix = self-host (roadmap 3.6).
+
+**PERF-1 — LOW (future) — One server process = one CPU core; ~5 ms of CPU per turn (measured, Step 37)**
+One core is full at ~185-190 turns/s (details + limits of the numbers: DEPLOY_PLAN Stage 5; planning figure ~2,000
+concurrent players). The rules engine is only ~0.3 ms of that; the rest was not profiled (candidates: Socket.IO and
+websocket overhead, building + encoding two 8.6 KB player views per event, logging). Not needed before launch. When it
+is: profile under load, then smaller updates, then several processes + Redis (Stage 10).
+
+**PERF-2 — HIGH (deploy) — Player 1,001 could not connect, and `/healthz` stopped answering (verified, Step 37)** — ✅ FIXED in Step 37
+gunicorn's gevent worker accepts 1,000 connections by default and every player holds one websocket. A/B on the
+production image with 1,200 real websockets: default -> 1,000 open, `/healthz` timed out (a host would restart the
+server and end every match); raised -> 1,200 open, `/healthz` 200. Fix: `worker_connections = 5000`
+(`gunicorn.conf.py`); `tools/check_container.py` opens 1,200 websockets on every container run.
 
 ### 4.6 Database
 
