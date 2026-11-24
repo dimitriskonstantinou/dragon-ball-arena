@@ -115,7 +115,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-37 are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-38 are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -156,7 +156,7 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   lock (`locked_match()` in handlers; `ROOM_LOCKS[room_id]` in background tasks such as the turn timer).
   Matchmaking state (queue, seat checks, creating matches) is guarded by `MATCHMAKING_LOCK`. An event can run after its
   own connection is gone: check `is_connected(sid)` **while holding the lock** before giving a connection a place in
-  shared state (Step 38). `start_match` is all-or-nothing. Lock order is always
+  shared state (Step 38; in `rejoin_match` the map entry first, then the check: Step 39). `start_match` is all-or-nothing. Lock order is always
   `MATCHMAKING_LOCK` -> room lock, never the reverse. Iterate shared dicts over a `list(...)` snapshot. Test races by
   firing events from parallel threads with one step slowed down (see the Step 15 smoke checks).
 - **Reconnect (Step 17):** a disconnect mid-match is not a forfeit: the player gets `disconnected_at` (server-only,

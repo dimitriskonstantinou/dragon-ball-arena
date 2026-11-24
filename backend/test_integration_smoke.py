@@ -1199,6 +1199,102 @@ else:
     for c in (intruder, seat1, seat2):
         c.disconnect()
 
+    # --- Step 39 regression (BE-13): the connection coming back dies while it is being put back into its
+    # match. The seat was then marked as back but belonged to nobody: no forfeit, and no way back in. ---
+    def return_and_die(http, how):
+        # Connects, and the connection dies while the server handles that connect. Returns its sid.
+        real, sids = appmod.characters_for_user, []
+        manager = appmod.socketio.server.manager
+
+        def dies(*args, **kwargs):
+            appmod.characters_for_user = real
+            sid = appmod.request.sid
+            sids.append(sid)
+            if how == 'closed':                         # completely gone (e.g. logout in another tab)
+                appmod.socketio.server.disconnect(sid)
+            else:                                       # closing: our disconnect handler has run, the
+                manager.pre_disconnect(sid, '/')        # library hasn't forgotten the connection yet
+                appmod.socketio.server._trigger_event('disconnect', '/', sid, 'test')
+            return real(*args, **kwargs)
+        appmod.characters_for_user = dies
+        try:
+            appmod.socketio.test_client(appmod.app, flask_test_client=http)
+        except Exception:
+            pass                                        # (the old code crashed here: KeyError in join_room)
+        finally:
+            appmod.characters_for_user = real
+        if how == 'closing':
+            manager.disconnect(sids[0], '/')
+        return sids[0]
+
+    errors_before = sum(l.startswith('ERROR') for l in LOGS.lines)
+    for how in ('closed', 'closing'):
+        http_die, die1 = new_player(f'd1_{how}')
+        _, die2 = new_player(f'd2_{how}')
+        room, my_role, their_role = match_of(die1, die2)
+        g = appmod.GAMES[room]
+        me = g['players'][my_role]
+        die1.disconnect()
+        left_at = me['disconnected_at']
+        die2.get_received()
+        dead_sid = return_and_die(http_die, how)
+        check(f"a connection that dies while rejoining doesn't take the seat ({how})",
+              me['disconnected_at'] == left_at and me['id'] != dead_sid
+              and appmod.DISCONNECTED_USERS.get(me['user_id']) == room,
+              (me['disconnected_at'], left_at, appmod.DISCONNECTED_USERS))
+        check(f"...leaves nothing behind for the dead connection ({how})", dead_sid not in appmod.SID_ROOM_MAP)
+        check(f"...and the opponent isn't told they're back ({how})",
+              not any(e['name'] == 'message' and 'RECONNECTED' in text(e) for e in die2.get_received()))
+        die1 = appmod.socketio.test_client(appmod.app, flask_test_client=http_die)
+        got = die1.get_received()
+        check(f"...and the player can still come back in time ({how})",
+              any(e['name'] == 'game-start' and e['args'][0] == {'roomId': room, 'role': my_role} for e in got)
+              and me['disconnected_at'] is None and appmod.DISCONNECTED_USERS == {}, got)
+        die1.disconnect()
+        die2.get_received()
+        return_and_die(http_die, how)
+        with clock_ahead(appmod.RECONNECT_SECONDS + 1):
+            check_disconnects()
+        check(f"...or forfeits after the grace period if they stay away ({how})",
+              g.get('winner') == their_role and room not in appmod.GAMES and appmod.DISCONNECTED_USERS == {},
+              (g.get('winner'), appmod.DISCONNECTED_USERS))
+        if room in appmod.GAMES:                        # (only if the check above failed)
+            die2.emit('surrender', {})
+        die2.disconnect()
+    check("none of this is logged as an error", sum(l.startswith('ERROR') for l in LOGS.lines) == errors_before)
+
+    # The other side of the race: the connection starts closing just AFTER it got its seat back. The
+    # disconnect (another thread) waits for the match's lock and must then count as leaving again.
+    http_late, late1 = new_player('late1')
+    _, late2 = new_player('late2')
+    room, my_role, their_role = match_of(late1, late2)
+    g = appmod.GAMES[room]
+    late1.disconnect()
+    real_join, closers = appmod.join_room, []
+
+    def join_then_close(*args, **kwargs):
+        appmod.join_room = real_join
+        sid = appmod.request.sid
+        closers.append(threading.Thread(target=lambda: appmod.socketio.server.disconnect(sid)))
+        closers[0].start()
+        time.sleep(0.05)                                # it is now waiting for the lock we hold
+        return real_join(*args, **kwargs)
+    appmod.join_room = join_then_close
+    try:
+        late1 = appmod.socketio.test_client(appmod.app, flask_test_client=http_late)
+    finally:
+        appmod.join_room = real_join
+    closers[0].join()
+    check("a connection that closes right after rejoining counts as gone again (new grace period)",
+          g['players'][my_role]['disconnected_at'] is not None
+          and appmod.DISCONNECTED_USERS.get(g['players'][my_role]['user_id']) == room
+          and g['players'][my_role]['id'] not in appmod.SID_ROOM_MAP, appmod.DISCONNECTED_USERS)
+    with clock_ahead(appmod.RECONNECT_SECONDS + 1):
+        check_disconnects()
+    check("(cleanup) that match was forfeited", g.get('winner') == their_role and room not in appmod.GAMES)
+    late2.disconnect()
+    check("(cleanup) nothing is left of any of these matches", leftovers() == NOTHING, leftovers())
+
     # --- Step 18 regression: there was no way to give up a match; the only way
     # out was leaving and waiting out the reconnect grace period. ---
     _, quit1 = new_player('quit1')
@@ -1270,6 +1366,7 @@ EXPECTED_LOG_EVENTS = {
     "a counter-trap": "INFO arena.match: Counter-trap fired: room=",
     "a player leaving mid-match": "INFO arena.match: Player left mid-match: room=",
     "a player rejoining": "INFO arena.match: Player rejoined: room=",
+    "a rejoin whose connection already died": "INFO arena.match: Rejoin dropped (disconnected): room=",
     "match end by KO": "cause=ko winner=",
     "match end by surrender": "cause=surrender winner=",
     "match end by timeouts": "cause=timeouts winner=",

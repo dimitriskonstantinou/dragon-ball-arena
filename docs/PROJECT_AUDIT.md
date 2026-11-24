@@ -187,12 +187,15 @@ handler, and the handler takes the same lock, so a check that passes is always f
 of 30 players searching and dropping at once): find-match errors 40 -> 0, matches that never ended 14 -> 0, honest
 searches left without a match 8 -> 0 of 72.
 
-**BE-13 — MEDIUM — A connection that dies while rejoining its match leaves an empty seat (verified, Step 38)** — OPEN
-Same idea as BE-12, in `rejoin_match`: if the new connection is closed while the connect handler runs (reproduced with a
-server-side disconnect, e.g. logging out in another tab), the seat is marked as back (`disconnected_at` cleared, entry
-removed from `DISCONNECTED_USERS`) but belongs to a dead connection: the reconnect timer never forfeits it and the player
-can't get back in. The turn timer should still end the match (three missed turns; not tested). **Fix:** in
-`rejoin_match`, set `SID_ROOM_MAP` first, then check `is_connected`, and undo if it is false. Needs its own test.
+**BE-13 — MEDIUM — A connection that dies while rejoining its match leaves an empty seat (verified, Step 38)** — ✅ FIXED in Step 39
+Same idea as BE-12, in `rejoin_match`: if the new connection was closed while the connect handler ran (e.g. logging out
+in another tab at that moment), the seat counted as back (`disconnected_at` cleared, no `DISCONNECTED_USERS` entry) but
+belonged to nobody: no reconnect forfeit, no way back in, and in one timing the opponent was told "RECONNECTED". Fix: set
+`SID_ROOM_MAP` first, **then** check `is_connected`, and only then give the seat; a connection closing after the check
+waits for the match's lock and counts as leaving again. 14 smoke checks (a wrong order makes the suite fail) + probe 38.
+Real server, connect slowed by 80 ms, logging out while coming back: old code 10 of 10 players locked out (16 returns),
+new code 0 in 150 returns (60 dying reconnects dropped). Without the slowdown neither version hit it in 150 returns: the
+window is about a millisecond.
 
 ### 4.3 Security & fair play
 
