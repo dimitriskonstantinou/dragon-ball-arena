@@ -68,7 +68,8 @@ def wait_healthy(port, seconds=60):
 
 def pg_url_for(database):
     """URL of `database` as seen from inside a container (the host's port 55432)."""
-    return f'postgresql+psycopg://dba:dbatest@host.docker.internal:55432/{database}'
+    # In the form hosts hand out (no '+psycopg'): config.py must turn it into our driver's.
+    return f'postgresql://dba:dbatest@host.docker.internal:55432/{database}'
 
 
 def run_container(name, port, env):

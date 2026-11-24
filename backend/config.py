@@ -9,9 +9,11 @@ message (config.ConfigError) instead of running insecurely or crashing later.
                      backend/.dev_secret_key (git-ignored) -- there is no key in the code.
   ALLOWED_ORIGINS    comma-separated origins allowed to open a game connection, e.g.
                      https://dragonballarena.com. Development default: same origin only.
-                     REQUIRED (https only) in staging/production; '*' is never accepted.
+                     REQUIRED (https only) in staging/production; '*' is never accepted. If it's missing there,
+                     RENDER_EXTERNAL_URL (set by Render: the site's own address) is used.
   DATABASE_URL       SQLAlchemy URL (default: SQLite file backend/game.db). REQUIRED in staging/production:
                      no silent fallback to a SQLite file inside the container (hosts wipe it on redeploy).
+                     postgres:// and postgresql:// (what hosts hand out) become postgresql+psycopg:// (our driver).
   PORT               dev server port (default 5000)
   TURN_SECONDS       turn time limit (default 60, 1..600)
   RECONNECT_SECONDS  grace period to come back after a disconnect (default 30, 0..600)
@@ -22,7 +24,8 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   LOG_LEVEL          DEBUG | INFO (default) | WARNING | ERROR
   LOG_FORMAT         text (default) | json (one JSON object per line, for hosted log services)
   APP_VERSION        which build is running, shown in the startup log line (the Docker image sets it to the
-                     git commit at build time; default 'dev'). Letters, digits and . _ - + only.
+                     git commit at build time; default 'dev'). Letters, digits and . _ - + only. If it's missing or
+                     'unknown', RENDER_GIT_COMMIT (set by Render) is used, shortened.
   SOCKETIO_ASYNC_MODE  threading (default: python app.py, tests) | gevent (production: gunicorn -k gevent,
                      set by the Dockerfile). Explicit, because Flask-SocketIO would otherwise switch to gevent
                      by itself as soon as the package is installed.
@@ -92,6 +95,8 @@ def _origins(environ, env):
     """Who may open a game connection. The login cookie travels with it, so
     '*' (any website) is never allowed."""
     raw = environ.get('ALLOWED_ORIGINS') or ''
+    if not raw and env in ('staging', 'production'):
+        raw = (environ.get('RENDER_EXTERNAL_URL') or '').rstrip('/')
     origins = tuple(o.strip() for o in raw.split(',') if o.strip())
     for origin in origins:
         if origin == '*':
@@ -108,6 +113,12 @@ def _origins(environ, env):
         if insecure:
             raise ConfigError(f"ALLOWED_ORIGINS must use https:// when ENV={env}: {', '.join(insecure)}")
     return origins
+
+
+def _database_url(environ):
+    url = environ.get('DATABASE_URL') or f"sqlite:///{os.path.join(BACKEND_DIR, 'game.db')}"
+    # Without a driver name SQLAlchemy would look for psycopg2, which we don't use.
+    return re.sub(r'^postgres(ql)?://', 'postgresql+psycopg://', url)
 
 
 def _dev_secret(path):
@@ -153,7 +164,7 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
         env=env,
         secret_key=secret,
         allowed_origins=allowed_origins,
-        database_url=environ.get('DATABASE_URL') or f"sqlite:///{os.path.join(BACKEND_DIR, 'game.db')}",
+        database_url=_database_url(environ),
         port=_int(environ, 'PORT', 5000, 1, 65535),
         turn_seconds=_int(environ, 'TURN_SECONDS', 60, 1, 600),
         reconnect_seconds=_int(environ, 'RECONNECT_SECONDS', 30, 0, 600),
@@ -196,7 +207,9 @@ def _log_format(environ):
 
 
 def _app_version(environ):
-    version = (environ.get('APP_VERSION') or 'dev').strip()
+    version = (environ.get('APP_VERSION') or '').strip()
+    if version in ('', 'unknown'):   # 'unknown' = the Dockerfile's default when the build isn't told the commit
+        version = (environ.get('RENDER_GIT_COMMIT') or '').strip()[:7] or version or 'dev'
     if not re.fullmatch(r'[A-Za-z0-9._+-]{1,64}', version):
         raise ConfigError(f"APP_VERSION must be 1-64 letters, digits or . _ - +, got {environ.get('APP_VERSION')!r}")
     return version
