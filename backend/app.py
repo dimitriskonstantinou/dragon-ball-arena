@@ -695,12 +695,19 @@ def rejoin_match(user):
         game = GAMES.get(room_id)
         if game is None or game.get('winner') or DISCONNECTED_USERS.get(user.id) != room_id:
             return False
+        # This connection may be closing already (a seat given to it would stay empty for good). First the
+        # map, THEN the check: handle_disconnect finds the match through the map, so if the connection
+        # starts closing after the check, it waits for our lock and counts as leaving again.
+        SID_ROOM_MAP[request.sid] = room_id
+        if not is_connected(request.sid):
+            SID_ROOM_MAP.pop(request.sid, None)
+            match_log.info("Rejoin dropped (disconnected): room=%s user=%s sid=%s", room_id, user.id, request.sid[:6])
+            return False
         role = next(r for r in ('p1', 'p2') if game['players'][r]['user_id'] == user.id)
         player = game['players'][role]
         player['id'] = request.sid
         player['disconnected_at'] = None
         DISCONNECTED_USERS.pop(user.id, None)
-        SID_ROOM_MAP[request.sid] = room_id
         join_room(room_id)
         match_log.info("Player rejoined: room=%s role=%s user=%s", room_id, role, user.id)
         emit('game-start', {'roomId': room_id, 'role': role})
@@ -789,8 +796,8 @@ def locked_match():
 
 def is_connected(sid):
     """False as soon as a connection starts closing -- the library marks it BEFORE calling
-    handle_disconnect. So inside MATCHMAKING_LOCK, "connected" means that its disconnect
-    cleanup (which takes the same lock) is still to come and will see what we do now."""
+    handle_disconnect. So "connected" means its disconnect cleanup is still to come; that
+    cleanup takes the same lock (MATCHMAKING_LOCK / the match's) and will see what we do now."""
     return socketio.server.manager.is_connected(sid, '/')
 
 
