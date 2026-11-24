@@ -171,10 +171,10 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 **Going online (user's choice after Step 32): DEPLOY_PLAN Stages 2 → 3 → 4, then the DEV site.**
 
-**Step 38: fix BE-12 (a disconnect during pairing leaves a broken match and blocks the other player) -- before
-going online.** Found by the load test, reproduced; plan in the audit.
+**Step 39: fix BE-13 (a connection that dies while rejoining leaves an empty seat).** Small; same approach as BE-12
+(Step 38, done).
 
-**Then Stage 6 / Step 39: the DEV site online (DEPLOY_PLAN Stage 6) -- needs the user's decisions.** Everything else
+**Then Stage 6 / Step 40: the DEV site online (DEPLOY_PLAN Stage 6) -- needs the user's decisions.** Everything else
 for a first deploy exists and is tested (production image, PostgreSQL, CI, logs, capacity measured). What's missing is
 a host. Plan: the user picks the host (DEPLOY_PLAN recommends Render: Docker deploys from GitHub, managed PostgreSQL,
 HTTPS, websockets; size per Step 37 = 1 dedicated vCPU / 1 GB) and creates the account + payment; Claude
@@ -182,7 +182,7 @@ prepares the service definition (`render.yaml` or equivalent), the environment v
 `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES`, `LOG_FORMAT=json`), deploys from `dev`, and
 verifies it from the outside (`/healthz`, HTTPS, a real match from two browsers, logs).
 *(Step 37 done: load test -- one 1-CPU server is full at ~185-190 turns/s; planning figure ~2,000 concurrent players;
-30-minute soak without a leak. It found PERF-2 (fixed) and BE-12 (open).)*
+30-minute soak without a leak. It found PERF-2 and BE-12 (both fixed).)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
 Small UI fixes found by the browser tests (FE-9 status labels) fit into Phase 5's UI-1.
 Phase 0's 0.2 (merge steps into `dev`) remains the user's; 0.1 is automated and 0.3 (reseed) is no longer needed.

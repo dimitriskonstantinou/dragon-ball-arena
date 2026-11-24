@@ -175,16 +175,24 @@ Fine today. Split (`auth.py`, `matchmaking.py`, `match_handlers.py`) when the ti
 **BE-11 — HIGH (deploy) — A misconfigured production container restarted forever instead of failing (verified, Step 34)** — ✅ FIXED in Step 34.
 Under gunicorn a `ConfigError` (e.g. no `SECRET_KEY`) killed the worker with exit code 1, which gunicorn treats as a crash and restarts -- every second, forever, with the server never answering: a silent crash loop instead of a failed deploy. Fix: configuration errors exit with code 3 (gunicorn's "worker failed to boot"), so gunicorn stops with the message as the last log line; `test_config.py` pins the code and `tools/check_container.py` proves the container exits. Same step: staging/production refuse to start without `DATABASE_URL` (no silent SQLite file inside a container), and the image needed `packaging` (imported by gunicorn's gevent worker, not declared by gunicorn).
 
-**BE-12 — HIGH — Pairing with a player whose connection is already gone leaves a broken match (verified, Step 37)** — OPEN (next step)
-Found by the load test (11 ERROR lines in `find-match`; the ones the report kept came while bots disconnected in bulk),
-then reproduced in-process. `start_match` registers the match, then `join_room` raises `KeyError` for the dead
-connection: the match stays without a turn or a deadline. The other player gets "Something went wrong" and then "You
-are already in a match!" on every search; in the test the match was still there with the clock moved one hour ahead
-(only a surrender removed it). Two orderings lead there: the connection is gone but `handle_disconnect` hasn't run yet
-(reading the code, its 30 s forfeit should then clean up; not tested), or it ran *before* a late `find-match` added the
-player to the queue (nothing cleans up). The same late `find-match` also leaves a dead entry in the queue.
-**Fix:** check that both connections are alive before creating the match (put the living player back in the queue),
-don't queue a dead connection, undo everything if creating the match fails. Tests: both orderings, for p1 and p2.
+**BE-12 — HIGH — Pairing with a player whose connection is already gone leaves a broken match (verified, Step 37)** — ✅ FIXED in Step 38
+Every event runs in its own thread, so a `find-match` can be handled *after* its player's disconnect was cleaned up. The
+dead connection was then queued for good, and pairing it made `join_room` raise `KeyError` halfway through
+`start_match`: a match without a turn or a deadline that never ended, the opponent "already in a match" on every search.
+(Step 37's note of a second ordering that the 30 s forfeit would clean up was wrong: until `handle_disconnect` has
+finished, the library still knows the connection, so nothing raises.) Fix: `is_connected(sid)`, checked under
+`MATCHMAKING_LOCK` before queueing and before pairing (the library marks a closing connection *before* calling our
+handler, and the handler takes the same lock, so a check that passes is always followed by the cleanup);
+`start_match` is all-or-nothing (undo + both players told). 17 smoke checks + probe 37. A/B on a real server (12 rounds
+of 30 players searching and dropping at once): find-match errors 40 -> 0, matches that never ended 14 -> 0, honest
+searches left without a match 8 -> 0 of 72.
+
+**BE-13 — MEDIUM — A connection that dies while rejoining its match leaves an empty seat (verified, Step 38)** — OPEN
+Same idea as BE-12, in `rejoin_match`: if the new connection is closed while the connect handler runs (reproduced with a
+server-side disconnect, e.g. logging out in another tab), the seat is marked as back (`disconnected_at` cleared, entry
+removed from `DISCONNECTED_USERS`) but belongs to a dead connection: the reconnect timer never forfeits it and the player
+can't get back in. The turn timer should still end the match (three missed turns; not tested). **Fix:** in
+`rejoin_match`, set `SID_ROOM_MAP` first, then check `is_connected`, and undo if it is false. Needs its own test.
 
 ### 4.3 Security & fair play
 
@@ -280,6 +288,11 @@ badges cover the portrait's top-right, so "click self" only works on part of the
 **DEV-2 — LOW → MEDIUM — First page load waits on cdn.socket.io** (observed in browser tests); supports SEC-8. — ✅ FIXED in Step 21 (third-party requests per page load 1 → 0; browser tests now fail on any third-party request)
 *Step 20:* the CDN once took >10 s while our own server answered in under a second, failing a browser run. For
 players it means the game can't load at all if that third-party server is slow or down. Fix = self-host (roadmap 3.6).
+
+**DEV-3 — LOW (dev machine) — `tests.py` says "psycopg is not installed" when Windows blocks it (verified, Step 38)**
+On 2026-11-24 an Application Control policy started blocking `psycopg-binary`'s DLL on the dev PC ("DLL load failed"), so
+the PostgreSQL + container suites can't run locally (they run in CI). `tests.py` reports every import error as "not
+installed". Fix: show the real reason. The policy itself is the user's decision.
 
 **PERF-1 — LOW (future) — One server process = one CPU core; ~5 ms of CPU per turn (measured, Step 37)**
 One core is full at ~185-190 turns/s (details + limits of the numbers: DEPLOY_PLAN Stage 5; planning figure ~2,000
