@@ -91,6 +91,7 @@ ROOM_LOCKS = {}                        # room_id -> RLock, one per live match (s
 MATCHMAKING_LOCK = threading.Lock()    # MATCHMAKING_QUEUE + seat checks + creating matches
 
 SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
+MATCH_FAILED_MSG = "The match could not be started. Reload the page and search again."
 
 # Turn timer (BE-1): every turn has a deadline; one background ticker passes
 # expired turns (game_engine.timeout_turn has the rules, incl. forfeit).
@@ -786,6 +787,13 @@ def locked_match():
         yield current_match()
 
 
+def is_connected(sid):
+    """False as soon as a connection starts closing -- the library marks it BEFORE calling
+    handle_disconnect. So inside MATCHMAKING_LOCK, "connected" means that its disconnect
+    cleanup (which takes the same lock) is still to come and will see what we do now."""
+    return socketio.server.manager.is_connected(sid, '/')
+
+
 def user_in_active_match(user_id):
     # list(): other threads add/remove matches while we look.
     return any(not g.get('winner') and user_id in (g['players']['p1']['user_id'], g['players']['p2']['user_id'])
@@ -814,6 +822,11 @@ def handle_find_match(selected_char_ids):
         # Seat checks + joining the queue + pairing are one atomic step, or two
         # tabs of the same account could both pass the checks at once.
         with MATCHMAKING_LOCK:
+            # This event runs in its own thread, so the player may be gone by now and their
+            # disconnect already cleaned up: nothing would ever remove this search again.
+            if not is_connected(sid):
+                match_log.info("Search dropped (disconnected): user=%s sid=%s", user.id, sid[:6])
+                return
             if sid in SID_ROOM_MAP:
                 raise GameError("You are already in a match!")
             if any(p['id'] == sid for p in MATCHMAKING_QUEUE):
@@ -829,6 +842,8 @@ def handle_find_match(selected_char_ids):
             match_log.info("Searching: user=%s team=%s queue=%d", user.id, ','.join(selected_char_ids),
                            len(MATCHMAKING_QUEUE))
             emit('match-status', "Searching for opponent...")
+            # Skip players whose connection is closing right now (their cleanup waits for this lock).
+            MATCHMAKING_QUEUE[:] = [p for p in MATCHMAKING_QUEUE if is_connected(p['id'])]
             if len(MATCHMAKING_QUEUE) >= 2:
                 start_match(MATCHMAKING_QUEUE.pop(0), MATCHMAKING_QUEUE.pop(0))
     except Exception as e:
@@ -836,7 +851,8 @@ def handle_find_match(selected_char_ids):
 
 
 def start_match(p1, p2):
-    """Creates a match for two queued players (caller holds MATCHMAKING_LOCK)."""
+    """Creates a match for two queued players (caller holds MATCHMAKING_LOCK). All or nothing:
+    if any part fails, no trace of the match stays behind and both players are told."""
     room_id = str(uuid.uuid4())[:8]
     game = {
         'roomId': room_id,
@@ -859,19 +875,32 @@ def start_match(p1, p2):
                    ','.join(c['id'] for c in p2['team']), seed)
     lock = ROOM_LOCKS[room_id] = threading.RLock()  # exists before any event can find the room
     with lock:
-        GAMES[room_id] = game
-        SID_ROOM_MAP[p1['id']] = room_id
-        SID_ROOM_MAP[p2['id']] = room_id
+        try:
+            GAMES[room_id] = game
+            SID_ROOM_MAP[p1['id']] = room_id
+            SID_ROOM_MAP[p2['id']] = room_id
 
-        join_room(room_id, sid=p1['id'])
-        join_room(room_id, sid=p2['id'])
+            join_room(room_id, sid=p1['id'])
+            join_room(room_id, sid=p2['id'])
 
-        emit('game-start', {'roomId': room_id, 'role': 'p1'}, to=p1['id'])
-        emit('game-start', {'roomId': room_id, 'role': 'p2'}, to=p2['id'])
+            emit('game-start', {'roomId': room_id, 'role': 'p1'}, to=p1['id'])
+            emit('game-start', {'roomId': room_id, 'role': 'p2'}, to=p2['id'])
 
-        game_engine.start_turn(game, 'p1')
-        start_turn_clock(game)
-        broadcast_state(game)
+            game_engine.start_turn(game, 'p1')
+            start_turn_clock(game)
+            broadcast_state(game)
+        except Exception:
+            # A half-created match has no turn and no deadline: it would never end, and both
+            # players would stay "already in a match" (BE-12).
+            GAMES.pop(room_id, None)
+            ROOM_LOCKS.pop(room_id, None)   # threads waiting on it re-check GAMES and back off
+            socketio.close_room(room_id)
+            for p in (p1, p2):
+                SID_ROOM_MAP.pop(p['id'], None)
+                emit('match-status', MATCH_FAILED_MSG, to=p['id'])
+                if p['id'] != request.sid:
+                    emit('error-msg', SERVER_ERROR_MSG, to=p['id'])
+            raise   # find-match logs it with its traceback and tells the searching player
     ensure_turn_timer()
 
 

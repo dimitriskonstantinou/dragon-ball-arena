@@ -915,6 +915,111 @@ else:
     for c in crowd:
         c.disconnect()
 
+    # --- Step 38 regression (BE-12): a connection that dies while it is being paired. Its "find-match"
+    # (own thread) can run after its disconnect was handled; the match was then created halfway, without
+    # a turn or a deadline, and the opponent was "already in a match" forever. ---
+    def sid_of(client):
+        return appmod.socketio.server.manager.sid_from_eio_sid(client.eio_sid, '/')
+
+    def search_and_vanish(client):
+        # The connection drops while the server is still handling this player's search.
+        real = appmod.characters_for_user
+
+        def drops(*args, **kwargs):
+            appmod.characters_for_user = real
+            client.disconnect()
+            return real(*args, **kwargs)
+        appmod.characters_for_user = drops
+        try:
+            client.emit('find-match', team_ids)
+        finally:
+            appmod.characters_for_user = real
+
+    def names(client):
+        return [e['name'] for e in client.get_received()]
+
+    def leftovers():
+        return (list(appmod.GAMES), list(appmod.ROOM_LOCKS), dict(appmod.SID_ROOM_MAP),
+                [p['username'] for p in appmod.MATCHMAKING_QUEUE])
+
+    NOTHING = ([], [], {}, [])
+
+    def surrender_match(first, second):
+        first.emit('surrender', {})
+        first.get_received()
+        second.get_received()
+        return leftovers() == NOTHING
+
+    check("(setup) no match or search is left over", leftovers() == NOTHING, leftovers())
+    errors_before = sum(l.startswith('ERROR') for l in LOGS.lines)
+    _, ghost = new_player('ghost1')
+    search_and_vanish(ghost)
+    check("a search handled after its player disconnected joins no queue", leftovers() == NOTHING, leftovers())
+
+    _, ghost = new_player('ghost2')
+    _, alive1 = new_player('alive1')
+    _, alive2 = new_player('alive2')
+    alive1.emit('find-match', team_ids)
+    alive1.get_received()
+    search_and_vanish(ghost)
+    check("...and isn't paired with a waiting player, who keeps waiting",
+          'game-start' not in names(alive1) and appmod.GAMES == {}
+          and [p['id'] for p in appmod.MATCHMAKING_QUEUE] == [sid_of(alive1)], leftovers())
+    alive2.emit('find-match', team_ids)
+    check("...and that waiting player gets the next real opponent",
+          'game-start' in names(alive1) and 'game-start' in names(alive2) and len(appmod.GAMES) == 1, leftovers())
+    check("(cleanup) that match ended", surrender_match(alive1, alive2), leftovers())
+
+    # Queued, then the connection starts closing; its disconnect handler hasn't run yet when the next
+    # player searches (the library marks the connection first, then calls the handler).
+    _, dying = new_player('dying')
+    dying.emit('find-match', team_ids)
+    dying_sid = sid_of(dying)
+    appmod.socketio.server.manager.pre_disconnect(dying_sid, '/')
+    alive1.emit('find-match', team_ids)
+    got = names(alive1)
+    check("a queued player whose connection is closing is skipped, not matched",
+          'game-start' not in got and 'error-msg' not in got and appmod.GAMES == {}
+          and [p['id'] for p in appmod.MATCHMAKING_QUEUE] == [sid_of(alive1)], (got, leftovers()))
+    appmod.socketio.server.manager.disconnect(dying_sid, '/')
+    alive2.emit('find-match', team_ids)
+    check("...and the player behind it is matched with the next one",
+          'game-start' in names(alive1) and 'game-start' in names(alive2), leftovers())
+    check("(cleanup) that match ended too", surrender_match(alive1, alive2), leftovers())
+    check("none of this is logged as an error", sum(l.startswith('ERROR') for l in LOGS.lines) == errors_before)
+
+    # Any other failure while a match is being created must leave nothing behind either.
+    for failing in ('join_room', 'broadcast_state'):
+        alive1.emit('find-match', team_ids)
+        alive1.get_received()
+        real = getattr(appmod, failing)
+        calls = []
+
+        def breaks(*args, **kwargs):
+            calls.append(1)
+            if failing == 'broadcast_state' or len(calls) == 2:   # join_room: the SECOND player's
+                raise RuntimeError("simulated failure while creating a match")
+            return real(*args, **kwargs)
+        setattr(appmod, failing, breaks)
+        try:
+            alive2.emit('find-match', team_ids)
+        finally:
+            setattr(appmod, failing, real)
+        got1, got2 = alive1.get_received(), alive2.get_received()
+        check(f"a crash while creating a match ({failing}) leaves no match, seat or lock behind",
+              leftovers() == NOTHING, leftovers())
+        check(f"...both players are told ({failing})", all(
+            any(e['name'] == 'error-msg' for e in got) and got[-1]['name'] in ('match-status', 'error-msg')
+            and any(e['name'] == 'match-status' and e['args'][0] == appmod.MATCH_FAILED_MSG for e in got)
+            for got in (got1, got2)), (got1, got2))
+        alive1.emit('find-match', team_ids)
+        alive2.emit('find-match', team_ids)
+        check(f"...and both can search and play again ({failing})",
+              'game-start' in names(alive1) and 'game-start' in names(alive2), leftovers())
+        check(f"(cleanup) the match after the crash ended ({failing})", surrender_match(alive1, alive2), leftovers())
+    alive1.disconnect()
+    alive2.disconnect()
+
     # --- Step 16 regression: no turn timer -- an idle player could hold a match
     # forever, and the opponent's only way out (leaving) recorded THEIR loss. ---
     from contextlib import contextmanager
@@ -1158,6 +1263,7 @@ EXPECTED_LOG_EVENTS = {
     "game connection": "INFO arena.socket: Connected: user=",
     "disconnection": "INFO arena.socket: Disconnected: user=",
     "matchmaking": "INFO arena.match: Searching: user=",
+    "a search whose player already left": "INFO arena.match: Search dropped (disconnected): user=",
     "match start with teams + seed": "INFO arena.match: Match started: room=",
     "each committed turn with its moves": "INFO arena.match: Turn: room=",
     "a timed-out turn": "INFO arena.match: Turn timed out: room=",
