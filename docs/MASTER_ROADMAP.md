@@ -171,10 +171,26 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 
 **Going online (user's choice after Step 32): DEPLOY_PLAN Stages 2 → 3 → 4, then the DEV site.**
 
-**Stage 6 / Step 40: the DEV site online, on Render's free plan (user, 2026-11-24).** Prepared: `render.yaml` + the
-settings Render provides, simulated at the free size (DEPLOY_PLAN Stage 6). Left: the user creates the Blueprint on
-Render (after the merge); then verify it from the outside (`/healthz`, HTTPS, a real match from two networks, logs).
-Then BE-14 (registration bursts) before the public launch.
+**The DEV site is online (Step 40, 2026-11-24) and showed problems that only exist on a real network.** Plan, one step and
+one pull request each, in this order (measurements: `docs/measurements/2026-11-24-step41-live-findings.md`):
+
+- **Step 41 -- BE-15: reload or a network drop must not lose the match.** ✅ Built as planned (page id, handover, `pagehide`).
+  **Still to do, live, after the merge:** reload back within 2 s in 10 of 10 tries, acting works after a drop in 10 of 10, nobody
+  connected loses by disconnect.
+- **Step 42 -- SEC-9: rate limits count the real visitor.** 42a: measure on the live site (a temporary log line with
+  only the *shape* of the headers: how many X-Forwarded-For entries, which are private, whether
+  `CF-Connecting-IP` is there and equals one of them, for normal and faked requests, http and websocket). 42b: use
+  what was measured (expected: `CF-Connecting-IP`, or the right position), as one function used by HTTP **and** Socket.IO,
+  configurable per host, never trusting what a visitor can fake; remove the temporary line. **Done when, live:** the 6th wrong login is
+  refused even with faked addresses, a second network is not affected, logs show no internal address.
+- **Step 43 -- BE-16: logs.** Access log off for good, no connection ids, foreign origins not at ERROR; container checks.
+  **Done when:** one line per request, none for health checks, locally and live.
+- **Step 44 -- BE-14: registration bursts** (release the database connection before hashing). **Done when:** 100 accounts,
+  32 at once, on the simulated free size: 0 failures (today 9-11).
+- **Step 45 -- AST-1 + caching:** real file types, icons at display size, long-lived caching of images with versioned addresses.
+  **Done when:** `photos/` well below today's 2,037 KB and a second visit asks the server for no image.
+
+After each step: local + container tests, CI, then the live checks above on the deployed commit. Baseline update with Step 41.
 *(Step 37 done: load test -- one 1-CPU server is full at ~185-190 turns/s; planning figure ~2,000 concurrent players;
 30-minute soak without a leak. It found PERF-2 and BE-12 (both fixed). Steps 38-39: BE-12 and BE-13, dead connections in pairing and rejoining.)*
 Remaining Phase 2 items (2.7 battle events, 2.8 names in messages) are UX and fit with the frontend phase.
