@@ -49,6 +49,7 @@ backend/
 frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
 tests.py   ONE command that checks everything + compares with tools/tests_baseline.json (run before/after every change)
 Dockerfile · .dockerignore   production image (python:3.12-slim, gunicorn + gevent, 1 worker, non-root, HEALTHCHECK)
+render.yaml   the free DEV site on Render (Blueprint: server + database; dev branch, after green checks)
 .github/workflows/tests.yml  CI: `python tests.py --container` on every push / pull request (Ubuntu, Python 3.12)
 tools/     measure.py (detailed metrics snapshot) · probe_exploits.py (reproduces known bugs) ·
            tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates) ·
@@ -115,7 +116,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-38 are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-39 are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -365,7 +366,9 @@ User supplies all art (don't auto-source anime stills). Portraits → `photos/ch
 Planned: real extensions + resize via a tool (AST-1).
 
 ### Deployment
-Not deployed yet (Stage 2 PostgreSQL: Step 33; Stage 3 production image: Step 34). Follow DEPLOY_PLAN: DEV site from
+DEV site: Render's free plan via `render.yaml` (prepared in Step 40, not online yet; limits + simulation numbers in
+DEPLOY_PLAN Stage 6). Hosts' values work as they are: `config.py` turns `postgres(ql)://` into our driver's form and falls
+back to `RENDER_EXTERNAL_URL` / `RENDER_GIT_COMMIT`. PROD is not deployed (Stage 2 PostgreSQL: Step 33; Stage 3 image: Step 34). Follow DEPLOY_PLAN: DEV site from
 `dev`, PROD from `main`, separate DBs/secrets, Postgres + migrations, gunicorn + gevent with **one worker** (in-memory
 games), deploys end live matches until state moves to Redis. The image: `docker build -t dragon-ball-arena .`; run with
 `ENV`, `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES` as environment variables (see the Dockerfile).

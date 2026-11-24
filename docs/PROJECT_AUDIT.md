@@ -197,6 +197,12 @@ Real server, connect slowed by 80 ms, logging out while coming back: old code 10
 new code 0 in 150 returns (60 dying reconnects dropped). Without the slowdown neither version hit it in 150 returns: the
 window is about a millisecond.
 
+**BE-14 — LOW (MEDIUM at launch) — Registration holds a database connection while hashing the password (verified, Step 40)** — OPEN
+`register` first checks for a taken name (which takes a connection from the pool: 5 + 10), then hashes the password
+(slow on purpose, ~1 s on 0.1 CPU) with the connection still checked out. 32 registrations at once on Render's free size:
+9-11 of 100 answered 500 after 30 s (`QueuePool limit ... reached`). More CPU makes it far less likely (Step 37: 4,000 on
+1 CPU, 0 failures). **Fix:** release the connection before hashing (end the read transaction), or hash first.
+
 ### 4.3 Security & fair play
 
 **SEC-1 — HIGH (deploy blocker; CRITICAL once online) — Hardcoded fallback `SECRET_KEY` (verified)** — ✅ FIXED in Step 19 (`config.py`: staging/production refuse to start without a strong key; no key in the code; dev uses a random per-machine key file)
