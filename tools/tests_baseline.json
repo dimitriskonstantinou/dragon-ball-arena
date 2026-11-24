@@ -1,6 +1,6 @@
 {
-  "updated": "2026-11-24 00:30",
-  "git": "114108b",
+  "updated": "2026-11-24 22:57",
+  "git": "15dee9d",
   "suites": {
     "engine": {
       "pass": 229,
@@ -11,7 +11,7 @@
       "skipped": 0
     },
     "config": {
-      "pass": 71,
+      "pass": 90,
       "skipped": 0
     },
     "rate_limit": {
@@ -23,11 +23,11 @@
       "skipped": 0
     },
     "smoke": {
-      "pass": 163,
+      "pass": 217,
       "skipped": 0
     },
     "browser": {
-      "pass": 39,
+      "pass": 46,
       "skipped": 0
     },
     "runner_gates": {
@@ -39,7 +39,7 @@
       "skipped": 0
     },
     "smoke_postgres": {
-      "pass": 163,
+      "pass": 217,
       "skipped": 0
     },
     "container": {
@@ -51,7 +51,7 @@
     "reflect ignores attacker's invulnerability/defense"
   ],
   "payload_bytes": 8606,
-  "turn_ms": 0.255,
+  "turn_ms": 0.296,
   "coverage": 92.0,
   "lint_issues": 3
 }

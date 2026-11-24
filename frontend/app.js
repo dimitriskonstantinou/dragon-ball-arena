@@ -1,7 +1,21 @@
 // Accounts require a real session cookie, which only works reliably
 // same-origin -- so the socket connects to wherever this page was served
 // from, and doesn't connect at all until we know the user is logged in.
-const socket = io({ autoConnect: false });
+// The page id survives a reload and differs per tab: with it the server knows that a new connection is
+// this same page again (reloaded, or back after a network drop) and puts it straight back into its match.
+const socket = io({ autoConnect: false, auth: { page: pageId() } });
+
+function pageId() {
+    const fresh = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    try {
+        if (!sessionStorage.getItem('pageId')) sessionStorage.setItem('pageId', fresh);
+        return sessionStorage.getItem('pageId');
+    } catch (e) { return fresh; }   // storage blocked: reconnecting still works, reloading waits for the server
+}
+
+// Say goodbye when the page closes, so the opponent isn't kept waiting for the network to notice.
+window.addEventListener('pagehide', () => { if (socket.connected) socket.disconnect(); });
+window.addEventListener('pageshow', e => { if (e.persisted && currentUser) socket.connect(); });   // back button
 let myRole = null;
 let selectedCharId = null;
 let selectedSkillId = null;

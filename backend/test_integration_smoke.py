@@ -1295,6 +1295,151 @@ else:
     late2.disconnect()
     check("(cleanup) nothing is left of any of these matches", leftovers() == NOTHING, leftovers())
 
+    # --- Step 41 regression (BE-15): on a real network the server hears that a connection closed AFTER the
+    # same player's new one arrived (Render: 10 s later). The reloaded page stayed outside its match, and the
+    # late goodbye then made the player lose although connected. ---
+    def page_client(http, page):
+        return appmod.socketio.test_client(appmod.app, flask_test_client=http, auth={'page': page})
+
+    def paged_player(tag, page):
+        http, client = new_player(tag)
+        client.disconnect()
+        client = page_client(http, page)
+        client.get_received()
+        return http, client
+
+    def in_match(client, room_id, role):
+        return any(e['name'] == 'game-start' and e['args'][0] == {'roomId': room_id, 'role': role}
+                   for e in client.get_received())
+
+    def told(client, words):
+        return any(e['name'] == 'message' and words in text(e) for e in client.get_received())
+
+    def can_play(client, other, g, role):
+        # `client` really holds the seat: its commit is accepted (passing the opponent's turn first if needed)
+        if g['turn'] != role:
+            other.emit('commit-turn', {'paymentList': []})
+        client.get_received()
+        client.emit('commit-turn', {'paymentList': []})
+        return g['turn'] != role and not any(e['name'] == 'error-msg' for e in client.get_received())
+
+    def end_by_surrender(client, room_id):
+        client.emit('surrender', {})
+        return room_id not in appmod.GAMES
+
+    http_r, page1 = paged_player('rel1', 'page-aaaa-1')
+    _, opp = paged_player('rel2', 'page-bbbb-1')
+    room, my_role, their_role = match_of(page1, opp)
+    g = appmod.GAMES[room]
+    me = g['players'][my_role]
+    page2 = page_client(http_r, 'page-aaaa-1')              # the reloaded page; the old goodbye is still on its way
+    page2_sid = sid_of(page2)
+    got2 = page2.get_received()
+    check("a reloaded page is back in its match at once, although the old connection still counts as open",
+          any(e['name'] == 'game-start' and e['args'][0] == {'roomId': room, 'role': my_role} for e in got2)
+          and any(e['name'] == 'update-state' for e in got2) and me['id'] == page2_sid, [e['name'] for e in got2])
+    check("...the old page is told and closed", not page1.is_connected() and any(   # (get_received needs a connection)
+        e['name'] == 'error-msg' and e['args'][0] == getattr(appmod, 'MOVED_MSG', None) for e in page1.queue))
+    check("...the opponent notices nothing", not told(opp, 'DISCONNECTED'))
+    check("...and the new page can play", can_play(page2, opp, g, my_role), g['turn'])
+    if page1.is_connected():
+        page1.disconnect()                                  # the late goodbye
+    with clock_ahead(appmod.RECONNECT_SECONDS + 1):
+        check_disconnects()
+    check("...and the old connection's late goodbye costs nothing (no countdown, no forfeit)",
+          room in appmod.GAMES and not g.get('winner') and me['disconnected_at'] is None
+          and appmod.DISCONNECTED_USERS == {}, (g.get('winner'), appmod.DISCONNECTED_USERS))
+    page3 = page_client(http_r, 'page-aaaa-1')
+    page4 = page_client(http_r, 'page-aaaa-1')
+    check("reloading twice quickly: the newest page has the seat",
+          in_match(page4, room, my_role) and me['id'] == sid_of(page4) and can_play(page4, opp, g, my_role))
+
+    # A second TAB (another page id) never takes a seat that is still connected...
+    tab = page_client(http_r, 'page-tab-two')
+    check("a second tab still doesn't take over a connected seat",
+          not in_match(tab, room, my_role) and me['id'] == sid_of(page4))
+    stored = []
+    for bad in (None, 5, '', 'x', 'a' * 65, 'bad id!', ['page-aaaa-1'], {'page': 1}):
+        weird = page_client(http_r, bad)
+        stored.append(appmod.USER_SIDS[me['user_id']].get(sid_of(weird)))
+        if in_match(weird, room, my_role):
+            check(f"a malformed page id ({str(bad)[:12]!r}) takes no seat", False)
+        weird.disconnect()
+    check("malformed page ids take no seat", me['id'] == sid_of(page4))
+    check("...and are never kept (a hostile page can't fill the server's memory)", set(map(repr, stored)) == {'None'}, stored)
+    http_x, stranger = paged_player('rel3', 'page-aaaa-1')
+    check("another account with the same page id gets nothing", not in_match(stranger, room, my_role)
+          and me['id'] == sid_of(page4))
+    stranger.disconnect()
+    # ...but gets it when the seat's connection is gone (instead of a countdown against a connected player).
+    opp.get_received()
+    page4.disconnect()
+    check("when the seat's connection dies, the account's other open page gets the match",
+          in_match(tab, room, my_role) and me['id'] == sid_of(tab) and me['disconnected_at'] is None
+          and appmod.DISCONNECTED_USERS == {}, (me['disconnected_at'], appmod.DISCONNECTED_USERS))
+    check("...the opponent isn't told to wait", not told(opp, 'DISCONNECTED'))
+    check("...and that page can play", can_play(tab, opp, g, my_role))
+    tab.disconnect()
+    check("when the last connection is gone the countdown starts as before",
+          me['disconnected_at'] is not None and appmod.DISCONNECTED_USERS.get(me['user_id']) == room
+          and told(opp, 'DISCONNECTED'))
+    other_device = page_client(http_r, 'page-phone-1')
+    check("...and any page of the account can still come back during it", in_match(other_device, room, my_role)
+          and me['disconnected_at'] is None)
+
+    # A dying connection is no heir: the countdown must start.
+    spare = page_client(http_r, 'page-spare-1')
+    spare_sid = sid_of(spare)
+    appmod.socketio.server.manager.pre_disconnect(spare_sid, '/')
+    other_device.disconnect()
+    check("a connection that is closing itself doesn't inherit the seat",
+          me['disconnected_at'] is not None and me['id'] != spare_sid and spare_sid not in appmod.SID_ROOM_MAP)
+    appmod.socketio.server._trigger_event('disconnect', '/', spare_sid, 'test')
+    appmod.socketio.server.manager.disconnect(spare_sid, '/')
+    back = page_client(http_r, 'page-aaaa-1')
+    back.get_received()
+
+    # The real race, 20 times: the new page connects while the old connection's goodbye is being handled.
+    lost = []
+    for n in range(20):
+        fresh = []
+        at_once(lambda: fresh.append(page_client(http_r, 'page-aaaa-1')),
+                lambda: back.is_connected() and back.disconnect())
+        if not (me['id'] == sid_of(fresh[0]) and me['disconnected_at'] is None and appmod.DISCONNECTED_USERS == {}
+                and appmod.SID_ROOM_MAP.get(sid_of(fresh[0])) == room):
+            lost.append(n)
+            break
+        back = fresh[0]
+    check("new page and old goodbye at the same instant, 20 rounds: the player always keeps the match", lost == [], lost)
+    check("...and no connection is left over in the bookkeeping",
+          sorted(appmod.SID_ROOM_MAP) == sorted([me['id'], g['players'][their_role]['id']]), appmod.SID_ROOM_MAP)
+    check("no player is sent anybody's page id", not any(
+        'page-aaaa-1' in repr(e) or 'page-bbbb-1' in repr(e) for c in (back, opp) for e in c.get_received())
+        and me.get('page') == 'page-aaaa-1')
+    check("(cleanup) that match ended", end_by_surrender(opp, room))
+    late_page = page_client(http_r, 'page-aaaa-1')
+    check("after the match, the same page id leads nowhere", not any(
+        e['name'] == 'game-start' for e in late_page.get_received()) and leftovers() == NOTHING
+        and getattr(appmod, 'USER_ROOMS', None) == {}, (leftovers(), getattr(appmod, 'USER_ROOMS', None)))
+    for c in (back, late_page, opp):
+        if c.is_connected():
+            c.disconnect()
+
+    # Logging out everywhere closes all pages: that IS leaving (no page inherits the seat for good).
+    http_o, out1 = paged_player('out1', 'page-out-one')
+    _, out2 = paged_player('out2', 'page-out-opp')
+    room, my_role, their_role = match_of(out1, out2)
+    g = appmod.GAMES[room]
+    page_client(http_o, 'page-out-two')
+    http_o.post('/api/logout')
+    check("logging out everywhere with two pages open counts as leaving",
+          g['players'][my_role]['disconnected_at'] is not None
+          and appmod.DISCONNECTED_USERS.get(g['players'][my_role]['user_id']) == room)
+    with clock_ahead(appmod.RECONNECT_SECONDS + 1):
+        check_disconnects()
+    check("(cleanup) forfeited, nothing left", g.get('winner') == their_role and leftovers() == NOTHING, leftovers())
+    out2.disconnect()
+
     # --- Step 18 regression: there was no way to give up a match; the only way
     # out was leaving and waiting out the reconnect grace period. ---
     _, quit1 = new_player('quit1')
@@ -1366,6 +1511,7 @@ EXPECTED_LOG_EVENTS = {
     "a counter-trap": "INFO arena.match: Counter-trap fired: room=",
     "a player leaving mid-match": "INFO arena.match: Player left mid-match: room=",
     "a player rejoining": "INFO arena.match: Player rejoined: room=",
+    "a seat moving to another connection": "INFO arena.match: Seat moved: room=",
     "a rejoin whose connection already died": "INFO arena.match: Rejoin dropped (disconnected): room=",
     "match end by KO": "cause=ko winner=",
     "match end by surrender": "cause=surrender winner=",

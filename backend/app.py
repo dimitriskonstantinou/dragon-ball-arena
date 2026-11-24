@@ -1,6 +1,6 @@
 from flask import Flask, g, request, send_from_directory, session, jsonify
 from flask_migrate import Migrate, stamp, upgrade
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import sqlalchemy as sa
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -82,7 +82,8 @@ logging_setup.unify_library_loggers()   # engineio/socketio just added their own
 GAMES = {}
 MATCHMAKING_QUEUE = []
 SID_ROOM_MAP = {}  # sid -> roomId, for O(1) disconnect/forfeit lookup
-USER_SIDS = {}     # user_id -> set of that account's open socket ids (logout closes them)
+USER_SIDS = {}     # user_id -> {socket id: page id or None} of that account's open connections, newest last
+USER_ROOMS = {}    # user_id -> roomId of the account's live match
 USER_SIDS_LOCK = threading.Lock()
 
 # The server runs every Socket.IO event in its own thread, so shared state needs
@@ -91,6 +92,8 @@ ROOM_LOCKS = {}                        # room_id -> RLock, one per live match (s
 MATCHMAKING_LOCK = threading.Lock()    # MATCHMAKING_QUEUE + seat checks + creating matches
 
 SERVER_ERROR_MSG = "Something went wrong on the server. Please try again."
+MOVED_MSG = "Your match continues in another page or tab. This one is closed."
+PAGE_ID_RE = re.compile(r'[A-Za-z0-9_-]{8,64}')
 MATCH_FAILED_MSG = "The match could not be started. Reload the page and search again."
 
 # Turn timer (BE-1): every turn has a deadline; one background ticker passes
@@ -450,6 +453,8 @@ def end_game(room_id, winner, reason=None, cause='ko'):
     game['winner'] = winner
     for p_key in ('p1', 'p2'):
         SID_ROOM_MAP.pop(game['players'][p_key]['id'], None)
+        if USER_ROOMS.get(game['players'][p_key].get('user_id')) == room_id:
+            USER_ROOMS.pop(game['players'][p_key]['user_id'], None)
         if DISCONNECTED_USERS.get(game['players'][p_key].get('user_id')) == room_id:
             DISCONNECTED_USERS.pop(game['players'][p_key]['user_id'], None)
 
@@ -666,54 +671,100 @@ def me():
 # --- Socket.IO: lobby / matchmaking -----------------------------------------
 
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(auth=None):
     user = current_user()
     if not user:
         sock_log.debug("Connection without a login: sid=%s ip=%s", request.sid[:6], request.remote_addr)
         emit('auth-required')
         return
     with USER_SIDS_LOCK:
-        USER_SIDS.setdefault(user.id, set()).add(request.sid)
+        USER_SIDS.setdefault(user.id, {})[request.sid] = page_id(auth)
     sock_log.info("Connected: user=%s sid=%s ip=%s", user.id, request.sid[:6], request.remote_addr)
     with MATCHMAKING_LOCK:
         ensure_turn_timer()   # the ticker also writes the periodic stats line
     # Display fields only: skill mechanics stay server-side (same rule as view_for).
     char_list = [game_engine.strip_skill_internals(c) for c in characters_for_user(user).values()]
     emit('character-list', char_list)
-    rejoin_match(user)
+    replaced = rejoin_match(user)
+    if replaced:
+        # Usually a connection the network hasn't reported as closed yet; a duplicated tab sees why it stops.
+        # (Not under the match's lock: the disconnect handler takes MATCHMAKING_LOCK first.)
+        emit('error-msg', MOVED_MSG, to=replaced)
+        socketio.server.disconnect(replaced)
 
 
 def rejoin_match(user):
-    """If this account dropped out of a match that is still waiting for it
-    (reload, new tab, network switch), attach this new connection to it and
-    send the current state. Returns True if it rejoined."""
-    room_id = DISCONNECTED_USERS.get(user.id)
+    """If this account is in a match, attach this new connection to it when the player
+    dropped out (any page: reload, new tab, other device), or when it is the SAME page as the
+    one in the seat -- reloaded, or reconnecting after a network drop. On a real network that
+    old connection can still count as open here (Render reports it closed 10 s late, BE-15).
+    Another tab never takes over a connected seat. Returns the connection it replaced, if that
+    one still counts as open."""
+    room_id = USER_ROOMS.get(user.id)
     lock = ROOM_LOCKS.get(room_id)
     if lock is None:
-        return False
+        return None
     with lock:
         game = GAMES.get(room_id)
-        if game is None or game.get('winner') or DISCONNECTED_USERS.get(user.id) != room_id:
-            return False
-        # This connection may be closing already (a seat given to it would stay empty for good). First the
-        # map, THEN the check: handle_disconnect finds the match through the map, so if the connection
-        # starts closing after the check, it waits for our lock and counts as leaving again.
-        SID_ROOM_MAP[request.sid] = room_id
-        if not is_connected(request.sid):
-            SID_ROOM_MAP.pop(request.sid, None)
-            match_log.info("Rejoin dropped (disconnected): room=%s user=%s sid=%s", room_id, user.id, request.sid[:6])
-            return False
-        role = next(r for r in ('p1', 'p2') if game['players'][r]['user_id'] == user.id)
+        if game is None or game.get('winner'):
+            return None
+        role = next((r for r in ('p1', 'p2') if game['players'][r]['user_id'] == user.id), None)
+        if role is None:
+            return None
         player = game['players'][role]
-        player['id'] = request.sid
-        player['disconnected_at'] = None
-        DISCONNECTED_USERS.pop(user.id, None)
-        join_room(room_id)
-        match_log.info("Player rejoined: room=%s role=%s user=%s", room_id, role, user.id)
-        emit('game-start', {'roomId': room_id, 'role': role})
-        socketio.emit('message', f"{role.upper()} RECONNECTED.", to=room_id)
+        if player['id'] == request.sid:
+            return None   # the old connection's goodbye came in meanwhile and already handed us the seat
+        was_gone = player.get('disconnected_at') is not None
+        page = page_of(user.id, request.sid)
+        if not was_gone and (page is None or page != player.get('page')):
+            return None
+        old_sid = player['id']
+        if not give_seat(room_id, game, role, request.sid):
+            return None
+        if was_gone:
+            match_log.info("Player rejoined: room=%s role=%s user=%s", room_id, role, user.id)
+            socketio.emit('message', f"{role.upper()} RECONNECTED.", to=room_id)
+        else:
+            match_log.info("Seat moved: room=%s role=%s user=%s from=%s to=%s why=same_page", room_id, role, user.id,
+                           old_sid[:6], request.sid[:6])
         broadcast_state(game)
-        return True
+        return None if was_gone else old_sid
+
+
+def give_seat(room_id, game, role, sid):
+    """Makes `sid` the connection of `role` (caller holds the match's lock). False, with nothing
+    changed, if that connection is closing: a seat given to it would stay empty for good."""
+    player = game['players'][role]
+    # First the map, THEN the check: handle_disconnect finds the match through the map, so if the
+    # connection starts closing after the check, it waits for our lock and counts as leaving again.
+    SID_ROOM_MAP[sid] = room_id
+    if not is_connected(sid):
+        SID_ROOM_MAP.pop(sid, None)
+        match_log.info("Rejoin dropped (disconnected): room=%s user=%s sid=%s", room_id, player['user_id'], sid[:6])
+        return False
+    # The previous connection no longer belongs to this match: its (late) disconnect means nothing.
+    SID_ROOM_MAP.pop(player['id'], None)
+    leave_room(room_id, sid=player['id'], namespace='/')
+    player['id'] = sid
+    player['page'] = page_of(player['user_id'], sid)
+    player['disconnected_at'] = None
+    DISCONNECTED_USERS.pop(player['user_id'], None)
+    join_room(room_id, sid=sid, namespace='/')
+    emit('game-start', {'roomId': room_id, 'role': role}, to=sid)
+    return True
+
+
+def page_id(auth):
+    """The id the page sent when connecting (kept in its sessionStorage: survives a reload, differs
+    per tab), or None. Untrusted: only ever compared with pages of the same account."""
+    page = auth.get('page') if isinstance(auth, dict) else None
+    return page if isinstance(page, str) and PAGE_ID_RE.fullmatch(page) else None
+
+
+def page_of(user_id, sid):
+    with USER_SIDS_LOCK:
+        return USER_SIDS.get(user_id, {}).get(sid)
+
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -723,7 +774,7 @@ def handle_disconnect():
         for user_id, sids in list(USER_SIDS.items()):
             if sid in sids:
                 left = user_id
-                sids.discard(sid)
+                sids.pop(sid, None)
                 if not sids:
                     del USER_SIDS[user_id]
     if left is not None:
@@ -744,6 +795,17 @@ def handle_disconnect():
         role = next((r for r in ('p1', 'p2') if game['players'][r]['id'] == sid), None)
         if role is None:
             return
+        # Another open page of the same account gets the seat (its own page first, then the newest): a player
+        # who is connected must never lose for having left.
+        user_id, page = game['players'][role]['user_id'], game['players'][role].get('page')
+        with USER_SIDS_LOCK:
+            others = list(reversed(USER_SIDS.get(user_id, {}).items()))
+        for other_sid, _ in sorted(others, key=lambda item: item[1] is None or item[1] != page):
+            if give_seat(room_id, game, role, other_sid):
+                match_log.info("Seat moved: room=%s role=%s user=%s from=%s to=%s why=connection_closed", room_id, role,
+                               user_id, sid[:6], other_sid[:6])
+                broadcast_state(game)
+                return
         # Not a forfeit yet: the match waits RECONNECT_SECONDS for this account to
         # come back (rejoin_match); check_disconnect_timers forfeits it after that.
         game['players'][role]['disconnected_at'] = now()
@@ -884,8 +946,11 @@ def start_match(p1, p2):
     with lock:
         try:
             GAMES[room_id] = game
-            SID_ROOM_MAP[p1['id']] = room_id
-            SID_ROOM_MAP[p2['id']] = room_id
+            for p in (p1, p2):
+                SID_ROOM_MAP[p['id']] = room_id
+                USER_ROOMS[p['user_id']] = room_id
+            for player in game['players'].values():
+                player['page'] = page_of(player['user_id'], player['id'])
 
             join_room(room_id, sid=p1['id'])
             join_room(room_id, sid=p2['id'])
@@ -904,6 +969,7 @@ def start_match(p1, p2):
             socketio.close_room(room_id)
             for p in (p1, p2):
                 SID_ROOM_MAP.pop(p['id'], None)
+                USER_ROOMS.pop(p['user_id'], None)
                 emit('match-status', MATCH_FAILED_MSG, to=p['id'])
                 if p['id'] != request.sid:
                     emit('error-msg', SERVER_ERROR_MSG, to=p['id'])

@@ -17,6 +17,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import uuid
@@ -338,8 +339,11 @@ def test_reload_mid_match_returns_to_the_match(browser, url):
           status(p1))
     check("...with the same team", [t.split('\n')[0] for t in p1.locator('#my-team .char-card').all_inner_texts()]
           == [t.split('\n')[0] for t in my_names])
-    p2.wait_for_function("document.getElementById('log').innerText.includes('RECONNECTED')")
-    check("...and the opponent is told they're back", True)
+    # Depending on which arrives first (the old page's goodbye or the new page), the opponent either notices
+    # nothing or is told about both -- never only that the player left.
+    p2.wait_for_function("(t => t.includes('RECONNECTED') || !t.includes('DISCONNECTED'))"
+                         "(document.getElementById('log').innerText)")
+    check("...and the opponent isn't left thinking they're gone", True)
     active = p1 if is_my_turn(p1) else p2
     end_turn(active)
     wait_for_turn_change([p1, p2], active)
@@ -348,6 +352,136 @@ def test_reload_mid_match_returns_to_the_match(browser, url):
     check("no JavaScript errors", unexpected == [], unexpected)
     ctx1.close()
     ctx2.close()
+
+
+class LateGoodbyeProxy:
+    """A network like Render's (BE-15): when the browser closes its websocket, the server only hears about
+    it `hold` seconds later. (What a page still sends on the open websocket arrives normally: like on Render,
+    the goodbye of a closed tab gets through; a reloading page sends none.)"""
+
+    def __init__(self, url, hold):
+        target = urlparse(url)
+        self.target, self.hold = (target.hostname, target.port), hold
+        self.listener = socket.create_server(('127.0.0.1', 0))
+        self.url = f'http://127.0.0.1:{self.listener.getsockname()[1]}'
+        threading.Thread(target=self._accept, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                client, _ = self.listener.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._serve, args=(client,), daemon=True).start()
+
+    def _serve(self, client):
+        server = socket.create_connection(self.target)
+        threading.Thread(target=self._to_browser, args=(server, client), daemon=True).start()
+        held = False
+        try:
+            data = client.recv(65536)
+            if b'upgrade: websocket' in data.lower():
+                server.sendall(data)
+                held = True
+                self._frames_to_server(client, server)
+            else:
+                while data:
+                    server.sendall(data)
+                    data = client.recv(65536)
+        except OSError:
+            pass
+        if held:
+            try:
+                client.shutdown(socket.SHUT_RDWR)    # the browser gets its answer at once; only the server waits
+            except OSError:
+                pass
+            time.sleep(self.hold)
+        server.close()
+
+    @staticmethod
+    def _to_browser(server, client):
+        try:
+            while data := server.recv(65536):
+                client.sendall(data)
+        except OSError:
+            pass
+        client.close()
+
+    @staticmethod
+    def _frames_to_server(client, server):
+        buf = b''
+        while True:
+            while True:                              # one whole frame (client frames are always masked)
+                if len(buf) >= 2:
+                    size, head = buf[1] & 127, 2
+                    if size >= 126:
+                        extra = 2 if size == 126 else 8
+                        size, head = int.from_bytes(buf[2:2 + extra], 'big'), 2 + extra
+                    total = head + 4 + size
+                    if len(buf) >= total:
+                        break
+                chunk = client.recv(65536)
+                if not chunk:
+                    return
+                buf += chunk
+            frame, buf = buf[:total], buf[total:]
+            if frame[0] & 15 == 8:                   # the close frame
+                return
+            server.sendall(frame)
+
+    def close(self):
+        self.listener.close()
+
+
+def test_reload_and_network_drop_when_goodbyes_arrive_late(browser, url):
+    """BE-15: on Render the server hears about a closed connection 10 s late; a reload lost the match."""
+    errors = []
+    proxy = LateGoodbyeProxy(url, hold=6)
+    ctx1, p1, _ = new_player(browser, proxy.url, errors, 'kappa')
+    ctx2, p2, _ = new_player(browser, url, errors, 'lambda')
+    p1.wait_for_function("socket.io.engine && socket.io.engine.transport.name === 'websocket'")
+    find_match(p1, [0, 1, 2])
+    find_match(p2, [2, 3, 4])
+    for p in (p1, p2):
+        p.wait_for_selector('#game-screen', state='visible')
+        p.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+
+    def play_one_turn():
+        if not is_my_turn(p1):
+            end_turn(p2)
+            p1.wait_for_selector('#end-turn', state='visible')
+        end_turn(p1)
+        p2.wait_for_selector('#end-turn', state='visible')
+        p1.wait_for_selector('#end-turn', state='hidden')
+        return not is_my_turn(p1)
+
+    started = time.time()
+    p1.reload()
+    p1.wait_for_selector('#game-screen', state='visible', timeout=4_000)
+    p1.wait_for_function("document.querySelectorAll('#my-team .char-card').length === 3")
+    check("after a reload the player is back in the match before the old goodbye arrives",
+          time.time() - started < proxy.hold, time.time() - started)
+    check("...and can play", play_one_turn())
+    p1.wait_for_function("socket.io.engine.transport.name === 'websocket'")
+    p1.evaluate("window.reconnects = 0; socket.on('connect', () => window.reconnects++);"
+                "socket.io.engine.transport.ws.close()")
+    p1.wait_for_function("window.reconnects > 0 && socket.connected", timeout=8_000)
+    p1.wait_for_timeout(300)
+    check("after a short network drop the player can play on", play_one_turn())
+    p1.wait_for_function("socket.io.engine.transport.name === 'websocket'")
+    p1.wait_for_timeout(proxy.hold * 1000 + 500)     # all late goodbyes have arrived by now
+    check("the late goodbyes change nothing: the opponent was never told the player left",
+          'DISCONNECTED' not in p2.locator('#log').inner_text())
+    check("...and both still play", play_one_turn() and not game_over(p1) and not game_over(p2))
+    p1.close()                                       # really leaving still counts as leaving
+    p2.wait_for_function("document.getElementById('log').innerText.includes('DISCONNECTED -- waiting')",
+                         timeout=(proxy.hold - 2) * 1000)
+    check("closing the tab is noticed at once (the page says goodbye), not when the network reports it", True)
+    unexpected = real_errors(errors)
+    check("no JavaScript errors", unexpected == [], unexpected)
+    ctx1.close()
+    ctx2.close()
+    proxy.close()
 
 
 def test_surrender_with_confirmation(browser, url):
@@ -446,7 +580,7 @@ def test_invulnerable_enemy_is_greyed_out_and_cant_be_picked(browser, url):
 
 
 TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_reload_mid_match_returns_to_the_match,
-         test_surrender_with_confirmation, test_invulnerable_enemy_is_greyed_out_and_cant_be_picked]
+         test_reload_and_network_drop_when_goodbyes_arrive_late, test_surrender_with_confirmation, test_invulnerable_enemy_is_greyed_out_and_cant_be_picked]
 # Run on a second server with short limits (TURN_SECONDS=2, RECONNECT_SECONDS=3) so they finish quickly.
 FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits, test_disconnect_forfeits_to_opponent]
 

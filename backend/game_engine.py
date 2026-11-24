@@ -653,7 +653,7 @@ def apply_effect(effect, actor, targets, player, opponent, skill_classes, reacti
 # --- per-player view ---------------------------------------------------------
 
 # Server-only fields on a player entry: socket id and account id.
-PRIVATE_PLAYER_FIELDS = ('id', 'user_id', 'disconnected_at')
+PRIVATE_PLAYER_FIELDS = ('id', 'user_id', 'disconnected_at', 'page')
 PRIVATE_GAME_FIELDS = ('rng_seed', 'rng_draws')   # the seed would let a player predict every die
 
 

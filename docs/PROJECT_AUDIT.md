@@ -203,6 +203,25 @@ window is about a millisecond.
 9-11 of 100 answered 500 after 30 s (`QueuePool limit ... reached`). More CPU makes it far less likely (Step 37: 4,000 on
 1 CPU, 0 failures). **Fix:** release the connection before hashing (end the read transaction), or hash first.
 
+**BE-15 — CRITICAL (online) — Reloading the page or a short network drop loses the match (verified live, 2026-11-24)** — ✅ FIXED in Step 41 (live check after the deploy still to do)
+On Render the server hears that a connection closed exactly 10.07 s late, i.e. after the new one arrived. `rejoin_match` only
+puts a player back whose seat is already marked as disconnected, so the new connection stays outside ("You are not in a
+match."); then the late goodbye starts the 30 s countdown and the player loses while connected. Reload: 0 of 3 came back;
+network drop: the same. A silently lost network (noticed by the ping after up to 45 s) has the same shape. Local tests
+missed it: there the goodbye always arrives first. Fix: each page sends an id (`sessionStorage`); a new connection of the
+same account with the seat's page id takes the seat at once (`rejoin_match`), and when a seat's connection closes, another
+open page of the account gets it (`handle_disconnect`) -- the countdown only starts when nobody is left. The replaced
+connection is told and closed. `pagehide` goodbye for closed tabs. A second tab still can't take a connected seat. 23 smoke
+checks (incl. 20 rounds of both events at once, which found a bug in the first version of the fix), a browser test through a
+proxy that reports closed connections late (also run against the production container), probe 39, 9 deliberately broken
+versions: 8 caught, 1 without any observable effect.
+
+**BE-16 — MEDIUM — gunicorn's access log is on although we turn it off (verified, 2026-11-24)** — OPEN (Step 43)
+`logconfig_dict` switches it on again, whatever `accesslog` says. Full connection ids of polling requests get into the logs
+(our own rule forbids it), plus a line per health check (every 5 s). A refused foreign origin is logged at ERROR (false alarm).
+The container test never looked for access lines. **Fix:** silence `gunicorn.access` in `gunicorn_logconfig`; check in the
+container test that a request produces exactly one line and no connection id.
+
 ### 4.3 Security & fair play
 
 **SEC-1 — HIGH (deploy blocker; CRITICAL once online) — Hardcoded fallback `SECRET_KEY` (verified)** — ✅ FIXED in Step 19 (`config.py`: staging/production refuse to start without a strong key; no key in the code; dev uses a random per-machine key file)
@@ -234,6 +253,13 @@ Usernames are case-sensitive ("Goku" and "goku" can coexist, which allows impers
 illegal targets, dead actors, hidden-info leaks (opponent queue, traps, ids, skill internals), spoofed player slot,
 malformed payloads, opponent cancelling your move, duplicate-character teams, self-matching.
 **Still open:** stalling (BE-1), forced-forfeit by connection drop (BE-2).
+
+**SEC-9 — HIGH (online) — On Render the rate limits count Render's internal addresses, not players (verified live, 2026-11-24)** — OPEN (Step 42)
+`TRUSTED_PROXIES=1` takes the last `X-Forwarded-For` entry; on Render that is one of about 3 internal machines
+(`10.193.x`). So 15 wrong logins by anybody block logins for **everyone** behind them for 5 minutes, about 15 new accounts
+per hour are possible for the whole world, and a single attacker isn't limited individually. Socket.IO lines log
+`ip=127.0.0.1` (Socket.IO bypasses ProxyFix). The assumption came from another project of the user and was not measured here.
+**Fix (plan):** MASTER_ROADMAP, Step 42.
 
 ### 4.4 Characters & abilities
 
@@ -301,7 +327,8 @@ players it means the game can't load at all if that third-party server is slow o
 **DEV-3 — LOW (dev machine) — `tests.py` says "psycopg is not installed" when Windows blocks it (verified, Step 38)**
 On 2026-11-24 an Application Control policy started blocking `psycopg-binary`'s DLL on the dev PC ("DLL load failed"), so
 the PostgreSQL + container suites can't run locally (they run in CI). `tests.py` reports every import error as "not
-installed". Fix: show the real reason. The policy itself is the user's decision.
+installed". Fix: show the real reason. The policy itself is the user's decision. *Later on 2026-11-24 the driver loaded again and
+the full local run incl. container was green; the misleading message is still open.*
 
 **PERF-1 — LOW (future) — One server process = one CPU core; ~5 ms of CPU per turn (measured, Step 37)**
 One core is full at ~185-190 turns/s (details + limits of the numbers: DEPLOY_PLAN Stage 5; planning figure ~2,000

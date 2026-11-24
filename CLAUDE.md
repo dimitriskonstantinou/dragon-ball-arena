@@ -116,7 +116,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-39 are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-40 are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -162,10 +162,16 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
   firing events from parallel threads with one step slowed down (see the Step 15 smoke checks).
 - **Reconnect (Step 17):** a disconnect mid-match is not a forfeit: the player gets `disconnected_at` (server-only,
   in `PRIVATE_PLAYER_FIELDS`) and an entry in `DISCONNECTED_USERS` (user_id -> room, so lookups never scan all
-  matches). The same account connecting again (any tab) is re-attached by `rejoin_match()` in the connect handler
-  (new sid, `game-start` + state). `check_disconnect_timers()` (same ticker as the turn timer) forfeits after
-  `RECONNECT_SECONDS` (default 30). `end_game` clears the bookkeeping. A still-connected player's second tab never
-  takes over the seat. Tests must end matches explicitly -- disconnecting no longer does.
+  matches). The same account connecting again (any tab) is re-attached
+  by `rejoin_match()` in the connect handler (new sid, `game-start` + state). `check_disconnect_timers()` (same ticker as the
+  turn timer) forfeits after `RECONNECT_SECONDS` (default 30). `end_game` clears the bookkeeping. Tests must end matches
+  explicitly -- disconnecting no longer does.
+  **The old connection's goodbye can arrive AFTER the new connection (Step 41; Render: 10 s).** So each page sends an id when
+  connecting (`auth.page`, kept in `sessionStorage`, untrusted): the **same page** takes its seat back at once even if the old
+  connection still counts as open; when a seat's connection closes, another open page of the account inherits it before any
+  countdown starts. Another tab never takes over a connected seat. Every change of a seat's connection goes through
+  `give_seat()` (under the match's lock). Closing a replaced connection (`socketio.server.disconnect`) must happen **outside**
+  the match's lock (lock order). Browser tests for this use `LateGoodbyeProxy`.
 - **Turn timer:** every turn's deadline is `game['turn_deadline']` (server clock, never sent; clients get
   `turn_seconds_left`). Call `start_turn_clock(game)` whenever a new turn starts (match start, commit, timeout). One
   background ticker (`turn_timer_loop`, started with the first match) runs `check_turn_timers()` every second under
@@ -197,6 +203,7 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 
 | Client → server | Payload | Notes |
 |---|---|---|
+| (connect) | `auth: {page}` | optional page id, 8-64 of `[A-Za-z0-9_-]`; anything else is ignored |
 | `find-match` | `[id, id, id]` | 3 distinct unlocked character ids |
 | `queue-skill` | `{charId, skillId, targetPlayerKey, targetIndex}` | `self`/team skills: server picks the target |
 | `cancel-skill` | `{charId}` | own move, own turn only |
@@ -366,8 +373,9 @@ User supplies all art (don't auto-source anime stills). Portraits → `photos/ch
 Planned: real extensions + resize via a tool (AST-1).
 
 ### Deployment
-DEV site: Render's free plan via `render.yaml` (prepared in Step 40, not online yet; limits + simulation numbers in
-DEPLOY_PLAN Stage 6). Hosts' values work as they are: `config.py` turns `postgres(ql)://` into our driver's form and falls
+DEV site: https://dragon-ball-arena-dev.onrender.com, Render's free plan via `render.yaml` (Step 40; deploys from `dev`
+after green checks; limits + numbers in DEPLOY_PLAN Stage 6). **Check every deploy from outside, incl. reload in a match:
+behind Render a closed connection is noticed ~10 s late, so events arrive in another order than locally (BE-15).** Hosts' values work as they are: `config.py` turns `postgres(ql)://` into our driver's form and falls
 back to `RENDER_EXTERNAL_URL` / `RENDER_GIT_COMMIT`. PROD is not deployed (Stage 2 PostgreSQL: Step 33; Stage 3 image: Step 34). Follow DEPLOY_PLAN: DEV site from
 `dev`, PROD from `main`, separate DBs/secrets, Postgres + migrations, gunicorn + gevent with **one worker** (in-memory
 games), deploys end live matches until state moves to Redis. The image: `docker build -t dragon-ball-arena .`; run with
