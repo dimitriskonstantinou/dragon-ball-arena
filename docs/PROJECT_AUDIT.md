@@ -255,12 +255,16 @@ illegal targets, dead actors, hidden-info leaks (opponent queue, traps, ids, ski
 malformed payloads, opponent cancelling your move, duplicate-character teams, self-matching.
 **Still open:** stalling (BE-1), forced-forfeit by connection drop (BE-2).
 
-**SEC-9 — HIGH (online) — On Render the rate limits count Render's internal addresses, not players (verified live, 2026-11-24)** — OPEN (Step 42)
+**SEC-9 — HIGH (online) — On Render the rate limits count Render's internal addresses, not players (verified live, 2026-11-24)** — ✅ FIXED in Step 42b (live check after the deploy still to do)
 `TRUSTED_PROXIES=1` takes the last `X-Forwarded-For` entry; on Render that is one of about 3 internal machines
 (`10.193.x`). So 15 wrong logins by anybody block logins for **everyone** behind them for 5 minutes, about 15 new accounts
 per hour are possible for the whole world, and a single attacker isn't limited individually. Socket.IO lines log
 `ip=127.0.0.1` (Socket.IO bypasses ProxyFix). The assumption came from another project of the user and was not measured here.
-**Fix (plan):** MASTER_ROADMAP, Step 42.
+Measured with 42a's temporary probe (live, 2026-11-25): pages get `X-Forwarded-For = [faked..., visitor, Cloudflare, internal]`,
+websockets `[faked..., visitor]`, so no fixed position works; `CF-Connecting-IP` (and `True-Client-IP`) were the visitor in all
+19 requests; a faked `CF-Connecting-IP` is refused with 403, `CF_Connecting_IP` is dropped. Fix: `CLIENT_IP_HEADER` (config; Render:
+`CF-Connecting-IP`), one `client_ip()` for HTTP and Socket.IO, limits per `visitor_key()` (IPv6 per /64), a warning once if the
+header is missing. Not measured: IPv6 and mobile visitors (neither was available).
 
 ### 4.4 Characters & abilities
 

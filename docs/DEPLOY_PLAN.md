@@ -264,6 +264,7 @@ Each stage ends with a **check**. Measure before/after as usual (`tools/measure.
 4. ⚠️ Checked from outside (`docs/measurements/2026-11-24-step41-live-findings.md`): site, HTTPS, matches, saving and
    security basics work; **BE-15 (reload/drop loses the match), SEC-9 (rate limits) and BE-16 (access log) are open** --
    fix before inviting players. The `TRUSTED_PROXIES=1` reasoning above was wrong for this site (SEC-9).
+   BE-15 was fixed in Step 41 (confirmed live); SEC-9 in Step 42b: the visitor's address comes from `CF-Connecting-IP`.
 - **Free limits:** sleeps after 15 idle minutes (about a minute to wake), may restart any time (ends live matches),
   750 instance hours per month shared with the account's other free apps (**Joker would be suspended too** if they run
   out), one free database, **deleted 30 + 14 days after creation**, no backups. Test accounts are disposable.

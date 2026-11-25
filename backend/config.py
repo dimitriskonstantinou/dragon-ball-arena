@@ -32,6 +32,9 @@ message (config.ConfigError) instead of running insecurely or crashing later.
   TRUSTED_PROXIES    how many reverse proxies sit in front of the app (default 0). Set it (e.g. 1 on Render)
                      so the real client IP is read from X-Forwarded-For -- otherwise every player shares the
                      proxy's IP and one attacker could rate-limit everybody.
+  CLIENT_IP_HEADER   the header in which the host puts the visitor's address (default none), e.g. CF-Connecting-IP on Render,
+                     where X-Forwarded-For has it at a different position for pages and websockets (SEC-9). Only set it
+                     to a header the host always sets itself: any other one can be faked by every visitor.
 """
 import os
 import re
@@ -67,6 +70,7 @@ class Settings:
     register_limit: int
     register_window_seconds: int
     trusted_proxies: int
+    client_ip_header: str    # '' = the connection's own address (after TRUSTED_PROXIES)
     session_days: int
     log_level: str
     socketio_async_mode: str
@@ -174,12 +178,21 @@ def load(environ=None, dev_secret_file=DEV_SECRET_FILE):
         register_limit=_int(environ, 'REGISTER_LIMIT', 5, 1, 100_000),
         register_window_seconds=_int(environ, 'REGISTER_WINDOW_SECONDS', 3600, 1, 86_400),
         trusted_proxies=_int(environ, 'TRUSTED_PROXIES', 0, 0, 5),
+        client_ip_header=_client_ip_header(environ),
         session_days=_int(environ, 'SESSION_DAYS', 30, 1, 365),
         log_level=_log_level(environ),
         log_format=_log_format(environ),
         app_version=_app_version(environ),
         socketio_async_mode=_async_mode(environ),
     )
+
+
+def _client_ip_header(environ):
+    name = (environ.get('CLIENT_IP_HEADER') or '').strip()
+    if name and not re.fullmatch(r'[A-Za-z][A-Za-z0-9-]{1,39}', name):
+        raise ConfigError(f"CLIENT_IP_HEADER must be a header name such as CF-Connecting-IP, got "
+                          f"{environ.get('CLIENT_IP_HEADER')!r}")
+    return name
 
 
 ASYNC_MODES = ('threading', 'gevent')

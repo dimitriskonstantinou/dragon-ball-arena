@@ -117,7 +117,8 @@ def main():
         databases.append(prod_db)
         key = secrets.token_hex(32)
         prod_env = {'ENV': 'production', 'SECRET_KEY': key, 'ALLOWED_ORIGINS': 'https://arena.example',
-                    'TRUSTED_PROXIES': '1', 'DATABASE_URL': pg_url_for(prod_db), 'LOG_FORMAT': 'json'}
+                    'TRUSTED_PROXIES': '1', 'DATABASE_URL': pg_url_for(prod_db), 'LOG_FORMAT': 'json',
+                    'CLIENT_IP_HEADER': 'CF-Connecting-IP'}
         run_container('dba-check-prod', 18100, prod_env)
         containers.append('dba-check-prod')
         up = wait_healthy(18100)
@@ -135,7 +136,8 @@ def main():
         name = 'Prod' + uuid.uuid4().hex[:6]
         status, headers, _ = http('http://127.0.0.1:18100/api/register',
                                   data=f'{{"username":"{name}","email":"{name}@x.io","password":"secret12"}}'.encode(),
-                                  headers={'Content-Type': 'application/json'})
+                                  headers={'Content-Type': 'application/json', 'CF-Connecting-IP': '8.8.4.4',
+                                           'CF_Connecting_IP': '203.0.113.7', 'X-Forwarded-For': '203.0.113.8, 10.193.0.1'})
         cookie = headers.get('Set-Cookie', '')
         check("registering works and the login cookie is Secure, HttpOnly, SameSite=Lax",
               status == 201 and all(f in cookie for f in ('Secure', 'HttpOnly', 'SameSite=Lax')), (status, cookie[-80:]))
@@ -165,6 +167,8 @@ def main():
               lines and not not_json, not_json[:3])
         check("...including the request log and the account events",
               '"arena.http"' in logs and 'Account created: user=' in logs, logs[-500:])
+        check("the visitor's address is the host's header, not a faked look-alike (CF_Connecting_IP) or X-Forwarded-For",
+              f'name={name} ip=8.8.4.4' in logs and '203.0.113.' not in logs, [l for l in lines if 'Account created' in l][:2])
         check("...and no log line contains the database password or the secret key",
               'dbatest' not in logs and key not in logs, '(a secret is in the logs)')
 

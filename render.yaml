@@ -26,9 +26,13 @@ services:
         value: staging
       - key: LOG_FORMAT
         value: json
-      # Render's proxy adds the real client address last in X-Forwarded-For (a fake one arrives before it).
+      # The scheme (https) comes from Render's proxy...
       - key: TRUSTED_PROXIES
         value: "1"
+      # ...and the visitor's address from Cloudflare, which is in front of Render and refuses faked ones (SEC-9,
+      # measured live: X-Forwarded-For has it at different positions for pages and websockets).
+      - key: CLIENT_IP_HEADER
+        value: CF-Connecting-IP
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
