@@ -18,7 +18,6 @@ from contextlib import contextmanager
 import atexit
 import platform
 
-import address_probe   # TEMPORARY (Step 42a), removed in 42b
 import config
 import content_loader
 import game_engine
@@ -108,11 +107,34 @@ TURN_TIMER_THREAD = settings.turn_timer_thread  # tests drive the timer by hand 
 RECONNECT_SECONDS = settings.reconnect_seconds
 DISCONNECTED_USERS = {}
 _timer_started = False
+_header_warned = False
 
 
 def now():
     """The server clock for turn deadlines (tests move it by patching time.time)."""
     return time.time()
+
+
+def client_ip():
+    """The visitor's address: from the header this host is configured to put it in (CLIENT_IP_HEADER), else
+    the connection's own address (after TRUSTED_PROXIES). For HTTP requests and Socket.IO events alike."""
+    ip = header_ip()
+    return str(ip) if ip else request.remote_addr
+
+
+def header_ip():
+    name = settings.client_ip_header
+    return rate_limit.parse_ip(request.environ.get('HTTP_' + name.upper().replace('-', '_'))) if name else None
+
+
+def visitor_key():
+    """What the rate limits count. Without a usable header everyone behind the host would share one limit."""
+    global _header_warned
+    if settings.client_ip_header and not _header_warned and header_ip() is None:
+        _header_warned = True
+        http_log.warning("Visitor address header missing or malformed: header=%s path=%s (logged once)",
+                         settings.client_ip_header, request.path)
+    return rate_limit.visitor_key(client_ip())
 
 
 def who():
@@ -246,7 +268,7 @@ def current_user():
         if not g.get('stale_cookie_logged'):
             g.stale_cookie_logged = True
             auth_log.info("Rejected a login cookie from before a logout-everywhere: user=%s ip=%s", uid,
-                          request.remote_addr)
+                          client_ip())
         return None
     return user
 
@@ -484,12 +506,6 @@ def start_request_timer():
     g.request_started = time.perf_counter()
 
 
-@app.before_request
-def probe_addresses():   # TEMPORARY (Step 42a), removed in 42b
-    if settings.env == 'staging' and request.path.startswith('/api/'):
-        address_probe.log_shape(http_log, f"http {request.method} {request.path}", request.environ)
-
-
 @app.after_request
 def log_request(response):
     """One line per request: API calls at INFO, static files and /healthz at DEBUG
@@ -499,7 +515,7 @@ def log_request(response):
     if response.status_code >= 500:
         level = logging.ERROR
     http_log.log(level, "%s %s %d %.1fms ip=%s user=%s", request.method, request.path, response.status_code,
-                 elapsed, request.remote_addr, session.get('user_id'))
+                 elapsed, client_ip(), session.get('user_id'))
     return response
 
 
@@ -550,7 +566,7 @@ register_limiter = rate_limit.SlidingWindowLimiter(settings.register_limit, sett
 
 
 def too_many(what, wait):
-    auth_log.warning("Rate limit hit: too many %s ip=%s retry_after=%ss", what, request.remote_addr, wait)
+    auth_log.warning("Rate limit hit: too many %s ip=%s retry_after=%ss", what, client_ip(), wait)
     response = jsonify({'error': f"Too many {what}. Try again in {wait} seconds.", 'retry_after': wait})
     response.status_code = 429
     response.headers['Retry-After'] = str(wait)
@@ -565,13 +581,13 @@ EMAIL_RE = re.compile(r'[^@\s]+@[^@\s]+\.[^@\s.]+')
 
 
 def refuse_registration(reason, message, status):
-    auth_log.info("Registration refused: reason=%s ip=%s", reason, request.remote_addr)
+    auth_log.info("Registration refused: reason=%s ip=%s", reason, client_ip())
     return jsonify({'error': message}), status
 
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    wait = register_limiter.retry_after(request.remote_addr)
+    wait = register_limiter.retry_after(visitor_key())
     if wait:
         return too_many("new accounts from your network", wait)
     data = request.get_json(silent=True) or {}
@@ -610,8 +626,8 @@ def register():
         db.session.rollback()
         taken = account_conflict(username, email) or 'username already taken'
         return refuse_registration(taken.replace(' ', '_') + '_simultaneous', taken, 409)
-    register_limiter.hit(request.remote_addr)
-    auth_log.info("Account created: user=%s name=%s ip=%s", user.id, user.username, request.remote_addr)
+    register_limiter.hit(visitor_key())
+    auth_log.info("Account created: user=%s name=%s ip=%s", user.id, user.username, client_ip())
 
     start_session(user)
     return jsonify(user.to_dict()), 201
@@ -627,7 +643,7 @@ def account_conflict(username, email):
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    wait = login_limiter.retry_after(request.remote_addr)
+    wait = login_limiter.retry_after(visitor_key())
     if wait:
         return too_many("failed login attempts", wait)
     data = request.get_json(silent=True) or {}
@@ -636,16 +652,16 @@ def login():
 
     user = User.query.filter_by(username_key=User.key_for(username)).first()
     if not user or not check_password_hash(user.password_hash, password):
-        login_limiter.hit(request.remote_addr)
+        login_limiter.hit(visitor_key())
         if user:
-            auth_log.warning("Login failed: wrong password user=%s ip=%s", user.id, request.remote_addr)
+            auth_log.warning("Login failed: wrong password user=%s ip=%s", user.id, client_ip())
         else:
             auth_log.warning("Login failed: unknown account name=%s ip=%s", logging_setup.short(username, 40),
-                             request.remote_addr)
+                             client_ip())
         return jsonify({'error': 'invalid username or password'}), 401
 
     start_session(user)
-    auth_log.info("Login: user=%s ip=%s", user.id, request.remote_addr)
+    auth_log.info("Login: user=%s ip=%s", user.id, client_ip())
     return jsonify(user.to_dict())
 
 @app.route('/api/logout', methods=['POST'])
@@ -663,7 +679,7 @@ def logout():
         for sid in sids:
             socketio.server.disconnect(sid)
         auth_log.info("Logout (every device): user=%s closed_connections=%d ip=%s", user.id, len(sids),
-                      request.remote_addr)
+                      client_ip())
     session.clear()
     return jsonify({'ok': True})
 
@@ -679,17 +695,14 @@ def me():
 
 @socketio.on('connect')
 def handle_connect(auth=None):
-    if settings.env == 'staging':   # TEMPORARY (Step 42a), removed in 42b
-        address_probe.log_shape(sock_log, f"socket {request.args.get('transport') == 'websocket' and 'websocket' or 'polling'}",
-                                request.environ)
     user = current_user()
     if not user:
-        sock_log.debug("Connection without a login: sid=%s ip=%s", request.sid[:6], request.remote_addr)
+        sock_log.debug("Connection without a login: sid=%s ip=%s", request.sid[:6], client_ip())
         emit('auth-required')
         return
     with USER_SIDS_LOCK:
         USER_SIDS.setdefault(user.id, {})[request.sid] = page_id(auth)
-    sock_log.info("Connected: user=%s sid=%s ip=%s", user.id, request.sid[:6], request.remote_addr)
+    sock_log.info("Connected: user=%s sid=%s ip=%s", user.id, request.sid[:6], client_ip())
     with MATCHMAKING_LOCK:
         ensure_turn_timer()   # the ticker also writes the periodic stats line
     # Display fields only: skill mechanics stay server-side (same rule as view_for).

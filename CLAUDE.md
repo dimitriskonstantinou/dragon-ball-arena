@@ -42,7 +42,6 @@ backend/
   test_browser_e2e.py       Playwright: real server + 2 headless browsers play a full match through the UI
   requirements.txt / requirements-dev.txt   runtime / test tools (playwright, coverage, pyflakes)
   requirements-server.txt   production web server (gunicorn + gevent; Docker image only -- gunicorn doesn't run on Windows)
-  address_probe.py          TEMPORARY (Step 42a): logs the shape of address headers on the test site; removed in 42b
   gunicorn.conf.py          gunicorn settings (gevent, 1 worker, logging) -- top-level names ARE gunicorn settings
   logging_setup.py          one log format (text/json, UTC) for app + gunicorn + libraries; safe_database_url, short
   photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
@@ -117,7 +116,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-41 are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-42a are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -330,7 +329,7 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
 - No secrets in code. **All settings come from `config.py`** (`config.load()` at app import): `ENV`
   (development | staging | production), `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `PORT`, `TURN_SECONDS`,
   `RECONNECT_SECONDS`, `TURN_TIMER_THREAD`, `LOGIN_FAILURE_LIMIT`/`LOGIN_WINDOW_SECONDS`,
-  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `SESSION_DAYS`, `LOG_LEVEL`, `LOG_FORMAT`, `APP_VERSION`,
+  `REGISTER_LIMIT`/`REGISTER_WINDOW_SECONDS`, `TRUSTED_PROXIES`, `CLIENT_IP_HEADER`, `SESSION_DAYS`, `LOG_LEVEL`, `LOG_FORMAT`, `APP_VERSION`,
   `SOCKETIO_ASYNC_MODE` (threading | gevent; the image sets gevent). Staging/production also require `DATABASE_URL`.
   A configuration error exits with code 3 (gunicorn then stops instead of restarting the worker forever). Don't read `os.environ` anywhere else; add new settings there, validated, with a test in
   `test_config.py`. Staging/production refuse to start without a strong `SECRET_KEY`; development generates a random
@@ -340,7 +339,10 @@ Host (`request.host_url`): behind a proxy it's the internal address, and clients
   `HttpOnly` + `SameSite=Lax`, and `Secure` in staging/production.
 - **Rate limits (Step 22):** `rate_limit.SlidingWindowLimiter` (in-memory, thread-safe, bounded) per client IP:
   failed logins (`login_limiter`) and created accounts (`register_limiter`) -> 429 + `Retry-After`. Behind a proxy
-  set `TRUSTED_PROXIES` (ProxyFix), or every player shares the proxy's IP. Tests that create many accounts from
+  set `TRUSTED_PROXIES` (ProxyFix), or every player shares the proxy's IP. **Always use `client_ip()` (logs) and
+  `visitor_key()` (limits; IPv6 per /64), never `request.remote_addr`.** Where the host puts the visitor's address in a header it
+  sets itself, set `CLIENT_IP_HEADER` (Render: `CF-Connecting-IP`; measured in Step 42a, SEC-9) -- measure a new host's headers,
+  for pages **and** websockets, before trusting one. Tests that create many accounts from
   127.0.0.1 raise `REGISTER_LIMIT` for their own process; the smoke test checks the real defaults with swapped-in
   limiters.
 - **Sessions (Step 24):** `start_session(user)` (clears the session first, `permanent`, stores `user_id` + `sv` =
@@ -380,7 +382,7 @@ behind Render a closed connection is noticed ~10 s late, so events arrive in ano
 back to `RENDER_EXTERNAL_URL` / `RENDER_GIT_COMMIT`. PROD is not deployed (Stage 2 PostgreSQL: Step 33; Stage 3 image: Step 34). Follow DEPLOY_PLAN: DEV site from
 `dev`, PROD from `main`, separate DBs/secrets, Postgres + migrations, gunicorn + gevent with **one worker** (in-memory
 games), deploys end live matches until state moves to Redis. The image: `docker build -t dragon-ball-arena .`; run with
-`ENV`, `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES` as environment variables (see the Dockerfile).
+`ENV`, `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES`, `CLIENT_IP_HEADER` as environment variables (see the Dockerfile).
 Under gevent, background work must use `socketio.sleep` / `socketio.start_background_task` (never `time.sleep` /
 raw threads), or it blocks every match. Docker commands from Git Bash need `MSYS_NO_PATHCONV=1` for container paths.
 

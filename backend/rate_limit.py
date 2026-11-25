@@ -8,9 +8,28 @@ an attacker rotating IPs) can't grow it without limit.
 Single-process by design, like the rest of the live state; it moves to Redis
 together with GAMES when the server is scaled out (DEPLOY_PLAN Stage 10).
 """
+import ipaddress
 import threading
 import time
 from collections import deque
+
+
+def parse_ip(text):
+    """The address in `text` (an IPv4 address written as IPv6 becomes IPv4), or None."""
+    try:
+        ip = ipaddress.ip_address((text or '').strip())
+    except ValueError:
+        return None
+    return getattr(ip, 'ipv4_mapped', None) or ip
+
+
+def visitor_key(text):
+    """What a limit counts for this address: IPv4 as it is; IPv6 per /64, the block a home gets (its
+    owner can change the rest of the address for every request)."""
+    ip = parse_ip(text)
+    if ip is None or ip.version == 4:
+        return text if ip is None else str(ip)
+    return str(ipaddress.ip_network((ip, 64), strict=False))
 
 
 class SlidingWindowLimiter:
