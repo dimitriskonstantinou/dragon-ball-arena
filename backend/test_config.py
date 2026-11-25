@@ -245,6 +245,49 @@ print("other", other.status_code, "attacker", again.status_code)
           without_proxy == 'other 429 attacker 429', without_proxy)
 
 
+def test_address_probe_never_logs_an_address():
+    """TEMPORARY (Step 42a), removed in 42b together with address_probe.py."""
+    import address_probe
+    real, fake, inner, v6 = '8.8.4.4', '203.0.113.7', '10.1.2.3', '2606:4700:4700::1111'
+    line = address_probe.shape({'HTTP_X_FORWARDED_FOR': f'{fake}, {real},{inner}', 'HTTP_CF_CONNECTING_IP': real,
+                                'HTTP_TRUE_CLIENT_IP': v6, 'HTTP_X_REAL_IP': 'evil\nINFO fake line', 'HTTP_FORWARDED': f'for={real}',
+                                'HTTP_X_FORWARDED_PROTO': 'https', 'HTTP_COOKIE': 'session=secret'}, '127.0.0.1')
+    check("the address probe shows positions, categories and which addresses are equal",
+          'x-forwarded-for=[A:test/v4,B:public/v4,C:private/v4]' in line and 'cf-connecting-ip=[B:public/v4]' in line
+          and 'true-client-ip=[D:public/v6]' in line and 'connection-from=[E:loopback/v4]' in line, line)
+    check("...and never an address, a cookie or anything the visitor wrote",
+          not any(x in line for x in (real, fake, inner, v6, '127.0.0.1', 'evil', 'secret', '\n')), line)
+    line = address_probe.shape({'HTTP_X_FORWARDED_FOR': ','.join(['1.1.1.1', '8.8.8.8', 'x'] * 500)}, None)
+    check("...stays short for hostile headers", len(line) < 300 and '+1492 more' in line, line)
+
+    class Log:
+        lines = []
+
+        def info(self, text, *args):
+            self.lines.append(text % args)
+    for _ in range(address_probe.MAX_LINES + 50):
+        address_probe.log_shape(Log(), 'http', {'REMOTE_ADDR': '10.0.0.9', 'werkzeug.proxy_fix.orig': {'REMOTE_ADDR': '127.0.0.1'}})
+    check("...is limited per server start, and looks at the connection before ProxyFix changes it",
+          len(Log.lines) == address_probe.MAX_LINES and 'connection-from=[A:loopback/v4]' in Log.lines[0], len(Log.lines))
+    code = '''
+import app
+c = app.app.test_client()
+c.post("/api/login", json={"username": "nobody", "password": "x"}, headers={"X-Forwarded-For": "203.0.113.50, 8.8.4.4"})
+app.socketio.test_client(app.app, flask_test_client=c)
+'''
+
+    def run(env_name):
+        env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
+        env.update(ENV=env_name, SECRET_KEY=GOOD_KEY, ALLOWED_ORIGINS='https://a.example', TURN_TIMER_THREAD='0', TRUSTED_PROXIES='1',
+                   DATABASE_URL='sqlite:///' + os.path.join(tempfile.mkdtemp(), 'ap.db').replace('\\', '/'))
+        return subprocess.run([sys.executable, '-c', code], cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120).stderr
+    out = run('staging')
+    check("on the test site, HTTP and game connections log their shape",
+          'Address shape: kind=http POST /api/login x-forwarded-for=[A:test/v4,B:public/v4]' in out
+          and 'Address shape: kind=socket' in out, out[-500:])
+    check("...and nowhere else", 'Address shape' not in run('production') + run('development'))
+
+
 def test_real_server_startup():
     proc = start_app({'ENV': 'production'})
     check("a real production start without SECRET_KEY exits with a configuration error (no traceback)",

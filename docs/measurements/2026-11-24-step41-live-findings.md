@@ -44,3 +44,9 @@ every page load. `photos/` is 2,037 KB (21 skill icons larger than 256 px, shown
 ## Local state
 `python tests.py --container`: ALL GREEN including PostgreSQL and the container (2026-11-24-step41-tests-container-before.md):
 Windows allows psycopg again, so the baseline can be updated with the next step.
+
+# After Step 41, live (commit 24c6f93, 2026-11-24 23:17)
+Reload 10 of 10 back and able to play: 0.94 0.92 0.42 0.92 0.91 0.92 0.94 0.93 0.92 0.93 s; 12 s later the opponent had seen nothing.
+Network drop (websocket closed) 10 of 10 able to play, reconnected after 1.05-1.94 s; 42 s later the opponent had seen nothing.
+Second tab did not take the connected seat; when the first tab closed it had the match after 0.09 s.
+Really leaving: opponent told after 0.1 s, match over after 31.0 s. No browser errors. Desktop Chromium only.

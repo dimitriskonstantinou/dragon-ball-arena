@@ -42,6 +42,7 @@ backend/
   test_browser_e2e.py       Playwright: real server + 2 headless browsers play a full match through the UI
   requirements.txt / requirements-dev.txt   runtime / test tools (playwright, coverage, pyflakes)
   requirements-server.txt   production web server (gunicorn + gevent; Docker image only -- gunicorn doesn't run on Windows)
+  address_probe.py          TEMPORARY (Step 42a): logs the shape of address headers on the test site; removed in 42b
   gunicorn.conf.py          gunicorn settings (gevent, 1 worker, logging) -- top-level names ARE gunicorn settings
   logging_setup.py          one log format (text/json, UTC) for app + gunicorn + libraries; safe_database_url, short
   photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
@@ -116,7 +117,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-40 are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-41 are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
