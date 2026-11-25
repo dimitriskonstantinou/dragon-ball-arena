@@ -204,6 +204,40 @@ def test_logging_helpers():
     pg = logging_setup.safe_database_url('postgresql+psycopg://dba:s3cretpw@db.example:5432/arena')
     check("...and a PostgreSQL URL keeps user, host, port and database but never the password",
           pg == 'postgresql+psycopg://dba@db.example:5432/arena' and 's3cretpw' not in pg, pg)
+    access = logging_setup.gunicorn_logconfig('DEBUG')['loggers']['gunicorn.access']
+    check("gunicorn's access log stays off, even at LOG_LEVEL=DEBUG (BE-16: it logged full connection ids)",
+          access['level'] == 'CRITICAL' and not access['propagate'] and not access['handlers'], access)
+
+    import logging
+    lines = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            lines.append(f"{record.levelname}|{record.getMessage()}|{bool(record.exc_info)}")
+    lib = logging.Logger('engineio.server')   # a private copy: no other test is affected
+    lib.addHandler(Capture())
+    lib.addFilter(logging_setup.ClientMistakes())
+    once = ' (further occurrences of this error will be logged with level INFO)'
+    lib.error('https://evil.example is not an accepted origin.' + once)
+    check("a foreign website trying to connect is a warning, not an error (no false alarm)",
+          lines[-1:] == ["WARNING|Rejected a game connection: 'https://evil.example is not an accepted origin.'|False"], lines)
+    lib.error('Invalid session AbCdEfGhIjKlMnOpQrSt' + once)
+    check("an old connection id is shortened to 6 characters",
+          lines[-1].startswith('WARNING|') and 'AbCdEf' in lines[-1] and 'AbCdEfG' not in lines[-1], lines[-1])
+    lib.error('Invalid session ' + 'x' * 5000 + '\n2026-11-25T00:00:00.000Z INFO arena.auth: Login: user=1' + once)
+    check("a visitor can neither fill the log nor fake a log line with it",
+          lines[-1].startswith('WARNING|') and len(lines[-1]) < 300 and '\n' not in lines[-1], lines[-1])
+    try:
+        raise ValueError('boom')
+    except ValueError:
+        lib.exception('post request handler error')
+    check("a real crash inside the library stays an ERROR with its traceback",
+          lines[-1] == 'ERROR|post request handler error|True', lines[-1])
+    root_level, before = logging.getLogger().level, len(lines)
+    logging.getLogger().setLevel('ERROR')
+    lib.error('https://evil.example is not an accepted origin.' + once)
+    logging.getLogger().setLevel(root_level)
+    check("LOG_LEVEL=ERROR hides the warning", len(lines) == before, lines[before:])
     source = open(os.path.join(BACKEND, 'app.py'), encoding='utf-8').read()
     check("the app's logger is named 'app' (not __name__, which is '__main__' under `python app.py`)",
           "log = logging.getLogger('app')" in source)
@@ -338,6 +372,11 @@ def test_real_server_startup():
           proc.returncode == 0 and lines and all(p and {'ts', 'level', 'logger', 'msg'} <= set(p) for p in parsed),
           lines[:3])
     check("...including the startup line", any(p and p['msg'].startswith('Server starting:') for p in parsed))
+    check("the startup line names the header the visitor's address comes from",
+          any(p and 'proxies=0 ip_header=none ' in p['msg'] for p in parsed), lines[-3:])
+    proc = start_app({'CLIENT_IP_HEADER': 'CF-Connecting-IP'})
+    check("...so a deploy without it can't be mistaken for one with it", 'ip_header=CF-Connecting-IP ' in proc.stderr,
+          proc.stderr[-400:])
     proc = start_app({'LOG_LEVEL': 'WARNING'})
     check("...and LOG_LEVEL=WARNING keeps routine INFO lines out of the logs",
           proc.returncode == 0 and ' INFO ' not in proc.stderr, proc.stderr[-400:])

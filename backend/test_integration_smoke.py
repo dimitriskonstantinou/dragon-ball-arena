@@ -332,6 +332,13 @@ def handshake(origin):
 check("another website's page can't open a game connection", handshake('https://evil.example') == 400)
 check("...nor a look-alike of this site", handshake('http://localhost.evil.example') == 400)
 check("the game's own page still can (same origin)", handshake('http://localhost') == 200)
+check("a refused website is logged as a warning, not as an error", any(
+    l.startswith("WARNING engineio.server: Rejected a game connection: 'https://evil.example") for l in LOGS.lines)
+    and not any(l.startswith('ERROR engineio') for l in LOGS.lines), [l for l in LOGS.lines if 'engineio' in l])
+web.get('/socket.io/?EIO=4&transport=polling&sid=AbCdEfGhIjKlMnOpQrSt')
+check("an unknown connection id is logged shortened, as a warning", any(
+    l.startswith('WARNING engineio.server: Rejected a game connection') and 'AbCdEf' in l for l in LOGS.lines)
+    and not any('AbCdEfGhIjKlMnOpQrSt' in l for l in LOGS.lines), [l for l in LOGS.lines if 'engineio' in l])
 login_cookie = '; '.join(r1.headers.getlist('Set-Cookie'))
 check("the login cookie is HttpOnly and SameSite=Lax (other sites' requests don't carry it)",
       'HttpOnly' in login_cookie and 'SameSite=Lax' in login_cookie, login_cookie)

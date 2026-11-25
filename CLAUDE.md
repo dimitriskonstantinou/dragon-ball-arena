@@ -116,7 +116,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-42a are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-42b are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -187,13 +187,15 @@ relevant) · no new dependencies without reason · no unexplained TODOs · self-
 - One account, one seat: `find-match` rejects accounts already queued or in an unfinished match.
 - **Logging (Step 35) -- every new feature logs its events.** Never `print`. Set up once at import
   (`logging_setup.configure`; `LOG_LEVEL`, `LOG_FORMAT=text|json`, UTC timestamps); gunicorn and engineio/socketio
-  log through the same handler (one format, no duplicate lines). Loggers: `arena.http` (one line per request:
+  log through the same handler (one format, no duplicate lines). gunicorn's access log is silenced in `gunicorn_logconfig`
+  (it holds full connection ids; `accesslog = None` alone doesn't turn it off), and engineio's complaints about a visitor's
+  mistakes become one-line WARNINGs (`ClientMistakes`, Step 43). An ERROR line always means a bug. Loggers: `arena.http` (one line per request:
   method, path, status, ms, ip, user -- API at INFO, static + `/healthz` at DEBUG), `arena.auth` (accounts,
   logins, failures, rate limits, logouts, rejected old cookies), `arena.socket` (connects/disconnects; rule
   violations at DEBUG), `arena.match` (searching, match start with teams + `rng_seed`, every committed turn with
   its moves, timeouts, counter-traps, leave/rejoin, `Match ended: ... cause=ko|surrender|timeouts|disconnect`),
   `arena.stats` (every 60 s: live matches, queue, players online), `app` (startup line with `APP_VERSION` = the
-  deploy, shutdown, database, **unexpected errors with `who()` context + payload + traceback**). Style: one line,
+  deploy and `ip_header`, shutdown, database, **unexpected errors with `who()` context + payload + traceback**). Style: one line,
   `Event: key=value ...`, ids not names where possible, untrusted input through `logging_setup.short()`.
   **Never log** passwords, cookies, `SECRET_KEY`, database passwords (`safe_database_url`), emails, full socket
   ids (first 6 chars only) -- the smoke test captures a whole run and fails on any of them, and its list of
