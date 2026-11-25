@@ -174,10 +174,9 @@ transformations, passives, conditionals, ultimates), visual polish, sound.
 **The DEV site is online (Step 40, 2026-11-24) and showed problems that only exist on a real network.** Plan, one step and
 one pull request each, in this order (measurements: `docs/measurements/2026-11-24-step41-live-findings.md`):
 
-- **Step 41 -- BE-15: reload or a network drop must not lose the match.** ✅ Built as planned (page id, handover, `pagehide`).
-  **Still to do, live, after the merge:** reload back within 2 s in 10 of 10 tries, acting works after a drop in 10 of 10, nobody
-  connected loses by disconnect.
-- **Step 42 -- SEC-9: rate limits count the real visitor.** 42a: measure on the live site (a temporary log line with
+- **Step 41 -- BE-15** ✅ done and confirmed live (reload 10/10 within 0.9 s, drop 10/10). Not tested: other browsers, a real
+  phone changing networks.
+- **Step 42 -- SEC-9: rate limits count the real visitor.** 42a (built, to be measured after its deploy; `backend/address_probe.py`): measure on the live site (a temporary log line with
   only the *shape* of the headers: how many X-Forwarded-For entries, which are private, whether
   `CF-Connecting-IP` is there and equals one of them, for normal and faked requests, http and websocket). 42b: use
   what was measured (expected: `CF-Connecting-IP`, or the right position), as one function used by HTTP **and** Socket.IO,

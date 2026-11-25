@@ -203,7 +203,7 @@ window is about a millisecond.
 9-11 of 100 answered 500 after 30 s (`QueuePool limit ... reached`). More CPU makes it far less likely (Step 37: 4,000 on
 1 CPU, 0 failures). **Fix:** release the connection before hashing (end the read transaction), or hash first.
 
-**BE-15 — CRITICAL (online) — Reloading the page or a short network drop loses the match (verified live, 2026-11-24)** — ✅ FIXED in Step 41 (live check after the deploy still to do)
+**BE-15 — CRITICAL (online) — Reloading the page or a short network drop loses the match (verified live, 2026-11-24)** — ✅ FIXED in Step 41, confirmed live
 On Render the server hears that a connection closed exactly 10.07 s late, i.e. after the new one arrived. `rejoin_match` only
 puts a player back whose seat is already marked as disconnected, so the new connection stays outside ("You are not in a
 match."); then the late goodbye starts the 30 s countdown and the player loses while connected. Reload: 0 of 3 came back;
@@ -214,7 +214,8 @@ open page of the account gets it (`handle_disconnect`) -- the countdown only sta
 connection is told and closed. `pagehide` goodbye for closed tabs. A second tab still can't take a connected seat. 23 smoke
 checks (incl. 20 rounds of both events at once, which found a bug in the first version of the fix), a browser test through a
 proxy that reports closed connections late (also run against the production container), probe 39, 9 deliberately broken
-versions: 8 caught, 1 without any observable effect.
+versions: 8 caught, 1 without any observable effect. Live (24c6f93): reload 10 of 10 back and able to play in 0.4-0.9 s,
+network drop 10 of 10 able to play, opponent told nothing; closed tab noticed after 0.1 s. Desktop Chromium only.
 
 **BE-16 — MEDIUM — gunicorn's access log is on although we turn it off (verified, 2026-11-24)** — OPEN (Step 43)
 `logconfig_dict` switches it on again, whatever `accesslog` says. Full connection ids of polling requests get into the logs

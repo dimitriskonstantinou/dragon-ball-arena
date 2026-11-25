@@ -18,6 +18,7 @@ from contextlib import contextmanager
 import atexit
 import platform
 
+import address_probe   # TEMPORARY (Step 42a), removed in 42b
 import config
 import content_loader
 import game_engine
@@ -483,6 +484,12 @@ def start_request_timer():
     g.request_started = time.perf_counter()
 
 
+@app.before_request
+def probe_addresses():   # TEMPORARY (Step 42a), removed in 42b
+    if settings.env == 'staging' and request.path.startswith('/api/'):
+        address_probe.log_shape(http_log, f"http {request.method} {request.path}", request.environ)
+
+
 @app.after_request
 def log_request(response):
     """One line per request: API calls at INFO, static files and /healthz at DEBUG
@@ -672,6 +679,9 @@ def me():
 
 @socketio.on('connect')
 def handle_connect(auth=None):
+    if settings.env == 'staging':   # TEMPORARY (Step 42a), removed in 42b
+        address_probe.log_shape(sock_log, f"socket {request.args.get('transport') == 'websocket' and 'websocket' or 'polling'}",
+                                request.environ)
     user = current_user()
     if not user:
         sock_log.debug("Connection without a login: sid=%s ip=%s", request.sid[:6], request.remote_addr)
