@@ -250,9 +250,10 @@ def log_shutdown():
 
 
 log.info("Server starting: version=%s env=%s python=%s async_mode=%s database=%s roster=%d characters "
-         "turn=%ss reconnect=%ss proxies=%d log=%s/%s", settings.app_version, settings.env,
+         "turn=%ss reconnect=%ss proxies=%d ip_header=%s log=%s/%s", settings.app_version, settings.env,
          platform.python_version(), settings.socketio_async_mode, logging_setup.safe_database_url(settings.database_url),
          len(CATALOG), settings.turn_seconds, settings.reconnect_seconds, settings.trusted_proxies,
+         settings.client_ip_header or 'none',
          settings.log_level, settings.log_format)
 atexit.register(log_shutdown)
 

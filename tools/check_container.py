@@ -148,6 +148,11 @@ def main():
                               capture_output=True, text=True, timeout=180, env=NO_PATH_CONVERSION)
         check("1,200 websockets can be open at once and /healthz still answers (gunicorn's default stops at 1,000)",
               held.stdout.strip() == 'open=1200 healthz=200', (held.stdout + held.stderr)[-300:])
+        poll = 'http://127.0.0.1:18100/socket.io/?EIO=4&transport=polling'
+        sid = re.search(r'"sid":"([^"]+)"', http(poll)[2])
+        sid = sid.group(1) if sid else ''
+        http(f'{poll}&sid={sid}')
+        http(f'{poll}&sid={sid}x')
         health = ''
         for _ in range(45):
             health = docker('inspect', '-f', '{{.State.Health.Status}}', 'dba-check-prod').stdout.strip()
@@ -167,6 +172,14 @@ def main():
               lines and not not_json, not_json[:3])
         check("...including the request log and the account events",
               '"arena.http"' in logs and 'Account created: user=' in logs, logs[-500:])
+        check("no access log: health checks and pages leave no line, each API request exactly one",
+              'gunicorn.access' not in logs and '/healthz' not in logs and logs.count('POST /api/register 201') == 1,
+              [l for l in lines if 'gunicorn.access' in l or '/healthz' in l][:2])
+        check("no connection id is logged in full", sid and sid not in logs, [l for l in lines if sid and sid in l][:2])
+        check("refused websites and unknown connection ids are warnings: not one ERROR line in the whole run",
+              '"level": "ERROR"' not in logs and 'Rejected a game connection' in logs,
+              [l for l in lines if '"level": "ERROR"' in l][:2])
+        check("the startup line names the header the visitor's address comes from", 'ip_header=CF-Connecting-IP ' in logs)
         check("the visitor's address is the host's header, not a faked look-alike (CF_Connecting_IP) or X-Forwarded-For",
               f'name={name} ip=8.8.4.4' in logs and '203.0.113.' not in logs, [l for l in lines if 'Account created' in l][:2])
         check("...and no log line contains the database password or the secret key",

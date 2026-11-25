@@ -177,10 +177,10 @@ one pull request each, in this order (measurements: `docs/measurements/2026-11-2
 - **Step 41 -- BE-15** ✅ done and confirmed live (reload 10/10 within 0.9 s, drop 10/10). Not tested: other browsers, a real
   phone changing networks.
 - **Step 42 -- SEC-9: rate limits count the real visitor.** ✅ 42a measured, 42b built (`CLIENT_IP_HEADER=CF-Connecting-IP`).
-  **Still to do, live, after the merge:** the 6th wrong login is refused even with faked addresses, a second network is not
-  affected, logs show no internal address.
-- **Step 43 -- BE-16: logs.** Access log off for good, no connection ids, foreign origins not at ERROR; container checks.
-  **Done when:** one line per request, none for health checks, locally and live.
+  Live: the visitor's own address is logged, the 6th wrong login is refused with changing fakes, a faked `CF-Connecting-IP` gets 403.
+  **Still to prove live:** a second network is not affected (automated tests only so far).
+- **Step 43 -- BE-16: logs.** ✅ Built (also: engineio's client mistakes are warnings; `ip_header=` in the startup line).
+  **Still to do, live, after the merge:** no health-check lines, one line per API request, no connection ids, `ip_header=` shown.
 - **Step 44 -- BE-14: registration bursts** (release the database connection before hashing). **Done when:** 100 accounts,
   32 at once, on the simulated free size: 0 failures (today 9-11).
 - **Step 45 -- AST-1 + caching:** real file types, icons at display size, long-lived caching of images with versioned addresses.

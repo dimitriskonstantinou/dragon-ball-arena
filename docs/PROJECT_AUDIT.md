@@ -217,11 +217,13 @@ proxy that reports closed connections late (also run against the production cont
 versions: 8 caught, 1 without any observable effect. Live (24c6f93): reload 10 of 10 back and able to play in 0.4-0.9 s,
 network drop 10 of 10 able to play, opponent told nothing; closed tab noticed after 0.1 s. Desktop Chromium only.
 
-**BE-16 — MEDIUM — gunicorn's access log is on although we turn it off (verified, 2026-11-24)** — OPEN (Step 43)
+**BE-16 — MEDIUM — gunicorn's access log is on although we turn it off (verified, 2026-11-24)** — ✅ FIXED in Step 43 (live check after the deploy still to do)
 `logconfig_dict` switches it on again, whatever `accesslog` says. Full connection ids of polling requests get into the logs
 (our own rule forbids it), plus a line per health check (every 5 s). A refused foreign origin is logged at ERROR (false alarm).
-The container test never looked for access lines. **Fix:** silence `gunicorn.access` in `gunicorn_logconfig`; check in the
-container test that a request produces exactly one line and no connection id.
+The container test never looked for access lines. Found on the way: engineio also logged `Invalid session <id>` as ERROR with the visitor's raw text (full id, any length).
+Fix: `gunicorn.access` silenced in `gunicorn_logconfig`; `logging_setup.ClientMistakes` turns engineio's client errors into
+WARNINGs with a safe length and shortened ids (real crashes stay ERROR); the startup line shows `ip_header=`. Container checks:
+no access log, one line per API request, no full connection id, not one ERROR line in a whole run.
 
 ### 4.3 Security & fair play
 
@@ -255,7 +257,7 @@ illegal targets, dead actors, hidden-info leaks (opponent queue, traps, ids, ski
 malformed payloads, opponent cancelling your move, duplicate-character teams, self-matching.
 **Still open:** stalling (BE-1), forced-forfeit by connection drop (BE-2).
 
-**SEC-9 — HIGH (online) — On Render the rate limits count Render's internal addresses, not players (verified live, 2026-11-24)** — ✅ FIXED in Step 42b (live check after the deploy still to do)
+**SEC-9 — HIGH (online) — On Render the rate limits count Render's internal addresses, not players (verified live, 2026-11-24)** — ✅ FIXED in Step 42b, confirmed live from one network
 `TRUSTED_PROXIES=1` takes the last `X-Forwarded-For` entry; on Render that is one of about 3 internal machines
 (`10.193.x`). So 15 wrong logins by anybody block logins for **everyone** behind them for 5 minutes, about 15 new accounts
 per hour are possible for the whole world, and a single attacker isn't limited individually. Socket.IO lines log

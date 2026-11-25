@@ -42,6 +42,21 @@ class JsonFormatter(UTCFormatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
+class ClientMistakes(logging.Filter):
+    """engineio logs what a visitor did wrong (foreign website, unknown connection id, ...) as ERROR, with the
+    visitor's raw text. Here that is a WARNING, cut to a safe length, with connection ids shortened. Real crashes
+    (they carry a traceback) pass unchanged."""
+
+    def filter(self, record):
+        if record.levelno != logging.ERROR or record.exc_info:
+            return True
+        text = record.getMessage().split(' (further occurrences')[0]
+        text = re.sub(r'[A-Za-z0-9_-]{20,}', lambda m: m.group(0)[:6] + '...', text)
+        record.levelno, record.levelname = logging.WARNING, 'WARNING'
+        record.msg, record.args = 'Rejected a game connection: %s', (short(text),)
+        return logging.getLogger().isEnabledFor(logging.WARNING)
+
+
 def make_formatter(fmt):
     return JsonFormatter() if fmt == 'json' else UTCFormatter(TEXT_FORMAT)
 
@@ -67,6 +82,9 @@ def unify_library_loggers():
         if lib.handlers:
             lib.handlers = []
             lib.propagate = True
+    engineio = logging.getLogger('engineio.server')
+    if not any(isinstance(f, ClientMistakes) for f in engineio.filters):
+        engineio.addFilter(ClientMistakes())
 
 
 def gunicorn_logconfig(level, fmt='text'):
@@ -81,7 +99,9 @@ def gunicorn_logconfig(level, fmt='text'):
         'root': {'level': level, 'handlers': ['stderr']},
         'loggers': {
             'gunicorn.error': {'level': level, 'handlers': [], 'propagate': True},
-            'gunicorn.access': {'level': level, 'handlers': [], 'propagate': True},
+            # Off: the app logs every API request itself, and these lines hold full connection ids. gunicorn writes
+            # them whenever a logconfig is set, whatever `accesslog` says (BE-16) -- so they are dropped here.
+            'gunicorn.access': {'level': 'CRITICAL', 'handlers': [], 'propagate': False},
         },
     }
 

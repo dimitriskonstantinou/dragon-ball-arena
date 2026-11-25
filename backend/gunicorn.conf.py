@@ -27,7 +27,8 @@ workers = 1
 worker_connections = 5000
 graceful_timeout = 20
 # The app logs every request itself (arena.http, with user + timing), so no access log here;
-# gunicorn's own lines use the app's format (logging_setup).
+# gunicorn's own lines use the app's format (logging_setup, which also keeps the access log off:
+# with a logconfig_dict, accesslog = None alone doesn't).
 accesslog = None
 errorlog = '-'
 loglevel = settings.log_level.lower()
