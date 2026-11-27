@@ -52,6 +52,7 @@ SUITES = [
     ('rate_limit', 'test_rate_limit.py', True, True),
     ('migrations', 'test_migrations.py', False, False),
     ('smoke', 'test_integration_smoke.py', True, True),
+    ('web', os.path.join('..', 'tools', 'check_web.py'), False, False),       # builds web/dist for the browser tests
     ('browser', 'test_browser_e2e.py', False, False),
     ('postgres', 'test_postgres.py', False, False),
     ('smoke_postgres', 'test_integration_smoke.py', False, False),

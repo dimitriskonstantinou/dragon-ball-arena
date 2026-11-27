@@ -108,6 +108,9 @@ def main():
     check("runs as the unprivileged user 'arena', not root", '\narena\n' in inside, inside[:120])
     check("contains no local database, secret key or test files",
           not any(x in inside for x in ('game.db', '.dev_secret_key', 'test_game_engine.py')), inside)
+    web = docker('run', '--rm', IMAGE, 'sh', '-c', 'ls /app/web; ls /app/web/dist; which node npm || true').stdout
+    check("contains only the built new interface: no Node.js, no node_modules, no sources",
+          web.split() == ['dist', 'assets', 'index.html'], web)
     check("contains the server and the frontend", 'app.py' in inside and 'index.html' in inside)
 
     containers, databases = [], []
@@ -133,6 +136,12 @@ def main():
         check("the game page and the self-hosted socket.io client are served",
               http('http://127.0.0.1:18100/')[0] == 200
               and http('http://127.0.0.1:18100/vendor/socket.io-4.5.4.min.js')[0] == 200)
+        status, _, body = http('http://127.0.0.1:18100/next/')
+        script = re.search(r'src="(/next/assets/[^"]+\.js)"', body)
+        check("the new interface is built inside the image and served at /next/ with its files",
+              status == 200 and script and http('http://127.0.0.1:18100' + script.group(1))[0] == 200, (status, body[:200]))
+        check("images are sent as image/webp", http('http://127.0.0.1:18100/photos/characters/Raditz.webp')[1]
+              .get('Content-Type') == 'image/webp')
         name = 'Prod' + uuid.uuid4().hex[:6]
         status, headers, _ = http('http://127.0.0.1:18100/api/register',
                                   data=f'{{"username":"{name}","email":"{name}@x.io","password":"secret12"}}'.encode(),

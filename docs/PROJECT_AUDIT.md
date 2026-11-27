@@ -374,7 +374,7 @@ server and end every match); raised -> 1,200 open, `/healthz` 200. Fix: `worker_
 
 ### 4.8 Assets
 
-**AST-1 — MEDIUM — All 26 images have the wrong extension (JPEG/WEBP named `.png`); 21 skill icons are >256 px (up to 1919×1079), 1,840 KB, rendered at 32 px (measured).** Each match downloads ~1–1.5 MB of icons. Fix: normalize + resize (≈100–150 KB total). — ✅ FIXED in Step 45: `tools/optimize_images.py` (Pillow) made all 26 real WebP at display size
+**AST-1 — MEDIUM — All 26 images have the wrong extension (JPEG/WEBP named `.png`); 21 skill icons are >256 px (up to 1919×1079), 1,840 KB, rendered at 32 px (measured).** *(Step 46: the .webp files went out as `application/octet-stream` from the Linux image: fixed, `image/webp`.)* Each match downloads ~1–1.5 MB of icons. Fix: normalize + resize (≈100–150 KB total). — ✅ FIXED in Step 45: `tools/optimize_images.py` (Pillow) made all 26 real WebP at display size
 (portraits <= 480 px, icons <= 96 px): 2,037 KB -> 130 KB; `content_loader.check_image` refuses a wrong type or an oversized file
 (80 KB / 16 KB) with a hint to the tool; image URLs carry `?v=<content hash>` and are cached for a year (immutable).
 

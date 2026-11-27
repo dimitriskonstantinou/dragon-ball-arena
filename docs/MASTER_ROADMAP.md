@@ -183,11 +183,22 @@ one pull request each, in this order (measurements: `docs/measurements/2026-11-2
   no ERROR; the two `Rejected` warnings only in the automated tests).
 - **Step 44 -- BE-14: sign-up and login bursts.** ✅ Done and confirmed live (6e535e4: sign-up, login, reload 10/10, drop
   10/10; the burst itself only in the simulation: 0 of 200 failed, worst move 1.2 s instead of 13 s, 0 dropped instead of 16).
-- **Step 45 -- AST-1 + caching:** ✅ Built: 2,037 KB -> 130 KB (WebP at display size), versioned image URLs cached for a year.
-  **Still to do, live:** a second visit asks the server for no image (before: 5 requests on the lobby, all 304).
+- **Step 45 -- AST-1 + caching:** ✅ Done and confirmed live (23bdbf2: a second visit takes all images from the browser's
+  cache, 0 requests to the server; before 5 per lobby visit).
 
-**This plan (Steps 41-45) is then complete.** Next directions, the user's choice: the frontend phases (5-7: React interface,
-battle events, the skill timeline, lobby) or launch preparation (DEPLOY_PLAN Stages 7-9: domain, alerts, backups, privacy).
+**Plan for Direction A (the user's choice, 2026-11-27): the new interface, built next to the old one at `/next/`.**
+| Step | What | Done when |
+|---|---|---|
+| 46 | Foundation: `web/` (React 19 + TypeScript 7 + Vite 8), typed socket layer, built in Docker + `tests.py` (`web` suite), served at `/next/` | ✅ built: builds everywhere, loads with no errors and no outside requests |
+| 47 | Login + lobby in the new interface (forms, team slots, skill preview, remember team) | same features as today + these, browser tests green |
+| 48 | Battle in the new interface, same features (+ final state on the end screen, back to lobby: FE-2) | a full match incl. reload and network drop |
+| 49 | Switch: `/` serves the new interface, `frontend/` deleted, browser tests ported | all tests on the new interface, live check |
+| 50 | Battle events from the server (2.7) + log + floating numbers | every opponent action visible |
+| 51 | Battle layout: icons + detail panel, valid targets, auto-pay, keyboard | <= 6 clicks per typical turn (11 today), fits 1366x768 |
+| 52 | Timeline (ENG-9): reorder queued skills; server validates the order | |
+| 53 | Lobby polish, mobile, accessibility | Lighthouse accessibility >= 90 on every screen |
+Baselines (2026-11-27): old login page Lighthouse performance 100 / accessibility 97 / best practices 96 (the only page it can
+open without a login); old interface 84.7 KB (html+css+js, 43 KB of it socket.io); 11 clicks per typical turn (UI_PLAN).
 
 **CI-1 (found 2026-11-25, not scheduled):** a pull request merged before its own test run starts makes that late run cancel the
 `dev` run (same concurrency group), so Render doesn't deploy. Fix: pull requests get their own group, runs on `dev`/`main` are

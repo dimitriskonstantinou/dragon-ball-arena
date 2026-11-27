@@ -484,6 +484,27 @@ def test_reload_and_network_drop_when_goodbyes_arrive_late(browser, url):
     proxy.close()
 
 
+def test_new_interface_foundation(browser, url):
+    """Step 46: the new interface (web/, React) at /next/ knows who is logged in and opens the game connection."""
+    errors = []
+    ctx, page, name = new_player(browser, url, errors, 'mu')        # logs in through the current interface
+    page.goto(url + '/next/')
+    page.wait_for_selector('[data-testid="connection"]')
+    page.wait_for_function("document.querySelector('[data-testid=connection]').innerText.includes('Connected')")
+    text = page.locator('[data-testid="connection"]').inner_text()
+    check("/next/ shows who is logged in and that the game connection is open, with the roster count",
+          name in text and 'characters available' in text and not text.startswith('Connected: 0'), text)
+    check("...over a websocket", page.evaluate("performance.getEntriesByType('resource').some(e => e.name.includes('/socket.io/'))"))
+    other = browser.new_context().new_page()
+    other.goto(url + '/next/')
+    other.wait_for_function("document.querySelector('[data-testid=connection]')?.innerText.includes('Not logged in')")
+    check("logged out, it says so and links to the login", other.locator('a[href="/"]').count() >= 1)
+    other.context.close()
+    unexpected = real_errors(errors)
+    check("no JavaScript errors and nothing loaded from another site", unexpected == [], unexpected)
+    ctx.close()
+
+
 def test_surrender_with_confirmation(browser, url):
     """BE-4: a Surrender button, behind a confirm dialog, ends the match as a loss."""
     errors = []
@@ -580,7 +601,7 @@ def test_invulnerable_enemy_is_greyed_out_and_cant_be_picked(browser, url):
 
 
 TESTS = [test_full_match, test_session_survives_reload_and_logout_works, test_reload_mid_match_returns_to_the_match,
-         test_reload_and_network_drop_when_goodbyes_arrive_late, test_surrender_with_confirmation, test_invulnerable_enemy_is_greyed_out_and_cant_be_picked]
+         test_reload_and_network_drop_when_goodbyes_arrive_late, test_new_interface_foundation, test_surrender_with_confirmation, test_invulnerable_enemy_is_greyed_out_and_cant_be_picked]
 # Run on a second server with short limits (TURN_SECONDS=2, RECONNECT_SECONDS=3) so they finish quickly.
 FAST_TIMER_TESTS = [test_idle_player_times_out_and_forfeits, test_disconnect_forfeits_to_opponent]
 

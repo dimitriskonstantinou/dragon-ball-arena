@@ -14,6 +14,10 @@ tests.py
 Dockerfile
 .dockerignore
 
+# The new interface is built inside the image (Dockerfile stage 1), never copied from here.
+web/node_modules
+web/dist
+
 # Local data and secrets: never in an image.
 backend/game.db
 backend/*.db

@@ -156,6 +156,41 @@ for label, url in (("an outdated version", first.split('?')[0] + '?v=0000000000'
     check(f"...{label} is still served, but not kept long (it may be stale)", answer.status_code == 200
           and 'immutable' not in (answer.headers.get('Cache-Control') or ''), answer.headers.get('Cache-Control'))
 check("...and a path outside photos/ stays unreachable", flask_client1.get('/photos/../app.py?v=0').status_code == 404)
+check("images are sent as image/webp (a slim Linux image doesn't know .webp: application/octet-stream)",
+      kept.headers.get('Content-Type') == 'image/webp', kept.headers.get('Content-Type'))
+
+# --- Step 46: the new interface (web/, React) is served at /next/ next to the old one, from web/dist. ---
+import os as _os
+import tempfile as _tempfile
+real_dist = appmod.WEB_DIST if hasattr(appmod, 'WEB_DIST') else None
+fake_dist = _tempfile.mkdtemp()
+_os.makedirs(_os.path.join(fake_dist, 'assets'))
+open(_os.path.join(fake_dist, 'index.html'), 'w').write('<div id="root"></div><script src="/next/assets/index-Ab12.js"></script>')
+open(_os.path.join(fake_dist, 'assets', 'index-Ab12.js'), 'w').write('console.log(1)')
+appmod.WEB_DIST = fake_dist
+try:
+    page = flask_client1.get('/next/')
+    check("/next/ serves the new interface's page, always fresh (it names the current build's files)",
+          page.status_code == 200 and b'id="root"' in page.data and page.headers.get('Cache-Control') == 'no-cache',
+          (page.status_code, page.headers.get('Cache-Control')))
+    script = flask_client1.get('/next/assets/index-Ab12.js')
+    check("...its built files (hashed names) may be kept for a year",
+          script.status_code == 200 and script.headers.get('Cache-Control') == 'public, max-age=31536000, immutable'
+          and 'javascript' in (script.headers.get('Content-Type') or ''), (script.status_code, script.headers.get('Cache-Control')))
+    check("...a page address inside the new interface gets the page (its own router decides)",
+          flask_client1.get('/next/lobby').status_code == 200)
+    check("...a missing built file is a 404, not the page", flask_client1.get('/next/assets/nope.js').status_code == 404)
+    leaks = [u for u in ('/next/../app.py', '/next/%2e%2e/app.py', '/next/assets/../../../backend/app.py',
+                         '/next/assets/%2e%2e/index.html') if b'import ' in flask_client1.get(u).data
+             or flask_client1.get(u).status_code not in (200, 404)]
+    check("...nothing outside the build can be reached (other addresses get the page or a 404)", leaks == [], leaks)
+    appmod.WEB_DIST = _os.path.join(fake_dist, 'not-built')
+    missing = flask_client1.get('/next/')
+    check("without a build, /next/ says how to make one", missing.status_code == 404 and b'npm run build' in missing.data,
+          missing.data[:120])
+finally:
+    appmod.WEB_DIST = real_dist
+check("the old interface is unchanged at /", flask_client1.get('/').status_code == 200 and b'auth-screen' in flask_client1.get('/').data)
 
 # --- Step 26 regression: image URLs were built from the request's Host header, so
 # behind a proxy they pointed at its internal address (broken images) and any
