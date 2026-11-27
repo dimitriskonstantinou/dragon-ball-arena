@@ -1,0 +1,398 @@
+"""
+Tests for config.py (environment settings). Run with: python test_config.py
+
+Unit checks use fake environments and a temporary dev-key file; the startup
+checks launch real interpreters importing app.py (temporary database, so the
+real backend/game.db is never touched).
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+import config
+
+FAILURES = []
+BACKEND = os.path.dirname(os.path.abspath(__file__))
+GOOD_KEY = 'k' * 64
+PG = 'postgresql+psycopg://u:p@db.example/dba'   # load() only parses it; nothing connects
+
+
+def check(name, condition, detail=""):
+    if condition:
+        print(f"  PASS: {name}")
+    else:
+        FAILURES.append(name)
+        print(f"  FAIL: {name}  {detail}")
+
+
+def load(env, dev_file=None):
+    """config.load with a fake environment; returns (settings, error message)."""
+    dev_file = dev_file or os.path.join(tempfile.mkdtemp(), 'dev_key')
+    try:
+        return config.load(env, dev_secret_file=dev_file), None
+    except config.ConfigError as e:
+        return None, str(e)
+
+
+def test_development_defaults():
+    tmp = tempfile.mkdtemp()
+    dev_file = os.path.join(tmp, 'dev_key')
+    s, err = load({}, dev_file)
+    check("no settings at all -> development with sensible defaults",
+          err is None and s.env == 'development' and s.turn_seconds == 60 and s.reconnect_seconds == 30
+          and s.port == 5000 and s.turn_timer_thread and s.database_url.endswith('game.db'), (s, err))
+    check("the dev secret key is random (not a key from the source code) and long",
+          len(s.secret_key) >= config.MIN_SECRET_LENGTH and s.secret_key not in config.KNOWN_INSECURE_KEYS)
+    s2, _ = load({}, dev_file)
+    check("...and stays the same across restarts (kept in the local key file)", s2.secret_key == s.secret_key)
+    s3, _ = load({})
+    check("...but differs between machines (a fresh key file gets a fresh key)", s3.secret_key != s.secret_key)
+    s4, _ = load({'SECRET_KEY': 'my-own-dev-key'}, dev_file)
+    check("an explicit SECRET_KEY always wins in development", s4.secret_key == 'my-own-dev-key')
+
+
+def test_production_requires_a_real_secret():
+    for env in ('production', 'staging'):
+        _, err = load({'ENV': env})
+        check(f"{env} without SECRET_KEY refuses to start, saying how to make one",
+              err and 'SECRET_KEY is required' in err and 'secrets.token_hex' in err, err)
+        _, err = load({'ENV': env, 'SECRET_KEY': 'short'})
+        check(f"{env} with a short SECRET_KEY refuses to start", err and 'at least' in err, err)
+        _, err = load({'ENV': env, 'SECRET_KEY': 'dev-secret-key-change-in-production'})
+        check(f"{env} with the old public key refuses to start", err and 'publicly known' in err, err)
+        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com', 'DATABASE_URL': PG})
+        check(f"{env} with a proper SECRET_KEY starts", err is None and s.secret_key == GOOD_KEY and s.is_production_like,
+              err)
+    _, err = load({'ENV': 'prod'})
+    check("an unknown ENV value is rejected (typos must not silently mean development)", err and 'ENV must be' in err,
+          err)
+    s, err = load({'ENV': ' Production ', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com',
+                   'DATABASE_URL': PG})
+    check("ENV is case/space tolerant", err is None and s.env == 'production', err)
+    for env in ('staging', 'production'):
+        _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+        check(f"{env} without DATABASE_URL refuses to start (no silent SQLite file inside the server)",
+              err and 'DATABASE_URL is required' in err, err)
+
+
+def test_allowed_origins():
+    s, err = load({})
+    check("development defaults to same-origin only (no list)", err is None and s.allowed_origins == (), err)
+    s, err = load({'ALLOWED_ORIGINS': ' https://a.example , http://localhost:5000 '})
+    check("a comma-separated list is parsed and trimmed",
+          err is None and s.allowed_origins == ('https://a.example', 'http://localhost:5000'), (s, err))
+    _, err = load({'ALLOWED_ORIGINS': '*'})
+    check("'*' is rejected (logins use a cookie, so any site could act as the player)", err and "can't be '*'" in err, err)
+    for bad in ('dragonballarena.com', 'https://dragonballarena.com/', 'https://dragonballarena.com/play',
+                'ftp://dragonballarena.com'):
+        _, err = load({'ALLOWED_ORIGINS': bad})
+        check(f"malformed origin {bad!r} is rejected", err and 'must look like' in err, err)
+    for env in ('staging', 'production'):
+        _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY})
+        check(f"{env} requires ALLOWED_ORIGINS", err and 'ALLOWED_ORIGINS is required' in err, err)
+        _, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'http://dragonballarena.com'})
+        check(f"{env} requires https origins", err and 'must use https://' in err, err)
+        s, err = load({'ENV': env, 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com', 'DATABASE_URL': PG})
+        check(f"{env} with https origins starts", err is None and s.allowed_origins == ('https://dragonballarena.com',), err)
+
+
+def test_number_settings_are_validated():
+    s, _ = load({})
+    check("rate-limit defaults: 5 failed logins / 5 min, 5 accounts / hour per IP, no proxy",
+          (s.login_failure_limit, s.login_window_seconds, s.register_limit, s.register_window_seconds,
+           s.trusted_proxies) == (5, 300, 5, 3600, 0))
+    check("logins expire after 30 days without a visit by default", s.session_days == 30, s.session_days)
+    check("logging defaults to INFO", s.log_level == 'INFO', s.log_level)
+    check("Socket.IO runs in threading mode by default (dev server, tests)", s.socketio_async_mode == 'threading')
+    check("logs are plain text by default, version 'dev'", (s.log_format, s.app_version) == ('text', 'dev'),
+          (s.log_format, s.app_version))
+    s, err = load({'LOG_FORMAT': 'JSON', 'APP_VERSION': 'a1b2c3d'})
+    check("LOG_FORMAT=json and an APP_VERSION (git commit) are accepted",
+          err is None and (s.log_format, s.app_version) == ('json', 'a1b2c3d'), (s, err))
+    for name, bad in (('LOG_FORMAT', 'xml'), ('APP_VERSION', 'v1; rm -rf /'), ('APP_VERSION', 'x' * 65)):
+        _, err = load({name: bad})
+        check(f"{name}={bad[:15]!r} is rejected", err and f'{name} must' in err, err)
+    check("log_settings() reads level + format on their own (for gunicorn.conf.py)",
+          config.log_settings({'LOG_LEVEL': 'warning', 'LOG_FORMAT': 'json'}) == ('WARNING', 'json'))
+    s, err = load({'SOCKETIO_ASYNC_MODE': ' Gevent '})
+    check("SOCKETIO_ASYNC_MODE=gevent is accepted (production under gunicorn)",
+          err is None and s.socketio_async_mode == 'gevent', (s, err))
+    _, err = load({'SOCKETIO_ASYNC_MODE': 'eventlet'})
+    check("an unsupported SOCKETIO_ASYNC_MODE is rejected", err and 'SOCKETIO_ASYNC_MODE must be one of' in err, err)
+    s, err = load({'LOG_LEVEL': ' warning '})
+    check("LOG_LEVEL is case/space tolerant", err is None and s.log_level == 'WARNING', (s, err))
+    _, err = load({'LOG_LEVEL': 'LOUD'})
+    check("an unknown LOG_LEVEL is rejected with the allowed values", err and 'LOG_LEVEL must be one of' in err, err)
+    for name, bad in (('TURN_SECONDS', 'abc'), ('TURN_SECONDS', '0'), ('TURN_SECONDS', '601'),
+                      ('RECONNECT_SECONDS', '-1'), ('PORT', '70000'), ('PORT', '5.5'),
+                      ('LOGIN_FAILURE_LIMIT', '0'), ('REGISTER_WINDOW_SECONDS', 'hour'), ('TRUSTED_PROXIES', '9'),
+                      ('SESSION_DAYS', '0'), ('SESSION_DAYS', '400')):
+        _, err = load({name: bad})
+        check(f"{name}={bad!r} is rejected with a clear message", err and name in err, err)
+    s, err = load({'TURN_SECONDS': '2', 'RECONNECT_SECONDS': '0', 'PORT': '8080', 'TURN_TIMER_THREAD': '0'})
+    check("valid values are used (incl. the short limits the browser tests use)",
+          err is None and (s.turn_seconds, s.reconnect_seconds, s.port, s.turn_timer_thread) == (2, 0, 8080, False), err)
+
+
+def test_host_provided_settings():
+    """What a host (Render) hands over must work as it is (Step 40)."""
+    base = {'ENV': 'staging', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://a.example'}
+    for given in ('postgres://u:p@db.example:5432/dba', 'postgresql://u:p@db.example:5432/dba',
+                  'postgresql+psycopg://u:p@db.example:5432/dba'):
+        s, err = load({**base, 'DATABASE_URL': given})
+        check(f"{given.split(':')[0]}:// database addresses use our driver (psycopg 3)",
+              err is None and s.database_url == 'postgresql+psycopg://u:p@db.example:5432/dba', (s and s.database_url, err))
+    s, err = load({'DATABASE_URL': 'sqlite:///x.db'})
+    check("...and other database addresses are left alone", err is None and s.database_url == 'sqlite:///x.db', err)
+
+    host = {'ENV': 'staging', 'SECRET_KEY': GOOD_KEY, 'DATABASE_URL': PG,
+            'RENDER_EXTERNAL_URL': 'https://arena-dev.onrender.com'}
+    s, err = load(host)
+    check("without ALLOWED_ORIGINS the site's own address from the host is allowed",
+          err is None and s.allowed_origins == ('https://arena-dev.onrender.com',), (s, err))
+    s, err = load({**host, 'ALLOWED_ORIGINS': 'https://arena.example'})
+    check("...an explicit ALLOWED_ORIGINS wins", err is None and s.allowed_origins == ('https://arena.example',), (s, err))
+    _, err = load({**host, 'RENDER_EXTERNAL_URL': 'http://arena-dev.onrender.com'})
+    check("...and the host's address must be https too", err and 'must use https' in err, err)
+    _, err = load({**host, 'RENDER_EXTERNAL_URL': '*'})
+    check("...and can't be '*'", err and "can't be '*'" in err, err)
+    s, err = load({'RENDER_EXTERNAL_URL': 'https://arena-dev.onrender.com'})
+    check("...and means nothing in development (same origin only)", err is None and s.allowed_origins == (), (s, err))
+
+    commit = '0123456789abcdef0123456789abcdef01234567'
+    for given, expected in (({}, '0123456'), ({'APP_VERSION': 'unknown'}, '0123456'), ({'APP_VERSION': 'v1.2'}, 'v1.2')):
+        s, err = load({**given, 'RENDER_GIT_COMMIT': commit})
+        check(f"the logged version with {given or 'no APP_VERSION'} is {expected} (the host's commit fills the gap)",
+              err is None and s.app_version == expected, (s and s.app_version, err))
+    s, err = load({'APP_VERSION': 'unknown'})
+    check("...and stays 'unknown' when the host gives no commit", err is None and s.app_version == 'unknown', err)
+
+
+def test_render_blueprint():
+    """render.yaml: the free test site. (No YAML library here: plain text checks.)"""
+    text = open(os.path.join(BACKEND, '..', 'render.yaml'), encoding='utf-8').read()
+    lines = [l.split('#', 1)[0].strip() for l in text.splitlines()]
+    keys = re.findall(r'^\s*- key: (\S+)', text, re.M)
+    config_source = open(os.path.join(BACKEND, 'config.py'), encoding='utf-8').read()
+    check("render.yaml sets only settings that config.py knows", keys and all(f"'{k}'" in config_source for k in keys), keys)
+    check("the test site and its database are on the FREE plan (nothing can be billed by accident)",
+          [l for l in lines if l.startswith('plan:')] == ['plan: free', 'plan: free'], lines)
+    check("it deploys the dev branch, and only after GitHub's tests passed",
+          'branch: dev' in lines and 'autoDeployTrigger: checksPass' in lines)
+    check("the database accepts no connections from outside", 'ipAllowList: []' in lines)
+    check("the secret key is generated by the host, never written in the file",
+          re.search(r'- key: SECRET_KEY\s+generateValue: true', text) is not None)
+    values = dict(re.findall(r'- key: (\S+)\s+value: "?([^"\n]+?)"?\s*$', text, re.M))
+    s, err = load({**values, 'SECRET_KEY': 'A' * 43 + '=', 'DATABASE_URL': 'postgresql://u:p@dpg-x-a/arena',
+                   'RENDER_EXTERNAL_URL': 'https://dragon-ball-arena-dev.onrender.com', 'PORT': '10000',
+                   'SOCKETIO_ASYNC_MODE': 'gevent', 'APP_VERSION': 'unknown', 'RENDER_GIT_COMMIT': 'f' * 40})
+    check("the server accepts exactly these settings plus what the host adds",
+          err is None and s.env == 'staging' and s.trusted_proxies == 1 and s.log_format == 'json' and s.port == 10000
+          and s.client_ip_header == 'CF-Connecting-IP'
+          and s.database_url.startswith('postgresql+psycopg://'), (s, err))
+
+
+def test_logging_helpers():
+    import logging_setup
+    windows = 'sqlite:///C:\\Users\\someone\\Desktop\\Naruto_Arena\\backend\\game.db'
+    check("the startup line shows only the SQLite file name, never a local path (Windows)",
+          logging_setup.safe_database_url(windows) == 'sqlite:game.db', logging_setup.safe_database_url(windows))
+    check("...nor on Linux", logging_setup.safe_database_url('sqlite:////tmp/x/smoke.db') == 'sqlite:smoke.db')
+    pg = logging_setup.safe_database_url('postgresql+psycopg://dba:s3cretpw@db.example:5432/arena')
+    check("...and a PostgreSQL URL keeps user, host, port and database but never the password",
+          pg == 'postgresql+psycopg://dba@db.example:5432/arena' and 's3cretpw' not in pg, pg)
+    access = logging_setup.gunicorn_logconfig('DEBUG')['loggers']['gunicorn.access']
+    check("gunicorn's access log stays off, even at LOG_LEVEL=DEBUG (BE-16: it logged full connection ids)",
+          access['level'] == 'CRITICAL' and not access['propagate'] and not access['handlers'], access)
+
+    import logging
+    lines = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            lines.append(f"{record.levelname}|{record.getMessage()}|{bool(record.exc_info)}")
+    lib = logging.Logger('engineio.server')   # a private copy: no other test is affected
+    lib.addHandler(Capture())
+    lib.addFilter(logging_setup.ClientMistakes())
+    once = ' (further occurrences of this error will be logged with level INFO)'
+    lib.error('https://evil.example is not an accepted origin.' + once)
+    check("a foreign website trying to connect is a warning, not an error (no false alarm)",
+          lines[-1:] == ["WARNING|Rejected a game connection: 'https://evil.example is not an accepted origin.'|False"], lines)
+    lib.error('Invalid session AbCdEfGhIjKlMnOpQrSt' + once)
+    check("an old connection id is shortened to 6 characters",
+          lines[-1].startswith('WARNING|') and 'AbCdEf' in lines[-1] and 'AbCdEfG' not in lines[-1], lines[-1])
+    lib.error('Invalid session ' + 'x' * 5000 + '\n2026-11-25T00:00:00.000Z INFO arena.auth: Login: user=1' + once)
+    check("a visitor can neither fill the log nor fake a log line with it",
+          lines[-1].startswith('WARNING|') and len(lines[-1]) < 300 and '\n' not in lines[-1], lines[-1])
+    try:
+        raise ValueError('boom')
+    except ValueError:
+        lib.exception('post request handler error')
+    check("a real crash inside the library stays an ERROR with its traceback",
+          lines[-1] == 'ERROR|post request handler error|True', lines[-1])
+    root_level, before = logging.getLogger().level, len(lines)
+    logging.getLogger().setLevel('ERROR')
+    lib.error('https://evil.example is not an accepted origin.' + once)
+    logging.getLogger().setLevel(root_level)
+    check("LOG_LEVEL=ERROR hides the warning", len(lines) == before, lines[before:])
+    source = open(os.path.join(BACKEND, 'app.py'), encoding='utf-8').read()
+    check("the app's logger is named 'app' (not __name__, which is '__main__' under `python app.py`)",
+          "log = logging.getLogger('app')" in source)
+
+
+def start_app(extra_env):
+    env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
+    env.update(extra_env, TURN_TIMER_THREAD='0',
+               DATABASE_URL='sqlite:///' + os.path.join(tempfile.mkdtemp(), 'cfg.db').replace('\\', '/'))
+    code = ('import app; c = app.app.config; print("started", c["SECRET_KEY"] != ""); '
+            'print("cookie", c["SESSION_COOKIE_SECURE"], c["SESSION_COOKIE_SAMESITE"], c["SESSION_COOKIE_HTTPONLY"], '
+            '"origins", app.socketio.server.eio.cors_allowed_origins)')
+    return subprocess.run([sys.executable, '-c', code],
+                          cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120)
+
+
+def test_trusted_proxies_separate_players_behind_a_proxy():
+    """Behind a proxy every request arrives from the proxy's IP. With TRUSTED_PROXIES=1 the real client IP
+    comes from X-Forwarded-For, so one attacker's failed logins don't lock out everyone else."""
+    code = '''
+import app
+c = app.app.test_client()
+attacker = {"X-Forwarded-For": "203.0.113.50"}
+for _ in range(5):
+    c.post("/api/login", json={"username": "nobody", "password": "x"}, headers=attacker)
+other = c.post("/api/login", json={"username": "nobody", "password": "x"}, headers={"X-Forwarded-For": "203.0.113.51"})
+again = c.post("/api/login", json={"username": "nobody", "password": "x"}, headers=attacker)
+print("other", other.status_code, "attacker", again.status_code)
+'''
+    def run(extra):
+        env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
+        env.update(extra, TURN_TIMER_THREAD='0',
+                   DATABASE_URL='sqlite:///' + os.path.join(tempfile.mkdtemp(), 'px.db').replace('\\', '/'))
+        return subprocess.run([sys.executable, '-c', code], cwd=BACKEND, env=env, capture_output=True, text=True,
+                              timeout=120).stdout.strip()
+    with_proxy, without_proxy = run({'TRUSTED_PROXIES': '1'}), run({})
+    check("with TRUSTED_PROXIES=1 another player behind the same proxy isn't locked out",
+          with_proxy == 'other 401 attacker 429', with_proxy)
+    check("(without it, everyone behind the proxy shares one limit -- why deployments must set it)",
+          without_proxy == 'other 429 attacker 429', without_proxy)
+
+
+def test_real_visitor_behind_a_host():
+    """SEC-9, with the headers exactly as Render sent them (measured 2026-11-25): pages get
+    X-Forwarded-For = [what the visitor faked..., visitor, Cloudflare, internal machine], websockets only
+    [faked..., visitor]; CF-Connecting-IP is always the visitor (a faked one is refused before it reaches us)."""
+    _, err = load({'CLIENT_IP_HEADER': 'bad header!'})
+    check("an impossible CLIENT_IP_HEADER is rejected", err and 'CLIENT_IP_HEADER must' in err, err)
+    s, err = load({'CLIENT_IP_HEADER': ' CF-Connecting-IP '})
+    check("CLIENT_IP_HEADER is read; nothing is trusted by default",
+          err is None and s.client_ip_header == 'CF-Connecting-IP' and load({})[0].client_ip_header == '', (s, err))
+    code = '''
+import app, logging
+c = app.app.test_client()
+def hdr(visitor, n=0, fakes=()):
+    h = {"X-Forwarded-For": ", ".join([*fakes, visitor, "172.70.1.%d" % n, "10.193.0.%d" % (n % 3)]), "CF-Connecting-IP": visitor}
+    return h
+def wrong(h):
+    return c.post("/api/login", json={"username": "nobody", "password": "x"}, headers=h).status_code
+print("attacker", [wrong(hdr("8.8.4.4", n, ["203.0.113.%d" % n, "198.51.100.9"])) for n in range(7)])
+print("others", [wrong(hdr("9.9.9.%d" % n, n)) for n in range(1, 4)])
+print("ipv6", [wrong(hdr("2606:4700:1:2::%x" % n)) for n in range(1, 8)], "neighbour", wrong(hdr("2606:4700:1:3::1")))
+print("mapped", [wrong(hdr("::ffff:1.2.3.4" if n % 2 else "1.2.3.4")) for n in range(7)])
+odd = dict(environ_base={"REMOTE_ADDR": "10.9.9.9"})
+def wrong_odd(value):
+    h = {} if value is None else {"CF-Connecting-IP": value}
+    return c.post("/api/login", json={"username": "nobody", "password": "x"}, headers=h, **odd).status_code
+print("odd", [wrong_odd(v) for v in (None, "", "not-an-address", "1.1.1.1, 2.2.2.2", "1.1.1.1:80", "x" * 5000, None)])
+made = [c.post("/api/register", json={"username": "visitor%d" % n, "email": "v%d@x.example" % n, "password": "secret12"},
+               headers=hdr("7.7.7.7", n, ["203.0.113.%d" % n])).status_code for n in range(7)]
+print("register", made, "other", c.post("/api/register", json={"username": "someone", "email": "s@x.example",
+      "password": "secret12"}, headers=hdr("7.7.7.8")).status_code)
+s = app.socketio.test_client(app.app, flask_test_client=c, headers={"X-Forwarded-For": "203.0.113.5, 7.7.7.8",
+                                                                   "CF-Connecting-IP": "7.7.7.8"})
+print("done")
+'''
+
+    def run(**extra):
+        env = {k: v for k, v in os.environ.items() if k not in ('SECRET_KEY', 'ENV', 'ALLOWED_ORIGINS')}
+        env.update(extra, TRUSTED_PROXIES='1', TURN_TIMER_THREAD='0',
+                   DATABASE_URL='sqlite:///' + os.path.join(tempfile.mkdtemp(), 'cf.db').replace('\\', '/'))
+        p = subprocess.run([sys.executable, '-c', code], cwd=BACKEND, env=env, capture_output=True, text=True, timeout=120)
+        return dict(line.split(' ', 1) for line in p.stdout.splitlines() if ' ' in line), p.stderr
+    old, _ = run()
+    new, log = run(CLIENT_IP_HEADER='CF-Connecting-IP')
+    check("(without the header, as on Render before: faking and changing machines dodges the limit or blocks others)",
+          old.get('attacker', '').count('401') == 7 or '429' in old.get('others', ''), old)
+    check("the 6th wrong login is refused, whatever the visitor fakes and whichever machine forwards it",
+          new.get('attacker') == '[401, 401, 401, 401, 401, 429, 429]', new)
+    check("...and nobody else is affected", new.get('others') == '[401, 401, 401]', new)
+    check("an IPv6 visitor can't dodge it by changing the last half of the address (one home = one /64)...",
+          new.get('ipv6', '').startswith('[401, 401, 401, 401, 401, 429, 429]'), new)
+    check("...without blocking the next network", new.get('ipv6', '').endswith('neighbour 401'), new)
+    check("an IPv4 address written as IPv6 is the same visitor", new.get('mapped') == '[401, 401, 401, 401, 401, 429, 429]', new)
+    check("missing or malformed headers never crash and count as the connection's own address",
+          new.get('odd') == '[401, 401, 401, 401, 401, 429, 429]', new)
+    check("at most 5 new accounts an hour per visitor, others can still register",
+          new.get('register') == '[201, 201, 201, 201, 201, 429, 429] other 201', new)
+    check("logs name the visitor, for requests and game connections, never the internal machine",
+          'ip=8.8.4.4' in log and re.search(r'Connected: user=\d+ sid=\S+ ip=7\.7\.7\.8\s', log) and 'ip=10.193' not in log
+          and 'ip=203.0.113' not in log, log[-600:])
+    check("a missing header is logged once as a warning (a wrong host setup must be noticed)",
+          log.count('WARNING arena.http: Visitor address header missing or malformed') == 1, log[-600:])
+
+
+def test_real_server_startup():
+    proc = start_app({'ENV': 'production'})
+    check("a real production start without SECRET_KEY exits with a configuration error (no traceback)",
+          proc.returncode == 3 and 'Configuration error: SECRET_KEY is required' in proc.stderr
+          and 'Traceback' not in proc.stderr, (proc.returncode, proc.stderr[-300:]))
+    proc = start_app({'ENV': 'production', 'SECRET_KEY': GOOD_KEY, 'ALLOWED_ORIGINS': 'https://dragonballarena.com'})
+    check("a real production start with a proper SECRET_KEY and origins works",
+          proc.returncode == 0 and 'started True' in proc.stdout, (proc.returncode, proc.stderr[-300:]))
+    check("...with HTTPS-only, SameSite=Lax, HttpOnly login cookies and only the listed origin",
+          "cookie True Lax True origins ['https://dragonballarena.com']" in proc.stdout, proc.stdout)
+    proc = start_app({'APP_VERSION': 'abc1234'})
+    check("a real start logs in one format (UTC time, level, logger, message) without any setup by the runner",
+          re.search(r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z INFO alembic\.runtime\.migration: ', proc.stderr, re.M)
+          is not None, proc.stderr[-400:])
+    check("...and announces which build started, where and how (every deploy is visible in the logs)",
+          re.search(r'INFO app: Server starting: version=abc1234 env=development python=\S+ async_mode=threading '
+                    r'database=sqlite:cfg\.db roster=\d+ characters', proc.stderr) is not None, proc.stderr[-500:])
+    proc = start_app({'LOG_FORMAT': 'json'})
+    lines = [line for line in proc.stderr.splitlines() if line.strip()]
+    parsed = []
+    for line in lines:
+        try:
+            parsed.append(json.loads(line))
+        except ValueError:
+            parsed.append(None)
+    check("LOG_FORMAT=json: every line of a real start is one JSON object (ts, level, logger, msg)",
+          proc.returncode == 0 and lines and all(p and {'ts', 'level', 'logger', 'msg'} <= set(p) for p in parsed),
+          lines[:3])
+    check("...including the startup line", any(p and p['msg'].startswith('Server starting:') for p in parsed))
+    check("the startup line names the header the visitor's address comes from",
+          any(p and 'proxies=0 ip_header=none ' in p['msg'] for p in parsed), lines[-3:])
+    proc = start_app({'CLIENT_IP_HEADER': 'CF-Connecting-IP'})
+    check("...so a deploy without it can't be mistaken for one with it", 'ip_header=CF-Connecting-IP ' in proc.stderr,
+          proc.stderr[-400:])
+    proc = start_app({'LOG_LEVEL': 'WARNING'})
+    check("...and LOG_LEVEL=WARNING keeps routine INFO lines out of the logs",
+          proc.returncode == 0 and ' INFO ' not in proc.stderr, proc.stderr[-400:])
+    proc = start_app({'TURN_SECONDS': 'soon'})
+    check("a bad number setting stops the real server with a clear message",
+          proc.returncode != 0 and 'TURN_SECONDS must be a whole number' in proc.stderr, proc.stderr[-300:])
+
+
+TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]
+
+if __name__ == '__main__':
+    for t in TESTS:
+        print(f"{t.__name__}:")
+        t()
+    print()
+    if FAILURES:
+        print(f"{len(FAILURES)} FAILURE(S): {FAILURES}")
+        raise SystemExit(1)
+    print(f"All {len(TESTS)} test functions passed.")

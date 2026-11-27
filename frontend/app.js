@@ -1,13 +1,32 @@
 // Accounts require a real session cookie, which only works reliably
 // same-origin -- so the socket connects to wherever this page was served
 // from, and doesn't connect at all until we know the user is logged in.
-const socket = io({ autoConnect: false });
+// The page id survives a reload and differs per tab: with it the server knows that a new connection is
+// this same page again (reloaded, or back after a network drop) and puts it straight back into its match.
+const socket = io({ autoConnect: false, auth: { page: pageId() } });
+
+function pageId() {
+    const fresh = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    try {
+        if (!sessionStorage.getItem('pageId')) sessionStorage.setItem('pageId', fresh);
+        return sessionStorage.getItem('pageId');
+    } catch (e) { return fresh; }   // storage blocked: reconnecting still works, reloading waits for the server
+}
+
+// Say goodbye when the page closes, so the opponent isn't kept waiting for the network to notice.
+window.addEventListener('pagehide', () => { if (socket.connected) socket.disconnect(); });
+window.addEventListener('pageshow', e => { if (e.persisted && currentUser) socket.connect(); });   // back button
 let myRole = null;
-let myRoomId = null;
+let selectedCharId = null;
 let selectedSkillId = null;
 let selectedSkillObj = null;
 let currentGameState = null;
 let currentUser = null;
+
+const KI_LABELS = {
+    energy: 'Energy Ki', martial: 'Martial Ki', spirit: 'Spirit Ki',
+    rage: 'Rage Ki', random: 'Any Ki type',
+};
 
 // Lobby Data
 let selectedChars = [];
@@ -140,7 +159,6 @@ function findMatch() {
 socket.on('match-status', (msg) => { document.getElementById('lobby-status').innerText = msg; });
 
 socket.on('game-start', (data) => {
-    myRoomId = data.roomId;
     myRole = data.role;
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
@@ -163,13 +181,17 @@ socket.on('update-state', game => {
     if(game.winner) {
         document.getElementById('status').innerText = game.winner === myRole ? "YOU WIN!" : "YOU LOSE!";
         document.getElementById('end-turn').style.display = 'none';
+        document.getElementById('surrender-btn').style.display = 'none';
+        showTurnTimer(null);
         refreshUserBadge();
         return;
     }
 
     const isMyTurn = game.turn === myRole;
     document.getElementById('status').innerText = isMyTurn ? "PLAN YOUR MOVES" : "OPPONENT THINKING...";
+    showTurnTimer(game.turn_seconds_left, isMyTurn);
     document.getElementById('end-turn').style.display = isMyTurn ? 'inline-block' : 'none';
+    document.getElementById('surrender-btn').style.display = 'inline-block';
 
     const myData = game.players[myRole];
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
@@ -216,6 +238,24 @@ function updateTurnHeader(isMyTurn, myImg, enemyImg) {
 }
 
 socket.on('error-msg', msg => log("❌ " + msg));
+
+// --- TURN TIMER ---
+// The server owns the deadline and sends the seconds left with each state;
+// this only counts down locally between updates.
+let turnTimerInterval = null;
+function showTurnTimer(secondsLeft, isMyTurn) {
+    clearInterval(turnTimerInterval);
+    const el = document.getElementById('turn-timer');
+    if (secondsLeft == null) { el.innerText = ''; return; }
+    const endsAt = Date.now() + secondsLeft * 1000;
+    const render = () => {
+        const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        el.innerText = `${isMyTurn ? 'Your' : "Opponent's"} turn ends in ${left}s`;
+        el.classList.toggle('urgent', left <= 10);
+    };
+    render();
+    turnTimerInterval = setInterval(render, 250);
+}
 
 // --- MATH ---
 function calculateRemainingDice(totalDice, pendingMoves) {
@@ -266,6 +306,7 @@ function renderDice(elementId, dice, clickable = false) {
     dice.sort().forEach((type, idx) => {
         const d = document.createElement('div');
         d.className = `die ${type}`;
+        d.title = KI_LABELS[type] || type;
         if(clickable) { d.onclick = () => onPaymentDieClick(idx, type); }
         container.appendChild(d);
     });
@@ -296,6 +337,7 @@ function renderMyDice(dicePool, pendingMoves) {
     pool.forEach((type, index) => {
         const d = document.createElement('div');
         d.className = `die ${type} ${usedFlags[index] ? 'locked' : ''}`;
+        d.title = usedFlags[index] ? `${KI_LABELS[type] || type} (reserved for a queued move)` : (KI_LABELS[type] || type);
         container.appendChild(d);
     });
 }
@@ -321,6 +363,8 @@ const STATUS_META = {
     reflect:               { icon: '🪞', label: 'REFLECT READY',   cls: 'status-buff' },
     chakra_restrict:       { icon: '🔒', label: 'KI LOCKED',       cls: 'status-debuff' },
     chakra_drain_over_time:{ icon: '🌀', label: 'KI DRAIN',        cls: 'status-debuff' },
+    protected:             { icon: '🙏', label: 'PROTECTED',       cls: 'status-buff' },
+    delayed_damage:        { icon: '💥', label: 'CHARGING HIT',    cls: 'status-debuff' },
 };
 
 const PERCENT_MODS = {
@@ -374,6 +418,7 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
             statusHtml = '<div class="status-container">';
             char.status.forEach(s => {
                 if(s.type === 'stun') isStunned = true;
+                if(s.invisible) return; // e.g. a hidden counter-trap the target isn't meant to see coming
                 const meta = describeStatus(s);
                 const text = formatTurns(s.duration);
                 statusHtml += `<div class="status-badge ${meta.cls}">${meta.icon} ${meta.label}<br><span style="font-weight:normal; font-size:9px;">${text}</span></div>`;
@@ -388,23 +433,34 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
         if (isMine) {
             const queuedMove = pendingMoves && pendingMoves.find(m => m.charId === char.id);
             if (queuedMove) {
-                controlsHtml = `<button class="cancel-btn" onclick="cancelMove('${char.id}')">CANCEL ${queuedMove.skillName}</button>`;
+                controlsHtml = `<button class="cancel-btn" onclick="event.stopPropagation(); cancelMove('${char.id}')">CANCEL ${queuedMove.skillName}</button>`;
             } else {
                 char.skills.forEach(skill => {
                     let costHtml = '';
                     Object.entries(skill.cost).forEach(([type, amt]) => {
-                        for(let i=0; i<amt; i++) costHtml += `<span class="cost-box ${type}"></span>`;
+                        for(let i=0; i<amt; i++) costHtml += `<span class="cost-box ${type}" title="${KI_LABELS[type] || type}"></span>`;
                     });
 
                     const affordable = canAfford(remainingDice, skill.cost);
                     const silenced = isSilencedFor(char, skill);
-                    const disabled = !isMyTurn || char.health <= 0 || isStunned || silenced || skill.currentCooldown > 0 || !affordable ? 'disabled' : '';
+                    const disabled = !isMyTurn || char.health <= 0 || isStunned || silenced || skill.locked || skill.currentCooldown > 0 || !affordable ? 'disabled' : '';
+                    let disabledReason = '';
+                    if (char.health <= 0) disabledReason = 'This character has been defeated.';
+                    else if (isStunned) disabledReason = 'Stunned -- cannot act this turn.';
+                    else if (silenced) disabledReason = 'Silenced -- this skill is blocked.';
+                    else if (skill.locked) disabledReason = skill.locked_reason || 'This skill is locked.';
+                    else if (skill.currentCooldown > 0) disabledReason = `On cooldown: ${skill.currentCooldown} more turn(s).`;
+                    else if (!affordable) disabledReason = 'Not enough Ki of the right type(s) left this turn.';
                     const cdText = skill.currentCooldown > 0 ? `(${skill.currentCooldown})` : '';
+                    const iconHtml = skill.image
+                        ? `<img src="${skill.image}" class="skill-icon" onerror="this.style.display='none'">`
+                        : '';
 
                     controlsHtml += `
-                        <button class="skill-btn" ${disabled} onclick="onSkillClicked('${skill.id}', this)">
+                        <button class="skill-btn" ${disabled} onclick="onSkillClicked('${char.id}', '${skill.id}', this, event)" title="${disabledReason}">
+                            ${iconHtml}
                             <div style="flex-grow:1">
-                                <b>${skill.name}</b> ${cdText}
+                                <b>${skill.name}</b> ${skill.locked ? '🔒' : ''} ${cdText}
                                 <div style="font-size:0.8em; color:#aaa">${skill.description}</div>
                             </div>
                             <div style="min-width:30px">${costHtml}</div>
@@ -427,20 +483,25 @@ function renderTeam(elementId, team, isMine, isMyTurn, pendingMoves, remainingDi
 
 // --- INTERACTION ---
 
-function onSkillClicked(skillId, btnElement) {
+// Skill ids only need to be unique *within one character's own kit* --
+// several characters intentionally share an id (e.g. "afterimage_technique"
+// for the universal defensive skill). So selecting a skill must always be
+// scoped to the specific character whose button was clicked, never looked
+// up by skill id alone across the whole team.
+function onSkillClicked(charId, skillId, btnElement, event) {
+    if (event) event.stopPropagation(); // don't let this click also bubble up and fire onAllyClicked on the parent card
+
     document.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('selected'));
     btnElement.classList.add('selected');
 
+    selectedCharId = charId;
     selectedSkillId = skillId;
     selectedSkillObj = null;
 
     const myTeam = currentGameState.players[myRole].team;
-    for (const char of myTeam) {
-        const found = char.skills.find(s => s.id === skillId);
-        if (found) {
-            selectedSkillObj = found;
-            break;
-        }
+    const ownerChar = myTeam.find(c => c.id === charId);
+    if (ownerChar) {
+        selectedSkillObj = ownerChar.skills.find(s => s.id === skillId) || null;
     }
 
     if (!selectedSkillObj) return;
@@ -450,11 +511,12 @@ function onSkillClicked(skillId, btnElement) {
     document.getElementById('enemy-team').classList.remove('targeting-mode');
     document.getElementById('my-team').classList.remove('targeting-mode');
 
-    if (type === 'enemy') {
-        updateInstruction("SELECT AN ENEMY");
+    if (type === 'enemy' || type === 'enemy_team') {
+        updateInstruction(type === 'enemy_team' ? "SELECT ANY ENEMY (hits the whole team)" : "SELECT AN ENEMY");
         document.getElementById('enemy-team').classList.add('targeting-mode');
-    } else if (type === 'ally') {
-        updateInstruction("SELECT AN ALLY");
+        if (type === 'enemy') markUntargetable(selectedSkillObj);
+    } else if (type === 'ally' || type === 'ally_team') {
+        updateInstruction(type === 'ally_team' ? "SELECT ANY ALLY (affects the whole team)" : "SELECT AN ALLY");
         document.getElementById('my-team').classList.add('targeting-mode');
     } else if (type === 'self') {
         updateInstruction("CLICK SELF");
@@ -462,15 +524,39 @@ function onSkillClicked(skillId, btnElement) {
     }
 }
 
+// Mirrors game_engine.is_targetable_by (the server decides; this is the UI cue):
+// an invulnerable enemy can't be picked unless the skill goes through invulnerability.
+function isUntargetable(target, skill) {
+    if (skill.ignores_invulnerable) return false;
+    const types = (target.status || []).map(s => s.type);
+    return types.includes('invulnerable') || (skill.classes || []).some(c => types.includes(`${c}_invulnerable`));
+}
+
+function enemyTeam() {
+    return currentGameState.players[myRole === 'p1' ? 'p2' : 'p1'].team;
+}
+
+function markUntargetable(skill) {
+    const cards = document.getElementById('enemy-team').children;
+    enemyTeam().forEach((target, i) => {
+        if (cards[i]) cards[i].classList.toggle('untargetable', target.health > 0 && isUntargetable(target, skill));
+    });
+}
+
 function onEnemyClicked(targetIndex) {
     if (!selectedSkillId || !selectedSkillObj) return;
-    if (selectedSkillObj.target_type && selectedSkillObj.target_type !== 'enemy') return;
+    const type = selectedSkillObj.target_type || 'enemy';
+    if (type !== 'enemy' && type !== 'enemy_team') return;
+    const target = enemyTeam()[targetIndex];
+    if (type === 'enemy' && target && isUntargetable(target, selectedSkillObj)) {
+        updateInstruction(`${target.name.toUpperCase()} IS INVULNERABLE -- PICK ANOTHER TARGET`);
+        return;   // keep the skill selected
+    }
 
     const enemyRole = myRole === 'p1' ? 'p2' : 'p1';
     socket.emit('queue-skill', {
-        roomId: myRoomId,
+        charId: selectedCharId,
         skillId: selectedSkillId,
-        myPlayerKey: myRole,
         targetPlayerKey: enemyRole,
         targetIndex: targetIndex
     });
@@ -480,12 +566,11 @@ function onEnemyClicked(targetIndex) {
 function onAllyClicked(targetIndex) {
     if (!selectedSkillId || !selectedSkillObj) return;
     const type = selectedSkillObj.target_type;
-    if (type !== 'ally' && type !== 'self') return;
+    if (type !== 'ally' && type !== 'ally_team' && type !== 'self') return;
 
     socket.emit('queue-skill', {
-        roomId: myRoomId,
+        charId: selectedCharId,
         skillId: selectedSkillId,
-        myPlayerKey: myRole,
         targetPlayerKey: myRole,
         targetIndex: targetIndex
     });
@@ -493,23 +578,29 @@ function onAllyClicked(targetIndex) {
 }
 
 function resetTargeting() {
+    selectedCharId = null;
     selectedSkillId = null;
     selectedSkillObj = null;
     document.querySelectorAll('.skill-btn').forEach(b => b.classList.remove('selected'));
     document.getElementById('enemy-team').classList.remove('targeting-mode');
     document.getElementById('my-team').classList.remove('targeting-mode');
+    document.querySelectorAll('.char-card.untargetable').forEach(c => c.classList.remove('untargetable'));
     updateInstruction("");
 }
 
+function surrender() {
+    if (confirm('Surrender this match? It counts as a loss.')) socket.emit('surrender', {});
+}
+
 function cancelMove(charId) {
-    socket.emit('cancel-skill', { roomId: myRoomId, myPlayerKey: myRole, charId: charId });
+    socket.emit('cancel-skill', { charId: charId });
 }
 
 // --- PAYMENT MODAL ---
 function openPaymentModal() {
     const moves = currentGameState.pending_moves || [];
     if(moves.length === 0) {
-        socket.emit('commit-turn', { roomId: myRoomId, paymentList: [] });
+        socket.emit('commit-turn', { paymentList: [] });
         return;
     }
     const modal = document.getElementById('payment-modal');
@@ -603,7 +694,7 @@ function removeRandomSelection(slotIndex) {
 
 function submitPayment() {
     const finalPayment = [...payment_auto, ...payment_random_selected];
-    socket.emit('commit-turn', { roomId: myRoomId, paymentList: finalPayment });
+    socket.emit('commit-turn', { paymentList: finalPayment });
     closeModal();
 }
 

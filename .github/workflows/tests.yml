@@ -1,0 +1,52 @@
+# CI (DEPLOY_PLAN Stage 4): every push and pull request runs the whole test command --
+# the same `python tests.py` used locally, incl. PostgreSQL and the production Docker image.
+# The run fails (red) on any failing test or regression against tools/tests_baseline.json.
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run that is still going.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # the production version (Dockerfile)
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install requirements + test tools
+        run: |
+          python -m pip install -r backend/requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: python tests.py --container
+        # Docker is preinstalled on the runner: tests.py starts the throwaway PostgreSQL
+        # container itself and builds + checks the production image.
+        run: python tests.py --container --save tests-report.md
+
+      - name: Report on the run's summary page
+        if: always()
+        run: |
+          if [ -f tests-report.md ]; then cat tests-report.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tests-report
+          path: tests-report.md
+          if-no-files-found: ignore

@@ -1,0 +1,13 @@
+users                  4 -> 4
+user_stats             4 -> 4
+matches                2 -> 2
+user_characters        12 -> 12
+characters             5 -> 5
+missions               0 -> 0
+user_mission_progress  0 -> 0
+alembic_version: None -> [('4d7e92ca43bc',)]
+users (ids, names, emails, password hashes) identical: True
+matches identical: True
+user_stats identical: True
+schema differences between the adopted DB and the models: none
+session_version per user: [(1, 0), (2, 0), (3, 0), (4, 0)]

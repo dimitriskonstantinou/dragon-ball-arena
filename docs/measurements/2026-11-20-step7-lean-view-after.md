@@ -1,0 +1,57 @@
+# Measurement - 2026-11-20 19:36
+git: 48a6f1f (uncommitted changes)
+
+## Tests
+| Suite | Result | PASS | FAIL | Time |
+|---|---|---|---|---|
+| engine | ok | 159 | 0 | 0.10s |
+| smoke | ok | 31 | 0 | 1.84s |
+
+## Coverage (backend, tests excluded)
+```
+Name             Stmts   Miss  Cover
+------------------------------------
+app.py             266     65    76%
+characters.py        1      0   100%
+game_engine.py     531     56    89%
+models.py           83      0   100%
+seed_db.py          25     25     0%
+------------------------------------
+TOTAL              906    146    84%
+```
+
+## Lint (pyflakes)
+2 issue(s)
+    backend\test_integration_smoke.py:67:47: f-string is missing placeholders
+    backend\test_integration_smoke.py:216:19: f-string is missing placeholders
+
+## Code size
+| File | Lines | Bytes |
+|---|---|---|
+| backend\app.py | 413 | 15457 |
+| backend\characters.py | 337 | 18850 |
+| backend\game_engine.py | 887 | 41070 |
+| backend\models.py | 154 | 6401 |
+| backend\seed_db.py | 50 | 1789 |
+| backend\test_game_engine.py | 1084 | 56336 |
+| backend\test_integration_smoke.py | 292 | 15859 |
+| frontend\app.js | 644 | 25258 |
+| frontend\index.html | 114 | 5331 |
+| frontend\style.css | 129 | 8040 |
+| **total** | **4104** | **194391** |
+
+Frontend first-load (html+css+js, excl. CDN socket.io): 37.7 KB
+
+## Assets (backend/photos)
+26 files, 2037 KB total
+extension != real format: 26
+skill icons > 256px (rendered at 32px): 21, 1840 KB
+
+## Roster / content integrity
+5 characters, 20 skills
+images referenced but missing: 0 
+images on disk but unreferenced: 0 
+descriptions with hardcoded cost text: 20
+update-state payload (sample 3v3): 11648 bytes
+update-state payload actually sent per player (view_for): 8414 bytes
+

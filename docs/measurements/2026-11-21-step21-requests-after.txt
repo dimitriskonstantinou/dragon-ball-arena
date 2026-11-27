@@ -1,0 +1,3 @@
+page ready in 0.06s; requests: 5 total, 0 third-party
+page ready in 0.07s; requests: 5 total, 0 third-party
+page ready in 0.07s; requests: 5 total, 0 third-party

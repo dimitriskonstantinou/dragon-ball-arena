@@ -6,7 +6,6 @@ a real Postgres instance instead -- SQLAlchemy makes that a connection
 string change, not a rewrite. See README for why SQLite specifically must
 not be used in production on most hosts (ephemeral disk).
 """
-import json
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
@@ -23,12 +22,22 @@ class User(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(20), unique=True, nullable=False, index=True)
+    # The name lower-cased: unique, so "Goku" and "goku" can't both exist (SEC-5),
+    # and login accepts any capitalization. Always set via User.key_for().
+    username_key = db.Column(db.String(20), unique=True, nullable=False, index=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=utcnow, nullable=False)
+    # Login cookies carry the version they were issued with; bumping it (logout)
+    # invalidates every existing cookie of this account on every device (SEC-4).
+    session_version = db.Column(db.Integer, nullable=False, default=0, server_default='0')
 
     stats = db.relationship('UserStats', backref='user', uselist=False, cascade='all, delete-orphan')
     unlocked_characters = db.relationship('UserCharacter', backref='user', cascade='all, delete-orphan')
+
+    @staticmethod
+    def key_for(username):
+        return username.lower()
 
     def to_dict(self):
         return {
@@ -78,32 +87,22 @@ class UserStats(db.Model):
 
 
 class Character(db.Model):
-    """The master roster. This replaces characters.py's CHARACTERS dict as
-    the source of truth once the DB is seeded (see seed_db.py) -- the game
-    engine itself doesn't care where a character dict came from."""
+    """Registry of character ids, for foreign keys (unlocks, missions) and
+    readable history. NOT the roster: gameplay reads characters only from the
+    content files (content_loader.catalog()). Kept in sync automatically by
+    app.sync_character_registry() at startup; rows are never deleted."""
     __tablename__ = 'characters'
 
-    id = db.Column(db.String(32), primary_key=True)  # e.g. "goku"
+    id = db.Column(db.String(32), primary_key=True)  # e.g. "goku_saiyan_saga"
     name = db.Column(db.String(64), nullable=False)
-    image = db.Column(db.String(128), nullable=False)  # filename under /photos, e.g. "Goku.png"
+    image = db.Column(db.String(128), nullable=False)  # path under /photos, e.g. "characters/Goku.webp"
     health = db.Column(db.Integer, nullable=False, default=100)
-    skills_json = db.Column(db.Text, nullable=False)  # JSON-encoded list of skill dicts
-    # Not used for gating yet (every account currently gets every character --
-    # see the TODO in app.py's register route). Kept so the mission-unlock
-    # system has a flag to switch on later without a schema change.
+    # LEGACY: once held every skill as JSON; now always '[]' so no stale copy
+    # can be read. Drop it with the first migration (DB-1).
+    skills_json = db.Column(db.Text, nullable=False)
+    # Not used for gating yet (every account has every character -- see
+    # app.unlocked_character_ids). Kept for the mission-unlock system.
     is_starter = db.Column(db.Boolean, default=False, nullable=False)
-
-    def skills(self):
-        return json.loads(self.skills_json)
-
-    def to_game_dict(self):
-        """Shape expected by game_engine.py / the frontend."""
-        return {
-            'id': self.id, 'name': self.name, 'image': self.image,
-            'health': self.health, 'maxHealth': self.health,
-            'defense': 0, 'status': [],
-            'skills': self.skills(),
-        }
 
 
 class UserCharacter(db.Model):
@@ -149,6 +148,8 @@ class Match(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     player1_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     player2_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    winner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)  # null = disconnect/no result
+    # Always set for matches played since Step 29 (no draws). NULL only in rows from before
+    # result saving was reliable -- kept nullable so those old rows stay valid.
+    winner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     started_at = db.Column(db.DateTime, nullable=False)
     ended_at = db.Column(db.DateTime, nullable=False)

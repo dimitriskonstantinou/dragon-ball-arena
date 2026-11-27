@@ -1,0 +1,6 @@
+# Test & measurement tools (not needed to run the game).
+# After installing: python -m playwright install chromium
+-r requirements.txt
+playwright==1.65.2
+coverage==7.13.1
+pyflakes==3.4.0

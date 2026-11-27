@@ -1,0 +1,95 @@
+{
+  "$schema": "../character.schema.json",
+  "id": "yamcha_saiyan_saga",
+  "name": "Yamcha (Saiyan Saga)",
+  "image": "characters/Yamcha.webp",
+  "health": 100,
+  "skills": [
+    {
+      "id": "kamehameha",
+      "name": "Kamehameha",
+      "description": "25 Dmg | 1 Eng",
+      "cost": {
+        "energy": 1
+      },
+      "target_type": "enemy",
+      "classes": [
+        "chakra"
+      ],
+      "image": "Yamcha_Kamehameha.webp",
+      "effects": [
+        {
+          "type": "damage",
+          "value": 25
+        }
+      ],
+      "cooldown": 1
+    },
+    {
+      "id": "puar",
+      "name": "Puar",
+      "description": "Self: 15 Shield (expires after 3 turns). Becomes Spirit Ball for 3 turns | 1 Rand",
+      "cost": {
+        "random": 1
+      },
+      "target_type": "self",
+      "image": "Yamcha_Puar.webp",
+      "effects": [
+        {
+          "type": "expiring_defense",
+          "value": 15,
+          "duration": 3
+        },
+        {
+          "type": "prime_skill",
+          "skill_id": "puar",
+          "mark": "spirit_ball_active",
+          "duration": 3,
+          "primed_cost": {
+            "energy": 1,
+            "spirit": 1
+          },
+          "primed_effects": [
+            {
+              "type": "damage_ignore_invuln",
+              "value": 40
+            }
+          ],
+          "primed_name": "Spirit Ball",
+          "primed_description": "40 Dmg (ignores invulnerability) | 1 Eng, 1 Spt",
+          "primed_image": "Yamcha_SpiritBall.webp",
+          "primed_cooldown": 1,
+          "primed_target_type": "enemy"
+        }
+      ],
+      "cooldown": 4,
+      "notes": "\"Points of damage\" shield -- NOT destructible defense: this expires after 3 turns even if never hit (destructible defense only ever shrinks by absorbing damage; this is a temporary ward on top of that concept). Also turns this same skill into Spirit Ball for the next 3 of Yamcha's turns. Pure time-window transform, NOT a one-shot combo payoff like Tri-Beam: no unprime_skill here, so it stays \"Spirit Ball\" (usable more than once, subject to Spirit Ball's own cooldown) until the 3-turn window itself runs out, reverting back to Puar automatically. (3-turn shield duration is a judgment call matching the transform window -- tell me if you want it different.)"
+    },
+    {
+      "id": "wolf_fang_fist",
+      "name": "Wolf Fang Fist",
+      "description": "Marks an enemy: if they attempt any skill on their next turn, it's countered and they take 20 Piercing Dmg. Hidden from the enemy | 1 Mar, 1 Rand",
+      "cost": {
+        "martial": 1,
+        "random": 1
+      },
+      "target_type": "enemy",
+      "image": "Yamcha_WolfFangFist.webp",
+      "effects": [
+        {
+          "type": "mark_for_counter",
+          "value": 20,
+          "duration": 1
+        }
+      ],
+      "cooldown": 3,
+      "notes": "Pure setup/trap, no direct effect of its own: marks one enemy. If THEY attempt any skill on their next turn, it's blocked entirely and they take 20 piercing damage instead (see the counter-check in queue_move). Invisible -- the target gets no warning badge that they've been marked."
+    },
+    {
+      "use": "afterimage_technique",
+      "name": "Fake Death",
+      "image": "Yamcha_FakeDeath.webp",
+      "notes": "Universal defensive skill (see Goku's afterimage_technique) -- same id/mechanic roster-wide, flavored here as Yamcha playing dead."
+    }
+  ]
+}

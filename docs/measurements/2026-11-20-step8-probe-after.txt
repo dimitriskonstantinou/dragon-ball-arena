@@ -1,0 +1,22 @@
+[not reproduced] free skills Payment doesn't match the cost of your queued skills!
+[not reproduced] queue_move affordability Not enough Ki for Kamehameha!
+[not reproduced] self-target skill applied to a different ally 
+[not reproduced] out-of-range targetIndex Invalid target!
+[not reproduced] dead character queue Goku (Saiyan Saga) has been defeated and cannot act!
+[not reproduced] dead enemy target Raditz (Saiyan Saga) has already been defeated!
+[not reproduced] set_skill_cost_on_stack description_template crash 
+[not reproduced] scale_skill_by_stack description_template never applied (desc now: '40 Piercing Dmg (ignores dmg reduction) | 1 Rage, ')
+[not reproduced] Kaioken description still claims '| 1 Rand' after cost became 2 random 
+[not reproduced] 'invisible' mark is present in the state payload sent to the victim 
+[not reproduced] counter-mark is raised as an error (damage not broadcast to anyone until later) 
+[not reproduced] player socket ids in broadcast state 
+[MEASURE] update-state payload for 3v3: 8527 bytes
+[CONFIRMED] reflect ignores attacker's invulnerability/defense (by inspection: apply_damage line ~176)
+[CONFIRMED] GAMES/ENDED_ROOMS never pruned 
+[CONFIRMED] same account can be matched against itself (two tabs) 
+[not reproduced] find-match with non-list payload crashes the handler (no validation) [{'name': 'error-msg', 'args': ['You must select exactly 3 characters!'], 'namespace': '/'}]
+[CONFIRMED] SECRET_KEY falls back to hardcoded dev value 
+[CONFIRMED] CORS '*' on Socket.IO with cookie auth (cross-site WS hijack risk) 
+[not reproduced] resolve_turn not atomic: a crash mid-turn leaves the game half-resolved (raditz hp 100 -> 100, dice 12 -> 12)
+[not reproduced] cancel-skill lets the opponent cancel your queued move 
+[not reproduced] find-match accepts the same character 3 times [['Pick 3 different characters!']]

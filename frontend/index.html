@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Dragon Ball Arena</title>
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- Self-hosted (no third-party script): exact npm socket.io-client 4.5.4 build, see vendor/ -->
+    <script src="vendor/socket.io-4.5.4.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -37,6 +38,18 @@
     </div>
 
     <div id="lobby-screen" style="display:none;">
+        <div class="how-to-play">
+            <b>How to play:</b> each turn you roll Ki dice, then spend them to queue up to one
+            skill per character. Once you hit EXECUTE ATTACKS, both players' queued moves resolve.
+            Hover any Ki cost or die for what it is; hover a greyed-out skill to see why it's unavailable.
+        </div>
+        <div class="ki-legend">
+            <span><span class="cost-box energy"></span> Energy</span>
+            <span><span class="cost-box martial"></span> Martial</span>
+            <span><span class="cost-box spirit"></span> Spirit</span>
+            <span><span class="cost-box rage"></span> Rage</span>
+            <span><span class="cost-box random"></span> Any type</span>
+        </div>
         <h1>CHOOSE YOUR TEAM (3)</h1>
         <div id="char-grid" class="char-grid"></div>
         <button id="find-match-btn" class="big-btn" onclick="findMatch()" disabled>FIND MATCH</button>
@@ -57,6 +70,7 @@
         </div>
 
         <h3 id="status" style="margin:5px 0;"></h3>
+        <div id="turn-timer"></div>
         <div id="instruction"></div>
 
         <div id="enemy-player-status" style="min-height: 20px;"></div>
@@ -74,6 +88,7 @@
 
         <div id="my-dice" class="dice-pool"></div>
         <button id="end-turn" class="end-btn" onclick="openPaymentModal()">EXECUTE ATTACKS</button>
+        <button id="surrender-btn" class="surrender-btn" onclick="surrender()">Surrender</button>
         <div id="log"></div>
     </div>
 

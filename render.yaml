@@ -1,0 +1,41 @@
+# The free TEST site on Render (DEPLOY_PLAN Stage 6). Render reads this file once you connect it:
+# Dashboard -> New -> Blueprint -> this repository, branch `dev`. Nothing here is secret.
+# Free plan limits: sleeps after 15 idle minutes, can restart any time (ends live matches), 750 hours a
+# month shared with every other free app of the account, the database is DELETED after 30 + 14 days.
+# The public game (PROD) gets its own paid service and database later, deployed from `main`.
+databases:
+  - name: dragon-ball-arena-dev-db
+    plan: free
+    region: frankfurt            # can't be changed later; must be the same as the server's
+    postgresMajorVersion: "16"   # the version every test runs on
+    databaseName: arena
+    user: arena
+    ipAllowList: []              # only our own server can connect
+
+services:
+  - type: web
+    name: dragon-ball-arena-dev
+    runtime: docker              # ./Dockerfile (gunicorn + gevent, one worker; PORT comes from Render)
+    plan: free
+    region: frankfurt
+    branch: dev
+    autoDeployTrigger: checksPass   # a merge to dev goes online only after GitHub's tests passed
+    healthCheckPath: /healthz
+    envVars:
+      - key: ENV
+        value: staging
+      - key: LOG_FORMAT
+        value: json
+      # The scheme (https) comes from Render's proxy...
+      - key: TRUSTED_PROXIES
+        value: "1"
+      # ...and the visitor's address from Cloudflare, which is in front of Render and refuses faked ones (SEC-9,
+      # measured live: X-Forwarded-For has it at different positions for pages and websockets).
+      - key: CLIENT_IP_HEADER
+        value: CF-Connecting-IP
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dragon-ball-arena-dev-db
+          property: connectionString

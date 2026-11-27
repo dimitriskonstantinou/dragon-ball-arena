@@ -1,0 +1,4 @@
+after 220 finished matches: GAMES=0 ENDED_ROOMS=0 socket.io match rooms=0 SID_ROOM_MAP=0
+memory growth over 200 matches: 157 KB total, 0.8 KB per match
+after 1020 finished matches: GAMES=0 ENDED_ROOMS=0 socket.io match rooms=0 SID_ROOM_MAP=0
+memory growth over 1000 matches: 161 KB total, 0.2 KB per match
