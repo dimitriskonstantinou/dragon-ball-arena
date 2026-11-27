@@ -317,7 +317,7 @@ class Character(Strict):
     schema_: str = Field(default=None, alias='$schema')
     id: str = Field(pattern=r'^[a-z0-9_]+$', max_length=32, description="Saga-versioned, e.g. goku_saiyan_saga.")
     name: str = Field(min_length=1, max_length=64)
-    image: str = Field(min_length=1, description="Path under backend/photos/, e.g. characters/Goku.png.")
+    image: str = Field(min_length=1, description="Path under backend/photos/, e.g. characters/Goku.webp (make it web-ready with tools/optimize_images.py).")
     health: int = Field(ge=1, le=999)
     notes: str = None
     skills: list[SkillEntry] = Field(min_length=1, max_length=8)

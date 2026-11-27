@@ -2,7 +2,7 @@
   "$schema": "../character.schema.json",
   "id": "piccolo_saiyan_saga",
   "name": "Piccolo (Saiyan Saga)",
-  "image": "characters/Piccolo_(Saiyan-Saga).png",
+  "image": "characters/Piccolo_(Saiyan-Saga).webp",
   "health": 100,
   "skills": [
     {
@@ -17,7 +17,7 @@
       "classes": [
         "chakra"
       ],
-      "image": "Piccolo_(Saiyan-Saga)_SpecialBeamCannon.png",
+      "image": "Piccolo_(Saiyan-Saga)_SpecialBeamCannon.webp",
       "effects": [
         {
           "type": "delayed_damage",
@@ -36,7 +36,7 @@
         "spirit": 1
       },
       "target_type": "ally",
-      "image": "Piccolo_(Saiyan-Saga)_Sacrifice.png",
+      "image": "Piccolo_(Saiyan-Saga)_Sacrifice.webp",
       "effects": [
         {
           "type": "protect",
@@ -55,7 +55,7 @@
         "random": 1
       },
       "target_type": "enemy_team",
-      "image": "Piccolo_(Saiyan-Saga)_ExplosiveBreathCannon.png",
+      "image": "Piccolo_(Saiyan-Saga)_ExplosiveBreathCannon.webp",
       "effects": [
         {
           "type": "damage",
@@ -67,7 +67,7 @@
     {
       "use": "afterimage_technique",
       "name": "Block",
-      "image": "Piccolo_(Saiyan-Saga)_Block.png",
+      "image": "Piccolo_(Saiyan-Saga)_Block.webp",
       "notes": "Universal defensive skill (see Goku's afterimage_technique) -- same id/mechanic roster-wide, flavored here as a guard stance."
     }
   ]

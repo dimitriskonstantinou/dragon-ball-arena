@@ -39,10 +39,10 @@ SHARED = {'abilities': {'afterimage_technique': {
 def valid_char(cid='test_char'):
     """Smallest valid character, using images that exist on disk."""
     return {
-        'id': cid, 'name': 'Test', 'image': 'characters/Goku_(Saiyan-Saga).png', 'health': 100,
+        'id': cid, 'name': 'Test', 'image': 'characters/Goku_(Saiyan-Saga).webp', 'health': 100,
         'skills': [
             {'id': 'hit', 'name': 'Hit', 'description': '10 Dmg', 'cost': {'energy': 1}, 'target_type': 'enemy',
-             'image': 'Goku_(Saiyan-Saga)_Kamehameha.png', 'effects': [{'type': 'damage', 'value': 10}],
+             'image': 'Goku_(Saiyan-Saga)_Kamehameha.webp', 'effects': [{'type': 'damage', 'value': 10}],
              'cooldown': 0},
             {'use': 'afterimage_technique', 'name': 'Block'},
         ],
@@ -248,6 +248,56 @@ def test_all_problems_reported_together():
                         dict(with_skill(cooldown=-1), id='b_two')])
     check("problems from several files are reported in one error", len(problems) >= 2, problems)
     check("each problem names its file", all(p.startswith('content/') for p in problems), problems)
+
+
+def test_image_files_are_web_ready():
+    """AST-1: images were JPEG/WebP files named .png, skill icons up to 1919 px for a 32 px slot."""
+    real = cl.load_catalog()
+    images = [c['image'] for c in real.values()] + ['skills/' + s['image'] for c in real.values()
+                                                       for s in c['skills'] if s.get('image')]
+    check("every image of the real roster is a WebP file named .webp",
+          images and all(i.endswith('.webp') and open(os.path.join(cl.PHOTOS_DIR, i), 'rb').read(12)[8:12] == b'WEBP'
+                         for i in images), [i for i in images if not i.endswith('.webp')][:3])
+    sizes = {i: os.path.getsize(os.path.join(cl.PHOTOS_DIR, i)) for i in images}
+    check(f"...and all {len(images)} together are small ({sum(sizes.values()) // 1024} KB; there were 2,037 KB)",
+          sum(sizes.values()) < 400 * 1024, sorted(sizes.items(), key=lambda x: -x[1])[:3])
+
+    webp = b'RIFF\x00\x00\x00\x00WEBPVP8 ' + b'\x00' * 100
+    jpeg = b'\xff\xd8\xff\xe0' + b'\x00' * 100
+    with tempfile.TemporaryDirectory() as photos:
+        for folder in ('characters', 'skills'):
+            os.makedirs(os.path.join(photos, folder))
+        files = {'characters/ok.webp': webp, 'skills/ok.webp': webp, 'skills/fake.png': jpeg, 'skills/huge.webp':
+                 webp + b'\x00' * cl.IMAGE_MAX_BYTES['icon'], 'characters/huge.webp': webp + b'\x00' * cl.IMAGE_MAX_BYTES['portrait'],
+                 'skills/text.webp': b'not an image at all'}
+        for name, data in files.items():
+            with open(os.path.join(photos, name), 'wb') as fh:
+                fh.write(data)
+
+        def problems(char_image, skill_image):
+            c = valid_char()
+            c['image'], c['skills'][0]['image'] = char_image, skill_image
+            try:
+                with tempfile.TemporaryDirectory() as tmp:
+                    os.makedirs(os.path.join(tmp, 'characters'))
+                    with open(os.path.join(tmp, 'shared_abilities.json'), 'w', encoding='utf-8') as fh:
+                        json.dump(SHARED, fh)
+                    with open(os.path.join(tmp, 'characters', 'test_char.json'), 'w', encoding='utf-8') as fh:
+                        json.dump(c, fh)
+                    cl.load_catalog(content_dir=tmp, photos_dir=photos)
+                return []
+            except cl.ContentError as e:
+                return e.problems
+        check("a web-ready portrait and icon are accepted", problems('characters/ok.webp', 'ok.webp') == [],
+              problems('characters/ok.webp', 'ok.webp'))
+        found = problems('characters/ok.webp', 'fake.png')
+        check("an image whose name lies about its type is refused, naming the tool that fixes it",
+              any('is a JPEG file named .png' in p and 'optimize_images.py' in p for p in found), found)
+        found = problems('characters/huge.webp', 'huge.webp')
+        check("...and so is one above the size limit, for icons and portraits",
+              sum('too large' in p and 'optimize_images.py' in p for p in found) == 2, found)
+        found = problems('characters/ok.webp', 'text.webp')
+        check("...and a file that isn't an image", any('is not an image' in p for p in found), found)
 
 
 TESTS = [v for k, v in list(globals().items()) if k.startswith('test_')]

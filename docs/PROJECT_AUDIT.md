@@ -197,7 +197,7 @@ Real server, connect slowed by 80 ms, logging out while coming back: old code 10
 new code 0 in 150 returns (60 dying reconnects dropped). Without the slowdown neither version hit it in 150 returns: the
 window is about a millisecond.
 
-**BE-14 — LOW (MEDIUM at launch) — Registration holds a database connection while hashing the password (verified, Step 40)** — ✅ FIXED in Step 44 (the cause was bigger)
+**BE-14 — HIGH (as measured in Step 44) — Registration holds a database connection while hashing the password (verified, Step 40)** — ✅ FIXED in Step 44 (the cause was bigger)
 `register` first checks for a taken name (which takes a connection from the pool: 5 + 10), then hashes the password
 (slow on purpose, ~1 s on 0.1 CPU) with the connection still checked out. 32 registrations at once on Render's free size:
 9-11 of 100 answered 500 after 30 s (`QueuePool limit ... reached`). More CPU makes it far less likely (Step 37: 4,000 on
@@ -250,7 +250,8 @@ Signed client-side cookie with only `user_id`; logout just clears that browser. 
 Usernames are case-sensitive ("Goku" and "goku" can coexist, which allows impersonation); email format isn't checked; a concurrent duplicate register would hit the unique index and return a 500.
 **Fix:** case-insensitive uniqueness, simple email check, catch `IntegrityError`.
 
-**SEC-6 — LOW — Account enumeration (by reading).** Register says "username already taken"/"email already registered"; login only hashes when the user exists (timing).
+**SEC-6 — LOW — Account enumeration (by reading; timing measured live 2026-11-27).** A wrong password takes ~0.9 s, an unknown name
+~0.2 s (only known accounts are hashed), which also reveals whether an account exists. Register says "username already taken"/"email already registered"; login only hashes when the user exists (timing).
 
 **SEC-7 — LOW (becomes HIGH with user text) — Frontend builds HTML from strings (measured)**
 12 `innerHTML` uses, inline `onclick="...'${id}'..."`. Today only authored content flows through it; the first chat, username display or custom name makes it XSS. Fix in the frontend rewrite (DOM APIs / `textContent`).
@@ -373,7 +374,9 @@ server and end every match); raised -> 1,200 open, `/healthz` 200. Fix: `worker_
 
 ### 4.8 Assets
 
-**AST-1 — MEDIUM — All 26 images have the wrong extension (JPEG/WEBP named `.png`); 21 skill icons are >256 px (up to 1919×1079), 1,840 KB, rendered at 32 px (measured).** Each match downloads ~1–1.5 MB of icons. Fix: normalize + resize (≈100–150 KB total).
+**AST-1 — MEDIUM — All 26 images have the wrong extension (JPEG/WEBP named `.png`); 21 skill icons are >256 px (up to 1919×1079), 1,840 KB, rendered at 32 px (measured).** Each match downloads ~1–1.5 MB of icons. Fix: normalize + resize (≈100–150 KB total). — ✅ FIXED in Step 45: `tools/optimize_images.py` (Pillow) made all 26 real WebP at display size
+(portraits <= 480 px, icons <= 96 px): 2,037 KB -> 130 KB; `content_loader.check_image` refuses a wrong type or an oversized file
+(80 KB / 16 KB) with a hint to the tool; image URLs carry `?v=<content hash>` and are cached for a year (immutable).
 
 ### 4.9 Deployment
 

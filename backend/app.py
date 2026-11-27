@@ -6,6 +6,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 import copy
+import hashlib
 import logging
 import os
 import re
@@ -291,6 +292,26 @@ def unlocked_character_ids(user):
 
 
 PHOTOS_URL = '/photos/'   # site-relative: the same domain as the page, whatever it is
+PHOTOS_DIR = os.path.join(BASE_DIR, 'photos')
+PHOTO_VERSIONS = {}       # photos-relative path -> version (from the file's content); art only changes with a deploy
+LONG_CACHE = 'public, max-age=31536000, immutable'
+
+
+def photo_version(relative):
+    """10 hex characters of the file's sha256: a changed image gets a new URL, so the old one may be kept for a year."""
+    version = PHOTO_VERSIONS.get(relative)
+    if version is None:
+        try:
+            with open(os.path.join(PHOTOS_DIR, relative), 'rb') as fh:
+                version = hashlib.sha256(fh.read()).hexdigest()[:10]
+        except OSError:
+            version = ''
+        PHOTO_VERSIONS[relative] = version
+    return version
+
+
+def photo_url(relative):
+    return f"{PHOTOS_URL}{relative}?v={photo_version(relative)}"
 
 
 def characters_for_user(user):
@@ -305,16 +326,16 @@ def characters_for_user(user):
         # the same URL as regular skill images, or the browser 404s on them.
         for effect in effects:
             if effect.get('primed_image'):
-                effect['primed_image'] = PHOTOS_URL + 'skills/' + effect['primed_image']
+                effect['primed_image'] = photo_url('skills/' + effect['primed_image'])
             skill_urls(effect.get('primed_effects', []))
 
     for cid in unlocked_character_ids(user):
         char_dict = copy.deepcopy(CATALOG[cid])
         char_dict['defense'] = 0
-        char_dict['image'] = PHOTOS_URL + char_dict['image']
+        char_dict['image'] = photo_url(char_dict['image'])
         for skill in char_dict['skills']:
             if skill.get('image'):
-                skill['image'] = PHOTOS_URL + 'skills/' + skill['image']
+                skill['image'] = photo_url('skills/' + skill['image'])
             skill_urls(skill['effects'])
         result[cid] = char_dict
     return result
@@ -545,7 +566,11 @@ def healthz():
 
 @app.route('/photos/<path:filename>')
 def serve_image(filename):
-    return send_from_directory('photos', filename)
+    response = send_from_directory('photos', filename)
+    # Kept for a year only when the URL names the current version; anything else may be stale (or made up).
+    if request.args.get('v') and request.args.get('v') == photo_version(filename.replace('\\', '/')):
+        response.headers['Cache-Control'] = LONG_CACHE
+    return response
 
 @app.route('/')
 def serve_frontend_index():
