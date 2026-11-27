@@ -95,7 +95,7 @@ class Character(db.Model):
 
     id = db.Column(db.String(32), primary_key=True)  # e.g. "goku_saiyan_saga"
     name = db.Column(db.String(64), nullable=False)
-    image = db.Column(db.String(128), nullable=False)  # path under /photos, e.g. "characters/Goku.png"
+    image = db.Column(db.String(128), nullable=False)  # path under /photos, e.g. "characters/Goku.webp"
     health = db.Column(db.Integer, nullable=False, default=100)
     # LEGACY: once held every skill as JSON; now always '[]' so no stale copy
     # can be read. Drop it with the first migration (DB-1).

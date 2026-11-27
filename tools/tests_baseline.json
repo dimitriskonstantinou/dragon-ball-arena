@@ -1,13 +1,13 @@
 {
-  "updated": "2026-11-27 19:59",
-  "git": "66d8a5c",
+  "updated": "2026-11-27 20:51",
+  "git": "6e535e4",
   "suites": {
     "engine": {
       "pass": 229,
       "skipped": 0
     },
     "content": {
-      "pass": 53,
+      "pass": 59,
       "skipped": 0
     },
     "config": {
@@ -23,7 +23,7 @@
       "skipped": 0
     },
     "smoke": {
-      "pass": 220,
+      "pass": 226,
       "skipped": 0
     },
     "browser": {
@@ -39,7 +39,7 @@
       "skipped": 0
     },
     "smoke_postgres": {
-      "pass": 220,
+      "pass": 226,
       "skipped": 0
     },
     "container": {
@@ -50,8 +50,8 @@
   "probe_confirmed": [
     "reflect ignores attacker's invulnerability/defense"
   ],
-  "payload_bytes": 8606,
-  "turn_ms": 0.272,
+  "payload_bytes": 8636,
+  "turn_ms": 0.314,
   "coverage": 92.0,
   "lint_issues": 3
 }

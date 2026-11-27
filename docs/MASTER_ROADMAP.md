@@ -181,11 +181,13 @@ one pull request each, in this order (measurements: `docs/measurements/2026-11-2
   **Still to prove live:** a second network is not affected (automated tests only so far).
 - **Step 43 -- BE-16: logs.** ✅ Done and confirmed live (66d8a5c: no access/health lines, 6-character ids, `ip_header` shown,
   no ERROR; the two `Rejected` warnings only in the automated tests).
-- **Step 44 -- BE-14: sign-up and login bursts.** ✅ Built: connection released before hashing, hashing beside the gevent loop.
-  Render-size simulation: 0 of 200 failed (before 11), matches stay responsive (worst move 1.2 s instead of 13 s, 0 dropped
-  instead of 16). **Still to do, live:** sign-up and login work, reload check.
-- **Step 45 -- AST-1 + caching:** real file types, icons at display size, long-lived caching of images with versioned addresses.
-  **Done when:** `photos/` well below today's 2,037 KB and a second visit asks the server for no image.
+- **Step 44 -- BE-14: sign-up and login bursts.** ✅ Done and confirmed live (6e535e4: sign-up, login, reload 10/10, drop
+  10/10; the burst itself only in the simulation: 0 of 200 failed, worst move 1.2 s instead of 13 s, 0 dropped instead of 16).
+- **Step 45 -- AST-1 + caching:** ✅ Built: 2,037 KB -> 130 KB (WebP at display size), versioned image URLs cached for a year.
+  **Still to do, live:** a second visit asks the server for no image (before: 5 requests on the lobby, all 304).
+
+**This plan (Steps 41-45) is then complete.** Next directions, the user's choice: the frontend phases (5-7: React interface,
+battle events, the skill timeline, lobby) or launch preparation (DEPLOY_PLAN Stages 7-9: domain, alerts, backups, privacy).
 
 **CI-1 (found 2026-11-25, not scheduled):** a pull request merged before its own test run starts makes that late run cancel the
 `dev` run (same concurrency group), so Render doesn't deploy. Fix: pull requests get their own group, runs on `dev`/`main` are

@@ -22,6 +22,44 @@ import content_schema as cs
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PHOTOS_DIR = os.path.join(BACKEND_DIR, 'photos')
+
+# Web-ready art (AST-1; tools/optimize_images.py makes it so). Sizes: the game shows portraits at most 220 px wide and
+# skill icons at 32 px; the boxes leave room for high-resolution screens.
+IMAGE_BOX = {'portrait': (480, 480), 'icon': (96, 96)}
+WEBP_QUALITY = 82
+IMAGE_MAX_BYTES = {'portrait': 80 * 1024, 'icon': 16 * 1024}
+FIX_IMAGES = "run: python tools/optimize_images.py"
+
+
+def image_type(path):
+    """'WEBP' / 'PNG' / 'JPEG' from the file's first bytes, or None."""
+    with open(path, 'rb') as fh:
+        head = fh.read(12)
+    if head[:4] == b'RIFF' and head[8:12] == b'WEBP':
+        return 'WEBP'
+    if head[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'PNG'
+    if head[:3] == b'\xff\xd8\xff':
+        return 'JPEG'
+    return None
+
+
+def check_image(label, relative, kind, photos_dir, problems):
+    """An image a content file names: it exists, is what its name says, and is web-sized."""
+    path = os.path.join(photos_dir, relative)
+    if not os.path.isfile(path):
+        problems.append(f"{label} not found: photos/{relative}")
+        return
+    real = image_type(path)
+    named = {'.webp': 'WEBP', '.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG'}.get(os.path.splitext(relative)[1].lower())
+    if real is None:
+        problems.append(f"{label} is not an image (WebP, PNG or JPEG): photos/{relative}")
+    elif real != named:
+        problems.append(f"{label} is a {real} file named {os.path.splitext(relative)[1]}: photos/{relative} ({FIX_IMAGES})")
+    size = os.path.getsize(path)
+    if size > IMAGE_MAX_BYTES[kind]:
+        problems.append(f"{label} is too large for a {kind} ({size // 1024} KB, at most {IMAGE_MAX_BYTES[kind] // 1024} KB): "
+                        f"photos/{relative} ({FIX_IMAGES})")
 UNIVERSAL_SKILL = 'afterimage_technique'
 AUTHOR_ONLY_FIELDS = {'notes', 'schema_'}
 
@@ -94,8 +132,8 @@ def _check_kit(where, skills, photos_dir, problems):
 
     for s in skills:
         sw = f"{where}: skill '{s['id']}'"
-        if s.get('image') and not os.path.isfile(os.path.join(photos_dir, 'skills', s['image'])):
-            problems.append(f"{sw}: image not found: photos/skills/{s['image']}")
+        if s.get('image'):
+            check_image(f"{sw}: image", 'skills/' + s['image'], 'icon', photos_dir, problems)
         if s.get('locked') and s['id'] not in unlocked:
             problems.append(f"{sw}: is locked but nothing in the kit unlocks it")
         for e in _walk_effects(s['effects']):
@@ -113,8 +151,8 @@ def _check_kit(where, skills, photos_dir, problems):
                     e['description_template'].format(value=0)
                 except (KeyError, IndexError, ValueError) as err:
                     problems.append(f"{ew}: description_template must only use {{value}} ({err!r})")
-            if e.get('primed_image') and not os.path.isfile(os.path.join(photos_dir, 'skills', e['primed_image'])):
-                problems.append(f"{ew}: primed_image not found: photos/skills/{e['primed_image']}")
+            if e.get('primed_image'):
+                check_image(f"{ew}: primed_image", 'skills/' + e['primed_image'], 'icon', photos_dir, problems)
 
 
 def load_catalog(content_dir=cs.CONTENT_DIR, photos_dir=PHOTOS_DIR):
@@ -151,8 +189,7 @@ def load_catalog(content_dir=cs.CONTENT_DIR, photos_dir=PHOTOS_DIR):
             problems.append(f"{where}: file name must be '{char.id}.json' (the character id)")
         if char.id in catalog:
             problems.append(f"{where}: duplicate character id '{char.id}'")
-        if not os.path.isfile(os.path.join(photos_dir, char.image)):
-            problems.append(f"{where}: image not found: photos/{char.image}")
+        check_image(f"{where}: image", char.image, 'portrait', photos_dir, problems)
 
         skills, universal = [], 0
         for i, entry in enumerate(char.skills):

@@ -2,7 +2,7 @@
   "$schema": "../character.schema.json",
   "id": "goku_saiyan_saga",
   "name": "Goku (Saiyan Saga)",
-  "image": "characters/Goku_(Saiyan-Saga).png",
+  "image": "characters/Goku_(Saiyan-Saga).webp",
   "health": 100,
   "notes": "Saga-versioned roster: this is early Goku (Saiyan Saga) specifically -- later sagas (Namek, Cell, etc.) get their own separate entries (e.g. \"goku_namek_saga\") rather than replacing this one, so old and new versions can coexist in the roster.",
   "skills": [
@@ -15,7 +15,7 @@
         "random": 1
       },
       "target_type": "enemy",
-      "image": "Goku_(Saiyan-Saga)_Kamehameha.png",
+      "image": "Goku_(Saiyan-Saga)_Kamehameha.webp",
       "effects": [
         {
           "type": "damage",
@@ -32,7 +32,7 @@
         "random": 1
       },
       "target_type": "self",
-      "image": "Goku_(Saiyan-Saga)_Kaioken.png",
+      "image": "Goku_(Saiyan-Saga)_Kaioken.webp",
       "effects": [
         {
           "type": "add_stack",
@@ -97,7 +97,7 @@
       "classes": [
         "physical"
       ],
-      "image": "Goku_(Saiyan-Saga)_KaiokenAttack.png",
+      "image": "Goku_(Saiyan-Saga)_KaiokenAttack.webp",
       "locked": true,
       "locked_reason": "Kaioken Attack requires Kaioken to be used first!",
       "effects": [
@@ -111,7 +111,7 @@
     {
       "use": "afterimage_technique",
       "name": "Afterimage Technique",
-      "image": "Goku_(Saiyan-Saga)_Afterimage.png",
+      "image": "Goku_(Saiyan-Saga)_Afterimage.webp",
       "notes": "Universal defensive skill -- every character gets this exact skill eventually (id/effect stay identical roster-wide, like Naruto Arena's Substitution). DBZ-flavored as the afterimage/Zanzoken evasion technique."
     }
   ]

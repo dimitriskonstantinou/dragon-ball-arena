@@ -2,7 +2,7 @@
   "$schema": "../character.schema.json",
   "id": "raditz_saiyan_saga",
   "name": "Raditz (Saiyan Saga)",
-  "image": "characters/Raditz.png",
+  "image": "characters/Raditz.webp",
   "health": 100,
   "skills": [
     {
@@ -14,7 +14,7 @@
         "random": 1
       },
       "target_type": "enemy",
-      "image": "Raditz_DoubleSunday.png",
+      "image": "Raditz_DoubleSunday.webp",
       "effects": [
         {
           "type": "random_multi_damage",
@@ -33,7 +33,7 @@
         "rage": 2
       },
       "target_type": "enemy",
-      "image": "Raditz_ShiningFriday.png",
+      "image": "Raditz_ShiningFriday.webp",
       "effects": [
         {
           "type": "remove_defense"
@@ -55,7 +55,7 @@
         "random": 1
       },
       "target_type": "enemy",
-      "image": "Raditz_KneeAttack.png",
+      "image": "Raditz_KneeAttack.webp",
       "effects": [
         {
           "type": "damage",
@@ -71,7 +71,7 @@
     {
       "use": "afterimage_technique",
       "name": "Block",
-      "image": "Raditz_Block.png",
+      "image": "Raditz_Block.webp",
       "notes": "Universal defensive skill (see Goku's afterimage_technique) -- same id/mechanic roster-wide, flavored here to match Piccolo's \"Block\"."
     }
   ]

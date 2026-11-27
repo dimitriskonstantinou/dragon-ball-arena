@@ -2,7 +2,7 @@
   "$schema": "../character.schema.json",
   "id": "tien_saiyan_saga",
   "name": "Tien (Saiyan Saga)",
-  "image": "characters/Tien_(Saiyan-Saga).png",
+  "image": "characters/Tien_(Saiyan-Saga).webp",
   "health": 100,
   "skills": [
     {
@@ -16,7 +16,7 @@
       "classes": [
         "physical"
       ],
-      "image": "Tien_(Saiyan-Saga)_ArmAttack.png",
+      "image": "Tien_(Saiyan-Saga)_ArmAttack.webp",
       "effects": [
         {
           "type": "piercing_damage",
@@ -34,7 +34,7 @@
         "random": 1
       },
       "target_type": "self",
-      "image": "Tien_(Saiyan-Saga)_BestFriend.png",
+      "image": "Tien_(Saiyan-Saga)_BestFriend.webp",
       "effects": [
         {
           "type": "prime_skill",
@@ -82,7 +82,7 @@
       "classes": [
         "chakra"
       ],
-      "image": "Tien_(Saiyan-Saga)_TriBeam.png",
+      "image": "Tien_(Saiyan-Saga)_TriBeam.webp",
       "effects": [
         {
           "type": "piercing_damage",
@@ -99,7 +99,7 @@
     {
       "use": "afterimage_technique",
       "name": "Block",
-      "image": "Tien_(Saiyan-Saga)_Block.png",
+      "image": "Tien_(Saiyan-Saga)_Block.webp",
       "notes": "Universal defensive skill (see Goku's afterimage_technique) -- same id/mechanic roster-wide, flavored here to match Piccolo's/Raditz's \"Block\"."
     }
   ]

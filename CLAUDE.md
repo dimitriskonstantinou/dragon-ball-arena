@@ -44,7 +44,7 @@ backend/
   requirements-server.txt   production web server (gunicorn + gevent; Docker image only -- gunicorn doesn't run on Windows)
   gunicorn.conf.py          gunicorn settings (gevent, 1 worker, logging) -- top-level names ARE gunicorn settings
   logging_setup.py          one log format (text/json, UTC) for app + gunicorn + libraries; safe_database_url, short
-  photos/characters|skills/ Art (user-supplied; currently JPEG/WEBP named .png)
+  photos/characters|skills/ Art (user-supplied), WebP at display size -- run tools/optimize_images.py after adding art
   game.db                   Local SQLite (gitignored; holds real local accounts)
 frontend/  index.html · app.js (single file) · style.css · vendor/ (third-party libraries, served by us)
 tests.py   ONE command that checks everything + compares with tools/tests_baseline.json (run before/after every change)
@@ -54,6 +54,7 @@ render.yaml   the free DEV site on Render (Blueprint: server + database; dev bra
 tools/     measure.py (detailed metrics snapshot) · probe_exploits.py (reproduces known bugs) ·
            tests_baseline.json (accepted numbers, committed) · test_tests_runner.py (unit tests of tests.py's gates) ·
            check_container.py (builds + proves the production image; `tests.py --container`) ·
+           optimize_images.py (makes new art web-ready: WebP, display size; needs Pillow) ·
            run_loadtest.py + loadtest.py (load test: bots vs the production image, 1 CPU / 1 GB; Docker)
 docs/      plans, audit, roadmap, step log, measurements/
 ```
@@ -116,7 +117,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-43 are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-44 are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -371,11 +372,13 @@ concurrent players per server.** RAM ~89 MB + 0.11 MB per connection, flat over 
 touch the per-turn path (payload, broadcasts, logging, the server stack) and compare with
 `docs/measurements/2026-11-23-step37-loadtest-*.md`. Check "Connected", "Generator CPU" and the ERROR lines before
 trusting a run: a limit in the server's settings or in the bots looks just like a full server.
-Payload bytes must not grow without reason; skill icons must be sized for display (AST-1).
+Payload bytes must not grow without reason (Step 45 accepted +30 bytes for image versions); art is sized for display (AST-1).
 
 ### Assets
 User supplies all art (don't auto-source anime stills). Portraits → `photos/characters/`, icons → `photos/skills/`.
-Planned: real extensions + resize via a tool (AST-1).
+After adding art: `python tools/optimize_images.py` (WebP, portraits <= 480 px, icons <= 96 px; rewrites the references). The
+server refuses an image whose type doesn't match its name or that is too large (`content_loader.check_image`). Image URLs
+carry `?v=<content hash>` (`photo_url`) and may be cached for a year: never serve changed art under an old version.
 
 ### Deployment
 DEV site: https://dragon-ball-arena-dev.onrender.com, Render's free plan via `render.yaml` (Step 40; deploys from `dev`

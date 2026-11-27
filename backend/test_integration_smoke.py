@@ -140,6 +140,23 @@ check("every image URL in match teams is a site-relative /photos/ URL, including
 missing = [u for u in sorted(set(urls)) if flask_client1.get(u).status_code != 200]
 check(f"...and every one of them ({len(set(urls))}) is actually served", missing == [], missing)
 
+# --- Step 45 (AST-1): every visit asked the server about every image again (Cache-Control: no-cache). Image URLs
+# now carry a version taken from the file's content, so browsers and Cloudflare may keep them for a year. ---
+import re as _re
+unversioned = [u for u in urls if not _re.fullmatch(r'/photos/[^?]+\?v=[0-9a-f]{10}', u)]
+check("every image URL carries a version from its content (?v=...)", urls and unversioned == [], unversioned[:3])
+first = urls[0]
+kept = flask_client1.get(first)
+check("...and a versioned image may be kept for a year (and changes its URL when the file changes)",
+      kept.status_code == 200 and kept.headers.get('Cache-Control') == 'public, max-age=31536000, immutable',
+      kept.headers.get('Cache-Control'))
+for label, url in (("an outdated version", first.split('?')[0] + '?v=0000000000'), ("no version", first.split('?')[0]),
+                   ("a made-up version", first.split('?')[0] + '?v=<script>')):
+    answer = flask_client1.get(url)
+    check(f"...{label} is still served, but not kept long (it may be stale)", answer.status_code == 200
+          and 'immutable' not in (answer.headers.get('Cache-Control') or ''), answer.headers.get('Cache-Control'))
+check("...and a path outside photos/ stays unreachable", flask_client1.get('/photos/../app.py?v=0').status_code == 404)
+
 # --- Step 26 regression: image URLs were built from the request's Host header, so
 # behind a proxy they pointed at its internal address (broken images) and any
 # client could make the server echo a host name of its choice. No health check. ---

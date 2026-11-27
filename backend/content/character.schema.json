@@ -1842,7 +1842,7 @@
       "type": "string"
     },
     "image": {
-      "description": "Path under backend/photos/, e.g. characters/Goku.png.",
+      "description": "Path under backend/photos/, e.g. characters/Goku.webp (make it web-ready with tools/optimize_images.py).",
       "minLength": 1,
       "title": "Image",
       "type": "string"
