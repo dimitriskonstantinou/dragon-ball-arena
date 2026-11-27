@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, timezone
 import copy
 import hashlib
+import mimetypes
 import logging
 import os
 import re
@@ -60,6 +61,9 @@ if settings.trusted_proxies:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'frontend'))
+WEB_DIST = os.path.normpath(os.path.join(BASE_DIR, '..', 'web', 'dist'))   # the new interface's build (Step 46)
+# The slim Linux image has no MIME table entry for .webp: images went out as application/octet-stream.
+mimetypes.add_type('image/webp', '.webp')
 
 app.config['SECRET_KEY'] = settings.secret_key
 app.config['SQLALCHEMY_DATABASE_URI'] = settings.database_url
@@ -571,6 +575,23 @@ def serve_image(filename):
     if request.args.get('v') and request.args.get('v') == photo_version(filename.replace('\\', '/')):
         response.headers['Cache-Control'] = LONG_CACHE
     return response
+
+@app.route('/next/')
+@app.route('/next/<path:path>')
+def serve_new_interface(path=''):
+    """The new interface (web/, React; Step 46), next to the old one until it replaces it. Built files have hashed
+    names and may be cached for a year; every other address gets the page, whose own router decides (later steps)."""
+    index = os.path.join(WEB_DIST, 'index.html')
+    if not os.path.isfile(index):
+        return "The new interface isn't built: cd web && npm ci && npm run build", 404
+    if path.startswith('assets/'):
+        response = send_from_directory(WEB_DIST, path)
+        response.headers['Cache-Control'] = LONG_CACHE
+        return response
+    response = send_from_directory(WEB_DIST, 'index.html')
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
+
 
 @app.route('/')
 def serve_frontend_index():

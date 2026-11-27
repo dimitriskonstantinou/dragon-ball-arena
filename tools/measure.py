@@ -135,7 +135,16 @@ def section_size():
     fe = sum(os.path.getsize(f) for f in glob.glob(os.path.join(FRONTEND, '*.*')))
     vendor = sum(os.path.getsize(f) for f in glob.glob(os.path.join(FRONTEND, 'vendor', '*.js')))
     out(f'\nFrontend first-load (html+css+js): {fe / 1024:.1f} KB own code'
-        f' + {vendor / 1024:.1f} KB vendored libraries = {(fe + vendor) / 1024:.1f} KB, all from our own server\n')
+        f' + {vendor / 1024:.1f} KB vendored libraries = {(fe + vendor) / 1024:.1f} KB, all from our own server')
+    dist = os.path.join(ROOT, 'web', 'dist')
+    built = [f for f in glob.glob(os.path.join(dist, '**', '*'), recursive=True) if os.path.isfile(f)]
+    if built:
+        import gzip
+        raw = sum(os.path.getsize(f) for f in built)
+        packed = sum(len(gzip.compress(open(f, 'rb').read(), 9)) for f in built)
+        out(f'New interface (web/dist, /next/): {len(built)} files, {raw / 1024:.1f} KB, {packed / 1024:.1f} KB gzip\n')
+    else:
+        out('New interface (web/dist): not built (python tools/check_web.py)\n')
 
 
 def image_info(path):

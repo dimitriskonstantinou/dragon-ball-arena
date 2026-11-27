@@ -1,0 +1,30 @@
+/* Design tokens (UI_PLAN "Visual language"). Every color and size of the new interface comes from here. */
+:root {
+  --bg: #0e1424;
+  --surface: #172036;
+  --surface-raised: #1f2a45;
+  --text: #eef1f8;
+  --text-muted: #a9b3c9;
+  --gold: #f5c542;
+  --orange: #f28c28;
+  --danger: #e5484d;
+  --ok: #3fb950;
+  --ki-energy: #3b82f6;
+  --ki-martial: #22a35a;
+  --ki-spirit: #e8e8e8;
+  --ki-rage: #e5484d;
+  --radius: 8px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); }
+a { color: var(--gold); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
