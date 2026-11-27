@@ -179,16 +179,20 @@ one pull request each, in this order (measurements: `docs/measurements/2026-11-2
 - **Step 42 -- SEC-9: rate limits count the real visitor.** ✅ 42a measured, 42b built (`CLIENT_IP_HEADER=CF-Connecting-IP`).
   Live: the visitor's own address is logged, the 6th wrong login is refused with changing fakes, a faked `CF-Connecting-IP` gets 403.
   **Still to prove live:** a second network is not affected (automated tests only so far).
-- **Step 43 -- BE-16: logs.** ✅ Built (also: engineio's client mistakes are warnings; `ip_header=` in the startup line).
-  **Still to do, live, after the merge:** no health-check lines, one line per API request, no connection ids, `ip_header=` shown.
-- **Step 44 -- BE-14: registration bursts** (release the database connection before hashing). **Done when:** 100 accounts,
-  32 at once, on the simulated free size: 0 failures (today 9-11).
+- **Step 43 -- BE-16: logs.** ✅ Done and confirmed live (66d8a5c: no access/health lines, 6-character ids, `ip_header` shown,
+  no ERROR; the two `Rejected` warnings only in the automated tests).
+- **Step 44 -- BE-14: sign-up and login bursts.** ✅ Built: connection released before hashing, hashing beside the gevent loop.
+  Render-size simulation: 0 of 200 failed (before 11), matches stay responsive (worst move 1.2 s instead of 13 s, 0 dropped
+  instead of 16). **Still to do, live:** sign-up and login work, reload check.
 - **Step 45 -- AST-1 + caching:** real file types, icons at display size, long-lived caching of images with versioned addresses.
   **Done when:** `photos/` well below today's 2,037 KB and a second visit asks the server for no image.
 
 **CI-1 (found 2026-11-25, not scheduled):** a pull request merged before its own test run starts makes that late run cancel the
 `dev` run (same concurrency group), so Render doesn't deploy. Fix: pull requests get their own group, runs on `dev`/`main` are
-never cancelled. Until then: merge only after "All checks have passed".
+never cancelled. Until then: merge only after "All checks have passed". (Changing the workflow was refused by Claude
+Code's safety check on 2026-11-25; the user chose to skip it.)
+**Render Blueprint (learned 2026-11-25):** a merge that changes `render.yaml` is deployed by the Blueprint sync right away,
+about 4 minutes BEFORE the tests on `dev` finish, and then once more after them. Check such steps on the second deploy.
 
 After each step: local + container tests, CI, then the live checks above on the deployed commit. Baseline update with Step 41.
 *(Step 37 done: load test -- one 1-CPU server is full at ~185-190 turns/s; planning figure ~2,000 concurrent players;

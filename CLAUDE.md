@@ -116,7 +116,7 @@ Ad-hoc audit tools (`pip-audit`, `radon`) go in a scratch folder, never into the
    the tests.py verdict, remaining problems, next task). Then **stop and wait**
    for the go-ahead. No unrequested extra changes. Make minor engineering decisions yourself; ask only for game-design
    preferences, architecture-level choices or irreversible actions.
-2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-42b are merged; `dev` and `main` are
+2. **One branch per step:** `feature/stepN-<name>` from **`dev`** (Steps 1-43 are merged; `dev` and `main` are
    protected by a GitHub ruleset: changes only via a pull request with a green `tests` check -- nobody can push to
    them directly). Commit code + tests + docs + that step's `docs/measurements/*` together, push, add a row to
    `docs/PLAN.md`, open the pull request to `dev`; the user merges it once CI is green.
@@ -386,7 +386,8 @@ back to `RENDER_EXTERNAL_URL` / `RENDER_GIT_COMMIT`. PROD is not deployed (Stage
 games), deploys end live matches until state moves to Redis. The image: `docker build -t dragon-ball-arena .`; run with
 `ENV`, `SECRET_KEY`, `ALLOWED_ORIGINS`, `DATABASE_URL`, `TRUSTED_PROXIES`, `CLIENT_IP_HEADER` as environment variables (see the Dockerfile).
 Under gevent, background work must use `socketio.sleep` / `socketio.start_background_task` (never `time.sleep` /
-raw threads), or it blocks every match. Docker commands from Git Bash need `MSYS_NO_PATHCONV=1` for container paths.
+raw threads), or it blocks every match. Slow CPU work in a request (password hashing) goes through `beside_the_loop()`
+(real threads, 2 at a time) and must not hold a database connection meanwhile (Step 44: it froze every match for 13 s). Docker commands from Git Bash need `MSYS_NO_PATHCONV=1` for container paths.
 
 ## Important decisions (and why)
 - **Server-authoritative engine, per-player views** (Steps 1–9): anti-cheat for online PvP.

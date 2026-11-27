@@ -1,6 +1,6 @@
 {
-  "updated": "2026-11-25 22:43",
-  "git": "dda1fab",
+  "updated": "2026-11-27 19:59",
+  "git": "66d8a5c",
   "suites": {
     "engine": {
       "pass": 229,
@@ -23,7 +23,7 @@
       "skipped": 0
     },
     "smoke": {
-      "pass": 219,
+      "pass": 220,
       "skipped": 0
     },
     "browser": {
@@ -39,11 +39,11 @@
       "skipped": 0
     },
     "smoke_postgres": {
-      "pass": 219,
+      "pass": 220,
       "skipped": 0
     },
     "container": {
-      "pass": 33,
+      "pass": 34,
       "skipped": 0
     }
   },
@@ -51,7 +51,7 @@
     "reflect ignores attacker's invulnerability/defense"
   ],
   "payload_bytes": 8606,
-  "turn_ms": 0.291,
+  "turn_ms": 0.272,
   "coverage": 92.0,
   "lint_issues": 3
 }
