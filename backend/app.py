@@ -609,9 +609,12 @@ def register():
     taken = account_conflict(username, email)
     if taken:
         return refuse_registration(taken.replace(' ', '_'), taken, 409)
+    # The hashing below is slow on purpose: give the database connection back first, or a burst of sign-ups
+    # holds the whole pool and later requests fail after 30 s (BE-14). The unique indexes still decide below.
+    db.session.rollback()
 
     user = User(username=username, username_key=User.key_for(username), email=email,
-                password_hash=generate_password_hash(password))
+                password_hash=beside_the_loop(generate_password_hash, password))
     try:
         db.session.add(user)
         db.session.flush()  # assigns user.id, needed by the rows below
@@ -633,6 +636,24 @@ def register():
     start_session(user)
     return jsonify(user.to_dict()), 201
 
+HASHING_THREADS = 2
+_hashing_pool = None
+
+
+def beside_the_loop(function, *args):
+    """Runs slow CPU work (password hashing: ~0.1 s on a full core, ~0.7 s on Render's free 0.1 CPU) in a real
+    thread instead of the gevent loop, which would otherwise stop EVERY match and request meanwhile -- 32
+    sign-ups at once froze matches for 13 s and dropped players (BE-14). hashlib releases the GIL while it hashes.
+    At most HASHING_THREADS at a time; the rest wait without blocking anything. (Threading mode: already a thread.)"""
+    global _hashing_pool
+    if settings.socketio_async_mode != 'gevent':
+        return function(*args)
+    if _hashing_pool is None:
+        from gevent.threadpool import ThreadPool
+        _hashing_pool = ThreadPool(HASHING_THREADS)
+    return _hashing_pool.apply(function, args)
+
+
 def account_conflict(username, email):
     """The 'already taken' message for a new account, or None."""
     if User.query.filter_by(username_key=User.key_for(username)).first():
@@ -652,7 +673,9 @@ def login():
     password = data.get('password') or ''
 
     user = User.query.filter_by(username_key=User.key_for(username)).first()
-    if not user or not check_password_hash(user.password_hash, password):
+    stored_hash = user.password_hash if user else None
+    db.session.rollback()   # no connection held during the slow check (BE-14); `user` reloads when used
+    if not user or not beside_the_loop(check_password_hash, stored_hash, password):
         login_limiter.hit(visitor_key())
         if user:
             auth_log.warning("Login failed: wrong password user=%s ip=%s", user.id, client_ip())

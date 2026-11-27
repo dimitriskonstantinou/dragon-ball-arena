@@ -197,11 +197,16 @@ Real server, connect slowed by 80 ms, logging out while coming back: old code 10
 new code 0 in 150 returns (60 dying reconnects dropped). Without the slowdown neither version hit it in 150 returns: the
 window is about a millisecond.
 
-**BE-14 — LOW (MEDIUM at launch) — Registration holds a database connection while hashing the password (verified, Step 40)** — OPEN
+**BE-14 — LOW (MEDIUM at launch) — Registration holds a database connection while hashing the password (verified, Step 40)** — ✅ FIXED in Step 44 (the cause was bigger)
 `register` first checks for a taken name (which takes a connection from the pool: 5 + 10), then hashes the password
 (slow on purpose, ~1 s on 0.1 CPU) with the connection still checked out. 32 registrations at once on Render's free size:
 9-11 of 100 answered 500 after 30 s (`QueuePool limit ... reached`). More CPU makes it far less likely (Step 37: 4,000 on
-1 CPU, 0 failures). **Fix:** release the connection before hashing (end the read transaction), or hash first.
+1 CPU, 0 failures). **Measured in Step 44 (Render's free size in Docker, 100 sign-ups then 100 logins, 32 at a time, 20 players in matches):** the
+hashing ran IN the single gevent loop, so it also froze every match: moves answered after 2.4 s typical / 13 s at worst,
+16 of 20 players dropped, 9 sign-ups and 2 logins failed. Releasing the connection alone did not help (one run: 18 + 6
+failed). Fix: release the connection before hashing (sign-up and login) **and** hash in real threads beside the loop, 2 at a
+time (`beside_the_loop`; hashlib releases the GIL). After: 0 failures, moves 183 ms typical / 1.2 s at worst, 0 dropped, 114
+turns instead of 48. The work itself stays: in that burst a sign-up waits ~43 s typical on 0.1 CPU (more CPU shortens it).
 
 **BE-15 — CRITICAL (online) — Reloading the page or a short network drop loses the match (verified live, 2026-11-24)** — ✅ FIXED in Step 41, confirmed live
 On Render the server hears that a connection closed exactly 10.07 s late, i.e. after the new one arrived. `rejoin_match` only
@@ -217,7 +222,7 @@ proxy that reports closed connections late (also run against the production cont
 versions: 8 caught, 1 without any observable effect. Live (24c6f93): reload 10 of 10 back and able to play in 0.4-0.9 s,
 network drop 10 of 10 able to play, opponent told nothing; closed tab noticed after 0.1 s. Desktop Chromium only.
 
-**BE-16 — MEDIUM — gunicorn's access log is on although we turn it off (verified, 2026-11-24)** — ✅ FIXED in Step 43 (live check after the deploy still to do)
+**BE-16 — MEDIUM — gunicorn's access log is on although we turn it off (verified, 2026-11-24)** — ✅ FIXED in Step 43, confirmed live
 `logconfig_dict` switches it on again, whatever `accesslog` says. Full connection ids of polling requests get into the logs
 (our own rule forbids it), plus a line per health check (every 5 s). A refused foreign origin is logged at ERROR (false alarm).
 The container test never looked for access lines. Found on the way: engineio also logged `Invalid session <id>` as ERROR with the visitor's raw text (full id, any length).

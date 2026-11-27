@@ -260,6 +260,31 @@ with appmod.app.app_context():
     stored = appmod.User.query.filter(appmod.User.username_key == f'race_{suffix}').count()
 check("...leaving exactly one account with that name", stored == 1, stored)
 
+# --- Step 44 regression (BE-14): signing up and logging in kept a database connection checked out during the
+# deliberately slow password hashing; 32 at once on Render's free size ran the pool dry (500 after 30 s). ---
+held_while_hashing = []
+real_check = appmod.check_password_hash
+
+
+def watching(real):
+    def hash_while_watched(*args, **kwargs):
+        held_while_hashing.append(appmod.db.session().in_transaction())   # a transaction = a checked-out connection
+        return real(*args, **kwargs)
+    return hash_while_watched
+
+
+appmod.generate_password_hash, appmod.check_password_hash = watching(real_hash), watching(real_check)
+try:
+    hold_name = f'hold_{suffix}'
+    held = [register(appmod.app.test_client(), hold_name, f'{hold_name}@test.local').status_code]
+    for password in ('testpass123', 'wrong-password'):
+        held.append(appmod.app.test_client().post('/api/login', json={'username': hold_name, 'password': password},
+                                                   environ_base={'REMOTE_ADDR': '198.51.100.44'}).status_code)
+finally:
+    appmod.generate_password_hash, appmod.check_password_hash = real_hash, real_check
+check("signing up and logging in hold no database connection while the password is hashed",
+      held == [201, 200, 401] and held_while_hashing == [False, False, False], (held, held_while_hashing))
+
 # --- Step 24 regression: a login cookie never expired and couldn't be revoked -- a
 # copied ("stolen") cookie kept working after its owner logged out. ---
 owner, thief = appmod.app.test_client(), appmod.app.test_client()

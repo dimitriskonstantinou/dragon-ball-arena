@@ -185,6 +185,12 @@ def main():
         check("...and no log line contains the database password or the secret key",
               'dbatest' not in logs and key not in logs, '(a secret is in the logs)')
 
+        burst = subprocess.run(['docker', 'exec', '-i', 'dba-check-prod', 'python', '-'], input=SIGNUP_BURST,
+                               capture_output=True, text=True, timeout=300, env=NO_PATH_CONVERSION)
+        numbers = dict(part.split('=') for part in burst.stdout.split()) if '=' in burst.stdout else {}
+        check("12 sign-ups at once don't hold up the rest of the server (password hashing runs beside it, BE-14)",
+              numbers.get('created') == '12' and 0 < float(numbers.get('health_max_ms', 1e9)) < float(numbers.get('one_signup_ms', 0)),
+              (burst.stdout + burst.stderr)[-300:])
         print("refuses to start insecurely:", flush=True)
         for missing in ('SECRET_KEY', 'DATABASE_URL'):
             env = {k: v for k, v in prod_env.items() if k != missing}
@@ -277,6 +283,30 @@ try:
 except Exception as e:
     health = type(e).__name__
 print(f"open={len(held)} healthz={health}")
+'''
+
+# Runs INSIDE the container: one sign-up alone, then 12 at once while /healthz is asked every 20 ms.
+SIGNUP_BURST = r'''
+import json, threading, time, urllib.request, uuid
+URL = "http://127.0.0.1:8000"
+def signup():
+    name = "burst" + uuid.uuid4().hex[:8]
+    req = urllib.request.Request(URL + "/api/register", data=json.dumps({"username": name, "email": name + "@x.io",
+                                 "password": "secret12"}).encode(), headers={"Content-Type": "application/json",
+                                 "CF-Connecting-IP": "8.8.%d.%d" % (uuid.uuid4().int % 250, uuid.uuid4().int % 250)})
+    return urllib.request.urlopen(req, timeout=120).status
+t = time.perf_counter(); signup(); one = (time.perf_counter() - t) * 1000
+codes, waits, done = [], [], threading.Event()
+def probe():
+    while not done.is_set():
+        t = time.perf_counter(); urllib.request.urlopen(URL + "/healthz", timeout=60).read()
+        waits.append((time.perf_counter() - t) * 1000); time.sleep(0.02)
+threads = [threading.Thread(target=lambda: codes.append(signup())) for _ in range(12)]
+p = threading.Thread(target=probe); p.start()
+for th in threads: th.start()
+for th in threads: th.join()
+done.set(); p.join()
+print(f"created={codes.count(201)} one_signup_ms={one:.0f} health_max_ms={max(waits):.0f} health_checks={len(waits)}")
 '''
 
 WEBSOCKET_PROBE = r'''
